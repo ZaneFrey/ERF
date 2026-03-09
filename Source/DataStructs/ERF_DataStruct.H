@@ -689,6 +689,9 @@ struct SolverChoice {
         // by the diameter of the turbine
         pp.query("sampling_distance_by_D", sampling_distance_by_D);
         pp.query("turb_disk_angle_from_x", turb_disk_angle);
+        pp.query("dynamic_yaw", dynamic_yaw);
+        pp.query("yaw_period", yaw_period);
+        pp.query("yaw_file", yaw_file);
 
         pp.query("windfarm_x_shift",windfarm_x_shift);
         pp.query("windfarm_y_shift",windfarm_y_shift);
@@ -794,6 +797,19 @@ struct SolverChoice {
                            " erf.sampling_distance_by_D in the inputs which specifies the upstream"
                            " distance as a factor of the turbine diameter at which the incoming free stream"
                            " velocity will be computed at.");
+        }
+        if (dynamic_yaw) {
+            if (windfarm_type != WindFarmType::SimpleAD) {
+                amrex::Error("Dynamic yaw is only supported for windfarm_type = SimpleAD");
+            }
+            if (yaw_period <= 0.0) {
+                amrex::Error("To use dynamic yaw, you must provide a positive value for erf.yaw_period (seconds).");
+            }
+        }
+        if (!yaw_file.empty()) {
+            if (!(windfarm_type == WindFarmType::SimpleAD || windfarm_type == WindFarmType::GeneralAD)) {
+                amrex::Error("Manual yaw offsets via erf.yaw_file are only supported for windfarm_type = SimpleAD or GeneralAD");
+            }
         }
         if ( (windfarm_type==WindFarmType::SimpleAD ||
               windfarm_type==WindFarmType::GeneralAD ) && turb_disk_angle < 0.0) {
@@ -1215,6 +1231,9 @@ struct SolverChoice {
     std::string windfarm_blade_table, windfarm_airfoil_tables;
     amrex::Real sampling_distance_by_D = -1.0;
     amrex::Real turb_disk_angle = -1.0;
+    bool dynamic_yaw = false;
+    amrex::Real yaw_period = -1.0;
+    std::string yaw_file;
     amrex::Real windfarm_x_shift = -1.0;
     amrex::Real windfarm_y_shift = -1.0;
 
