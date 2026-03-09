@@ -29,9 +29,17 @@ ERF::init_windfarm (int lev)
                              true, false);
     }
 
+    if (solverChoice.windfarm_type == WindFarmType::SimpleAD ||
+        solverChoice.windfarm_type == WindFarmType::GeneralAD) {
+        windfarm->set_disk_angle0_deg(solverChoice.turb_disk_angle);
+        windfarm->read_windfarm_yaw_file(solverChoice.yaw_file);
+    }
+
     windfarm->fill_Nturb_multifab(geom[lev], Nturb[lev], z_phys_nd[lev]);
 
-    windfarm->write_turbine_locations_vtk();
+    if (!(solverChoice.dynamic_yaw && solverChoice.windfarm_type == WindFarmType::SimpleAD)) {
+        windfarm->write_turbine_locations_vtk();
+    }
 
 
     if(solverChoice.windfarm_type == WindFarmType::Fitch or
@@ -44,12 +52,28 @@ ERF::init_windfarm (int lev)
 
     if(solverChoice.windfarm_type == WindFarmType::SimpleAD or
        solverChoice.windfarm_type == WindFarmType::GeneralAD) {
-        windfarm->fill_SMark_multifab(geom[lev], SMark[lev],
-                                      solverChoice.sampling_distance_by_D,
-                                      solverChoice.turb_disk_angle,
-                                      z_phys_cc[lev]);
-        windfarm->write_actuator_disks_vtk(geom[lev],
-                                           solverChoice.sampling_distance_by_D);
+        if ((solverChoice.dynamic_yaw && solverChoice.windfarm_type == WindFarmType::SimpleAD) ||
+            !solverChoice.yaw_file.empty()) {
+            amrex::Vector<amrex::Real> disk_face_angles_deg;
+            windfarm->get_disk_face_angles_deg(disk_face_angles_deg);
+            windfarm->fill_SMark_multifab_dynamic(geom[lev], SMark[lev],
+                                                  solverChoice.sampling_distance_by_D,
+                                                  disk_face_angles_deg,
+                                                  z_phys_cc[lev]);
+        } else {
+            windfarm->fill_SMark_multifab(geom[lev], SMark[lev],
+                                          solverChoice.sampling_distance_by_D,
+                                          solverChoice.turb_disk_angle,
+                                          z_phys_cc[lev]);
+        }
+        if (!(solverChoice.dynamic_yaw && solverChoice.windfarm_type == WindFarmType::SimpleAD)) {
+            windfarm->write_actuator_disks_vtk(geom[lev],
+                                               solverChoice.sampling_distance_by_D);
+        }
+    }
+
+    if (lev == 0 && solverChoice.dynamic_yaw && solverChoice.windfarm_type == WindFarmType::SimpleAD) {
+        windfarm->init_dynamic_yaw(solverChoice.turb_disk_angle, solverChoice.yaw_period);
     }
 
     if(solverChoice.windfarm_type == WindFarmType::GeneralAD) {

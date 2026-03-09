@@ -90,6 +90,52 @@ public:
     void write_actuator_disks_vtk (const amrex::Geometry& geom,
                                    const amrex::Real& sampling_distance_by_D);
 
+    // Dynamic per-turbine yaw for SimpleAD
+    void init_dynamic_yaw (const amrex::Real disk_angle0_deg,
+                           const amrex::Real yaw_period);
+
+    bool dynamic_yaw_enabled () const { return m_dynamic_yaw_enabled; }
+
+    void set_disk_angle0_deg (const amrex::Real disk_angle0_deg) { m_disk_angle0_deg = disk_angle0_deg; }
+
+    void read_windfarm_yaw_file (const std::string& yaw_file);
+
+    void sample_upstream_uv (const amrex::MultiFab& U_old,
+                             const amrex::MultiFab& V_old,
+                             const amrex::MultiFab& mf_SMark,
+                             amrex::Vector<amrex::Real>& u_sum,
+                             amrex::Vector<amrex::Real>& v_sum,
+                             amrex::Vector<amrex::Real>& counts) const;
+
+    void accumulate_yaw_samples (const amrex::Vector<amrex::Real>& u_mean,
+                                 const amrex::Vector<amrex::Real>& v_mean,
+                                 const amrex::Vector<amrex::Real>& counts,
+                                 const amrex::Real dt);
+
+    bool update_yaw_controller (const amrex::Real time,
+                                const amrex::Real dt);
+
+    bool should_rebuild_SMark (const amrex::Real dx_eff) const;
+    void commit_yaw_geometry ();
+
+    void get_disk_face_angles_deg (amrex::Vector<amrex::Real>& disk_face_angles_deg) const;
+
+    void fill_SMark_multifab_dynamic (const amrex::Geometry& geom,
+                                      amrex::MultiFab& mf_SMark,
+                                      const amrex::Real& sampling_distance_by_D,
+                                      const amrex::Vector<amrex::Real>& disk_face_angles_deg,
+                                      std::unique_ptr<amrex::MultiFab>& z_phys_cc);
+
+    void write_dynamic_vtk_series (const amrex::Geometry& geom,
+                                   const amrex::Real& sampling_distance_by_D,
+                                   const amrex::Vector<amrex::Real>& disk_face_angles_deg,
+                                   const amrex::Real time);
+
+    void write_yaw_angles_time_series (const amrex::Real time) const;
+
+    void write_dynamic_yaw_state (const std::string& checkpointname) const;
+    bool read_dynamic_yaw_state (const std::string& restart_chkfile);
+
     void advance (const amrex::Geometry& a_geom,
                   const amrex::Real& dt_advance,
                   amrex::MultiFab& cons_in,
@@ -123,6 +169,11 @@ public:
     void set_turb_disk_angle (const amrex::Real& a_turb_disk_angle) override
     {
         m_windfarm_model[0]->set_turb_disk_angle(a_turb_disk_angle);
+    }
+
+    void set_turb_disk_angles (const amrex::Vector<amrex::Real>& a_turb_disk_angles) override
+    {
+        m_windfarm_model[0]->set_turb_disk_angles(a_turb_disk_angles);
     }
 
     void set_blade_spec (const amrex::Vector<amrex::Real>& a_bld_rad_loc,
@@ -159,6 +210,21 @@ protected:
     int n_bld_sections;
     amrex::Vector<amrex::Real> velocity, C_P, C_T, rotor_RPM, blade_pitch;
 
+    // Dynamic yaw state (SimpleAD)
+    bool m_dynamic_yaw_enabled{false};
+    amrex::Real m_disk_angle0_deg{0.0};
+    amrex::Real m_yaw_period{0.0};
+    amrex::Real m_tau_yaw{0.0};
+    amrex::Real m_yaw_alpha{0.5};
+    int m_yaw_update_idx{0};
+
+    amrex::Vector<amrex::Real> m_yaw_angle_deg;
+    amrex::Vector<amrex::Real> m_yaw_cmd_deg;
+    amrex::Vector<amrex::Real> m_next_update_time;
+    amrex::Vector<amrex::Real> m_sum_u, m_sum_v, m_sum_t;
+    amrex::Vector<amrex::Real> m_yaw_angle_geom_deg;
+    amrex::Vector<amrex::Real> m_yaw_offset_deg;
+
    /*! \brief Create and set the specified windfarm model */
     template<class NewWindFarmModel>
     void SetModel ()
@@ -173,4 +239,3 @@ private:
 };
 
 #endif
-
