@@ -866,7 +866,8 @@ WindFarm::write_actuator_disks_vtk (const Geometry& geom,
 
 void
 WindFarm::init_dynamic_yaw (const amrex::Real disk_angle0_deg,
-                            const amrex::Real yaw_period)
+                            const amrex::Real yaw_period,
+                            const amrex::Real windfarm_start_time)
 {
     if (xloc.empty()) {
         return;
@@ -881,7 +882,7 @@ WindFarm::init_dynamic_yaw (const amrex::Real disk_angle0_deg,
     const int nturb = static_cast<int>(xloc.size());
     m_yaw_angle_deg.assign(nturb, 0.0);
     m_yaw_cmd_deg.assign(nturb, 0.0);
-    m_next_update_time.assign(nturb, yaw_period);
+    m_next_update_time.assign(nturb, windfarm_start_time + yaw_period);
     m_sum_u.assign(nturb, 0.0);
     m_sum_v.assign(nturb, 0.0);
     m_sum_t.assign(nturb, 0.0);

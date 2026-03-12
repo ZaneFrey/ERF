@@ -43,7 +43,7 @@ SimpleAD::compute_power_output (const Real& time)
 	            Abort("Could not open file to write power output in ERF_AdvanceSimpleAD.cpp");
 	        }
 
-	        if (!wrote_header && time == 0.0) {
+	        if (!wrote_header) {
 	            file << "# time";
 	            for (int it = 0; it < xloc.size(); ++it) {
 	                file << " P_turb" << it;

@@ -39,10 +39,15 @@ GeneralAD::compute_power_output (const Real& time)
 
     if (ParallelDescriptor::IOProcessor()){
         static std::ofstream file("power_output_GeneralAD.txt", std::ios::app);
+        static bool wrote_header = false;
         // Check if the file opened successfully
         if (!file.is_open()) {
             std::cerr << "Error opening file!" << std::endl;
             Abort("Could not open file to write power output in ERF_AdvanceSimpleAD.cpp");
+        }
+        if (!wrote_header) {
+            file << "# time total_power\n";
+            wrote_header = true;
         }
         Real total_power = 0.0;
         for(int it=0; it<xloc.size(); it++){

@@ -92,7 +92,8 @@ public:
 
     // Dynamic per-turbine yaw for SimpleAD
     void init_dynamic_yaw (const amrex::Real disk_angle0_deg,
-                           const amrex::Real yaw_period);
+                           const amrex::Real yaw_period,
+                           const amrex::Real windfarm_start_time);
 
     bool dynamic_yaw_enabled () const { return m_dynamic_yaw_enabled; }
 
