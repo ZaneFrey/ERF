@@ -1,5 +1,6 @@
 #include <ERF.H>
 #include <ERF_Utils.H>
+#include <cmath>
 
 #ifdef ERF_USE_WINDFARM
 #include <ERF_WindFarm.H>
@@ -130,9 +131,95 @@ ERF::Advance (int lev, Real time, Real dt_lev, int iteration, int /*ncycle*/)
     // Update the windfarm sources
     // **************************************************************************************
     if (solverChoice.windfarm_type != WindFarmType::None) {
-        advance_windfarm(Geom(lev), dt_lev, S_old,
-                         U_old, V_old, W_old, vars_windfarm[lev],
-                         Nturb[lev], SMark[lev], time);
+        const bool is_ad_model = (solverChoice.windfarm_type == WindFarmType::SimpleAD ||
+                                  solverChoice.windfarm_type == WindFarmType::GeneralAD);
+        const amrex::Real eps = 1.0e-12;
+        const amrex::Real wf_start = solverChoice.windfarm_start_time;
+        const bool windfarm_active = (!is_ad_model) || (time + eps >= wf_start);
+        const bool first_active_step = is_ad_model &&
+                                       (time + eps >= wf_start) &&
+                                       (time - dt_lev + eps < wf_start);
+
+        amrex::Real dt_windfarm = dt_lev;
+        amrex::Real windfarm_time_for_io = time;
+        if (is_ad_model) {
+            const amrex::Real dt_since_start = amrex::max(time - wf_start, 0.0);
+            const amrex::Real gamma = (solverChoice.windfarm_ramp_tau > 0.0)
+                                    ? (1.0 - std::exp(-dt_since_start / solverChoice.windfarm_ramp_tau))
+                                    : 1.0;
+            dt_windfarm = dt_lev * amrex::max(gamma, 0.0);
+            if (first_active_step) {
+                windfarm_time_for_io = wf_start;
+            }
+        }
+
+        if (windfarm_active && lev == 0 &&
+            solverChoice.dynamic_yaw &&
+            solverChoice.windfarm_type == WindFarmType::SimpleAD) {
+
+            if (first_active_step) {
+                windfarm->write_yaw_angles_time_series(wf_start);
+                amrex::Vector<amrex::Real> disk_face_angles_deg;
+                windfarm->get_disk_face_angles_deg(disk_face_angles_deg);
+                windfarm->write_dynamic_vtk_series(Geom(0),
+                                                   solverChoice.sampling_distance_by_D,
+                                                   disk_face_angles_deg,
+                                                   wf_start);
+            }
+
+            amrex::Vector<amrex::Real> u_sum, v_sum, counts;
+            windfarm->sample_upstream_uv(U_old, V_old, SMark[lev], u_sum, v_sum, counts);
+
+            const int nturb = static_cast<int>(u_sum.size());
+            amrex::Vector<amrex::Real> u_mean(nturb, 0.0);
+            amrex::Vector<amrex::Real> v_mean(nturb, 0.0);
+            for (int it = 0; it < nturb; ++it) {
+                if (counts[it] > 0.0) {
+                    u_mean[it] = u_sum[it] / counts[it];
+                    v_mean[it] = v_sum[it] / counts[it];
+                }
+            }
+
+            windfarm->accumulate_yaw_samples(u_mean, v_mean, counts, dt_lev);
+            bool did_cmd_update = windfarm->update_yaw_controller(time, dt_lev);
+
+            const auto dx = Geom(0).CellSize();
+            const amrex::Real dx_eff = amrex::min(dx[0], dx[1]);
+
+            if (windfarm->should_rebuild_SMark(dx_eff)) {
+                amrex::Vector<amrex::Real> disk_face_angles_deg;
+                windfarm->get_disk_face_angles_deg(disk_face_angles_deg);
+                for (int lev2 = 0; lev2 <= finest_level; ++lev2) {
+                    windfarm->fill_SMark_multifab_dynamic(Geom(lev2), SMark[lev2],
+                                                          solverChoice.sampling_distance_by_D,
+                                                          disk_face_angles_deg, z_phys_cc[lev2]);
+                }
+                windfarm->commit_yaw_geometry();
+            }
+
+            if (did_cmd_update) {
+                amrex::Vector<amrex::Real> disk_face_angles_deg;
+                windfarm->get_disk_face_angles_deg(disk_face_angles_deg);
+                windfarm->write_dynamic_vtk_series(Geom(0),
+                                                   solverChoice.sampling_distance_by_D,
+                                                   disk_face_angles_deg,
+                                                   time + dt_lev);
+            }
+        }
+
+        if (windfarm_active) {
+            if (first_active_step && lev == 0 &&
+                !solverChoice.dynamic_yaw &&
+                is_ad_model &&
+                wf_start > 0.0) {
+                windfarm->write_turbine_locations_vtk();
+                windfarm->write_actuator_disks_vtk(Geom(0), solverChoice.sampling_distance_by_D);
+            }
+
+            advance_windfarm(Geom(lev), dt_windfarm, S_old,
+                             U_old, V_old, W_old, vars_windfarm[lev],
+                             Nturb[lev], SMark[lev], windfarm_time_for_io);
+        }
     }
 
 #endif

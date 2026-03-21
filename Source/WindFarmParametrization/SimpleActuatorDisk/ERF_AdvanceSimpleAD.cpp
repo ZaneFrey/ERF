@@ -27,30 +27,41 @@ SimpleAD::advance (const Geometry& geom,
 void
 SimpleAD::compute_power_output (const Real& time)
 {
-     get_turb_loc(xloc, yloc);
-     get_turb_spec(rotor_rad, hub_height, thrust_coeff_standing,
-                  wind_speed, thrust_coeff, power);
+	     get_turb_loc(xloc, yloc);
+	     get_turb_spec(rotor_rad, hub_height, thrust_coeff_standing,
+	                  wind_speed, thrust_coeff, power);
 
-     const int n_spec_table = wind_speed.size();
-  // Compute power based on the look-up table
+	     const int n_spec_table = wind_speed.size();
+	  // Compute power based on the look-up table
 
-    if (ParallelDescriptor::IOProcessor()){
-        static std::ofstream file("power_output_SimpleAD.txt", std::ios::app);
-        // Check if the file opened successfully
-        if (!file.is_open()) {
-            std::cerr << "Error opening file!" << std::endl;
-            Abort("Could not open file to write power output in ERF_AdvanceSimpleAD.cpp");
-        }
-        Real total_power = 0.0;
-        for(int it=0; it<xloc.size(); it++){
-            Real avg_vel = freestream_velocity[it]/(disk_cell_count[it] + 1e-10);
-            Real turb_power = interpolate_1d(wind_speed.data(), power.data(), avg_vel, n_spec_table);
-            total_power = total_power + turb_power;
-            //printf("avg vel and power is %d %0.15g, %0.15g\n", it, avg_vel, turb_power);
-        }
-        file << time << " " << total_power << "\n";
-        file.flush();
-    }
+	    if (ParallelDescriptor::IOProcessor()){
+	        static std::ofstream file("power_output_SimpleAD.txt", std::ios::app);
+	        static bool wrote_header = false;
+	        // Check if the file opened successfully
+	        if (!file.is_open()) {
+	            std::cerr << "Error opening file!" << std::endl;
+	            Abort("Could not open file to write power output in ERF_AdvanceSimpleAD.cpp");
+	        }
+
+	        if (!wrote_header) {
+	            file << "# time";
+	            for (int it = 0; it < xloc.size(); ++it) {
+	                file << " P_turb" << it;
+	            }
+	            file << "\n";
+	            wrote_header = true;
+	        }
+
+	        file << time;
+	        for (int it = 0; it < xloc.size(); ++it) {
+	            Real avg_vel = freestream_velocity[it]/(disk_cell_count[it] + 1e-10);
+	            Real turb_power = interpolate_1d(wind_speed.data(), power.data(), avg_vel, n_spec_table);
+	            file << " " << turb_power;
+	            //printf("avg vel and power is %d %0.15g, %0.15g\n", it, avg_vel, turb_power);
+	        }
+	        file << "\n";
+	        file.flush();
+	    }
 }
 
 void
@@ -199,10 +210,34 @@ SimpleAD::source_terms_cellcentered (const Geometry& geom,
      Real* d_freestream_phi_ptr = d_freestream_phi.data();
      Real* d_disk_cell_count_ptr     = d_disk_cell_count.data();
 
-    get_turb_disk_angle(turb_disk_angle);
-    Real nx = -std::cos(turb_disk_angle);
-    Real ny = -std::sin(turb_disk_angle);
-    Real d_turb_disk_angle = turb_disk_angle;
+    amrex::Vector<amrex::Real> turb_disk_angles;
+    get_turb_disk_angles(turb_disk_angles);
+    if (turb_disk_angles.empty()) {
+        get_turb_disk_angle(turb_disk_angle);
+        turb_disk_angles.assign(nturbs, turb_disk_angle);
+    }
+
+    amrex::Vector<amrex::Real> nx_h(nturbs, 0.0);
+    amrex::Vector<amrex::Real> ny_h(nturbs, 0.0);
+    amrex::Vector<amrex::Real> cos_theta_h(nturbs, 0.0);
+    for (int it = 0; it < static_cast<int>(nturbs); ++it) {
+        nx_h[it] = -std::cos(turb_disk_angles[it]);
+        ny_h[it] = -std::sin(turb_disk_angles[it]);
+        // Keep the projected disk area positive so turbines facing +x do not
+        // inject momentum in the same direction as a negative-x inflow.
+        cos_theta_h[it] = std::abs(std::cos(turb_disk_angles[it]));
+    }
+
+    Gpu::DeviceVector<Real> d_nx(nturbs);
+    Gpu::DeviceVector<Real> d_ny(nturbs);
+    Gpu::DeviceVector<Real> d_cos_theta(nturbs);
+    Gpu::copy(Gpu::hostToDevice, nx_h.begin(), nx_h.end(), d_nx.begin());
+    Gpu::copy(Gpu::hostToDevice, ny_h.begin(), ny_h.end(), d_ny.begin());
+    Gpu::copy(Gpu::hostToDevice, cos_theta_h.begin(), cos_theta_h.end(), d_cos_theta.begin());
+
+    Real* d_nx_ptr = d_nx.data();
+    Real* d_ny_ptr = d_ny.data();
+    Real* d_cos_theta_ptr = d_cos_theta.data();
 
     Gpu::DeviceVector<Real> d_wind_speed(wind_speed.size());
     Gpu::DeviceVector<Real> d_thrust_coeff(thrust_coeff.size());
@@ -241,14 +276,19 @@ SimpleAD::source_terms_cellcentered (const Geometry& geom,
                 if(C_T <= 1) {
                     a = 0.5 - 0.5*std::pow(1.0-C_T,0.5);
                 }
-                Real Uinfty_dot_nhat = avg_vel*(std::cos(phi)*nx + std::sin(phi)*ny);
+                Real nx_it = d_nx_ptr[it];
+                Real ny_it = d_ny_ptr[it];
+                Real cos_theta_it = d_cos_theta_ptr[it];
+                Real Uinfty_dot_nhat = avg_vel*(std::cos(phi)*nx_it + std::sin(phi)*ny_it);
                     if(C_T <= 1) {
-                        source_x = -2.0*std::pow(Uinfty_dot_nhat, 2.0)*a*(1.0-a)*dx[1]*dx[2]*std::cos(d_turb_disk_angle)/(dx[0]*dx[1]*dx[2])*std::cos(phi);
-                        source_y = -2.0*std::pow(Uinfty_dot_nhat, 2.0)*a*(1.0-a)*dx[1]*dx[2]*std::cos(d_turb_disk_angle)/(dx[0]*dx[1]*dx[2])*std::sin(phi);
+                        Real S = 2.0*std::pow(Uinfty_dot_nhat, 2.0)*a*(1.0-a)*dx[1]*dx[2]*cos_theta_it/(dx[0]*dx[1]*dx[2]);
+                        source_x = S*nx_it;
+                        source_y = S*ny_it;
                     }
                     else {
-                        source_x = -0.5*C_T*std::pow(Uinfty_dot_nhat, 2.0)*dx[1]*dx[2]*std::cos(d_turb_disk_angle)/(dx[0]*dx[1]*dx[2])*std::cos(phi);
-                        source_y = -0.5*C_T*std::pow(Uinfty_dot_nhat, 2.0)*dx[1]*dx[2]*std::cos(d_turb_disk_angle)/(dx[0]*dx[1]*dx[2])*std::sin(phi);
+                        Real S = 0.5*C_T*std::pow(Uinfty_dot_nhat, 2.0)*dx[1]*dx[2]*cos_theta_it/(dx[0]*dx[1]*dx[2]);
+                        source_x = S*nx_it;
+                        source_y = S*ny_it;
                     }
              }
 

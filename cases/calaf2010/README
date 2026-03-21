@@ -1,0 +1,7 @@
+This folder contains a recreation of the pseudo-infinite wind farm tested in Calaf 2010 with the IEA 15 MW turbine.
+
+Recommended neutral ABL setup (anelastic, MOST, periodic x/y, geostrophic forcing) is in:
+  - inputs_neutral_abl_anelastic_1turb
+
+This case is intended to be run with `erf_abl` built with FFT + windfarm enabled:
+  -DERF_ENABLE_FFT=ON -DERF_ENABLE_WINDFARM=ON

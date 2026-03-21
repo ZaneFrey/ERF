@@ -1,0 +1,8 @@
+This folder contains an example of the Simple actuator disk wind farm parametetrization  
+for a single turbine case. 
+
+Recommended neutral ABL setup (anelastic, MOST, periodic x/y, geostrophic forcing) is in:
+  - inputs_neutral_abl_anelastic_1turb
+
+This case is intended to be run with `erf_abl` built with FFT + windfarm enabled:
+  -DERF_ENABLE_FFT=ON -DERF_ENABLE_WINDFARM=ON

@@ -1,0 +1,115 @@
+# Neutral ABL + 1 turbine (Simple Actuator Disk) in anelastic mode.
+# Intended to run with the `erf_abl` executable built with:
+#   -DERF_ENABLE_FFT=ON -DERF_ENABLE_WINDFARM=ON
+
+# ------------------  GOVERNING EQUATIONS  -------------------
+erf.anelastic = 1
+erf.use_fft   = true
+
+stop_time = 5000.0
+
+amrex.fpe_trap_invalid = 0
+fabarray.mfiter_tile_size = 1024 1024 1024
+
+# ------------------  PROBLEM SIZE & GEOMETRY  -------------------
+geometry.prob_extent =  2560.0 2560.0  1280.0
+amr.n_cell           =   256    256     256
+amr.max_level        = 0
+
+geometry.is_periodic = 1 1 0
+
+# ------------------  BOUNDARY CONDITIONS  -------------------
+zlo.type      = "surface_layer"
+erf.most.z0   = 0.05
+
+zhi.type = "SlipWall"
+zhi.theta_grad = 0.003
+
+# ------------------  TIME STEP CONTROL  -------------------
+erf.cfl = 0.5
+
+# ------------------  FORCING TERMS  -------------------
+erf.use_gravity  = true
+erf.use_coriolis = true
+erf.coriolis_3d  = false
+erf.latitude = 45.0
+erf.rotational_time_period = 86400
+
+erf.abl_driver_type = "GeostrophicWind"
+erf.abl_geo_wind = 9.0 4.0 0.0
+
+# ------------------  NUMERICAL SCHEMES  -------------------
+erf.les_type  = "Deardorff"
+erf.Ck        = 0.1
+erf.sigma_k   = 0.5
+erf.Ce        = 0.93
+erf.Ce_wall   = 3.9
+erf.theta_ref = 300.0
+
+erf.molec_diff_type = "None"
+
+erf.dycore_horiz_adv_type  = "Blended_5th6th"
+erf.dycore_vert_adv_type   = "Blended_5th6th"
+erf.dryscal_horiz_adv_type = "Blended_5th6th"
+erf.dryscal_vert_adv_type  = "Blended_5th6th"
+erf.dycore_horiz_upw_frac  = 0.2
+erf.dycore_vert_upw_frac   = 0.2
+erf.dryscal_horiz_upw_frac = 0.2
+erf.dryscal_vert_upw_frac  = 0.2
+
+# ------------------  INITIAL CONDITIONS  -------------------
+erf.init_type = "input_sounding"
+erf.sounding_type = Ideal
+erf.input_sounding_file = "input_sounding"
+
+# Turbulence seeding: divergence-free sinusoidal velocity perturbations
+prob.pert_ref_height = 500.0
+prob.pert_deltaU = 1.0
+prob.pert_deltaV = 1.0
+prob.pert_periods_U = 12.0
+prob.pert_periods_V = 12.0
+
+# Turbulence seeding: random theta perturbations (not rho*theta)
+prob.T_0_Pert_Mag = 1.0
+prob.pert_rhotheta = false
+
+# ------------------  WIND FARM (SIMPLE ACTUATOR DISK)  -------------------
+erf.windfarm_type = "SimpleAD"
+erf.windfarm_loc_type = "x_y"
+erf.windfarm_loc_table = "windturbines_loc_xy.txt"
+erf.windfarm_spec_table = "windturbines_spec.tbl"
+
+# Required for SimpleAD
+erf.sampling_distance_by_D = 1.5
+erf.turb_disk_angle_from_x = 90.0
+
+erf.dynamic_yaw = true
+erf.yaw_period  = 60
+
+# ------------------  OUTPUTS  -------------------
+erf.sum_interval   = 50
+erf.v              = 1
+amr.v              = 1
+
+# erf.check_file      = chk
+# erf.check_int       = 5000
+
+erf.plot_file_1     = plt
+erf.plot_int_1      = 1000
+erf.plot_vars_1     = density x_velocity y_velocity z_velocity pressure theta KE num_turb
+
+erf.data_log        = surf_hist.dat mean_profiles.dat flux_profiles.dat sfs_profiles.dat
+erf.profile_int     = 100 # steps
+
+# ------------------  2D SLICES  -------------------
+#erf.do_plane_sampling       = true
+#erf.plane_sampling_interval = 1000   # coarse (level-0) timesteps
+
+# Each plane is defined by two opposite corners (lo/hi) in physical space (m),
+# plus a normal direction: 2=z-normal (xy plane), 1=y-normal (xz), 0=x-normal (yz).
+#
+# Domain here is x:[0,2560], y:[0,2560], z:[0,896] (from geometry.prob_extent).
+#erf.sample_plane_lo   = 0.0    0.0    150.0    0.0    1280.0  0.0     1280.0  0.0    0.0
+#erf.sample_plane_hi   = 2560.0 2560.0 150.0    2560.0 1280.0  896.0   1280.0  2560.0 896.0
+#erf.sample_plane_dir  = 2 1 0
+#erf.sample_plane_name = plane_xy_z150m plane_xz_y1280m plane_yz_x1280m

@@ -39,10 +39,15 @@ GeneralAD::compute_power_output (const Real& time)
 
     if (ParallelDescriptor::IOProcessor()){
         static std::ofstream file("power_output_GeneralAD.txt", std::ios::app);
+        static bool wrote_header = false;
         // Check if the file opened successfully
         if (!file.is_open()) {
             std::cerr << "Error opening file!" << std::endl;
             Abort("Could not open file to write power output in ERF_AdvanceSimpleAD.cpp");
+        }
+        if (!wrote_header) {
+            file << "# time total_power\n";
+            wrote_header = true;
         }
         Real total_power = 0.0;
         for(int it=0; it<xloc.size(); it++){
@@ -356,11 +361,20 @@ GeneralAD::source_terms_cellcentered (const Geometry& geom,
 
      long unsigned int nturbs = xloc.size();
 
-    // This is the angle phi in Fig. 10 in Mirocha et. al. 2014
-    // set_turb_disk angle in ERF_InitWindFarm.cpp sets this phi as
-    // the turb_disk_angle
-    get_turb_disk_angle(turb_disk_angle);
-    Real d_turb_disk_angle = turb_disk_angle;
+    // This is the angle phi in Fig. 10 in Mirocha et. al. 2014.
+    // For per-turbine yaw support we use a per-turbine phi, but fall back to
+    // a uniform phi if only a scalar was set.
+    amrex::Vector<amrex::Real> turb_disk_angles;
+    get_turb_disk_angles(turb_disk_angles);
+    if (turb_disk_angles.size() != nturbs) {
+        get_turb_disk_angle(turb_disk_angle);
+        turb_disk_angles.assign(nturbs, turb_disk_angle);
+    }
+
+    Gpu::DeviceVector<Real> d_turb_disk_angles(nturbs);
+    Gpu::copy(Gpu::hostToDevice, turb_disk_angles.begin(), turb_disk_angles.end(),
+              d_turb_disk_angles.begin());
+    const Real* d_turb_disk_angles_ptr = d_turb_disk_angles.dataPtr();
 
     Gpu::DeviceVector<Real> d_freestream_velocity(nturbs);
     Gpu::DeviceVector<Real> d_disk_cell_count(nturbs);
@@ -457,7 +471,7 @@ GeneralAD::source_terms_cellcentered (const Geometry& geom,
 
             for(long unsigned int it=0;it<nturbs;it++) {
                  Real avg_vel  = d_freestream_velocity_ptr[it]/(d_disk_cell_count_ptr[it] + 1e-10);
-                 Real phi = d_turb_disk_angle;
+                 Real phi = d_turb_disk_angles_ptr[it];
 
                 // This if check makes sure it is a point on the actuator disk
                 if(SMark_array(ii,jj,kk,1) == static_cast<double>(it)) {

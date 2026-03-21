@@ -6,8 +6,74 @@
 #include <filesystem>
 #include <dirent.h>   // For POSIX directory handling
 #include <algorithm> // For std::sort
+#include <fstream>
+#include <iomanip>
+#include <sstream>
+#include <cmath>
 
 using namespace amrex;
+
+namespace {
+AMREX_FORCE_INLINE
+amrex::Real wrap_360 (amrex::Real deg)
+{
+    deg = std::fmod(deg, 360.0);
+    if (deg < 0.0) { deg += 360.0; }
+    return deg;
+}
+
+AMREX_FORCE_INLINE
+amrex::Real wrap_180 (amrex::Real deg)
+{
+    deg = wrap_360(deg);
+    if (deg >= 180.0) { deg -= 360.0; }
+    return deg;
+}
+
+AMREX_FORCE_INLINE
+std::string vtk_suffix (int idx)
+{
+    std::ostringstream oss;
+    oss << "_" << std::setw(6) << std::setfill('0') << idx;
+    return oss.str();
+}
+
+void append_to_pvd (const std::string& pvd_name,
+                    const std::string& vtk_file,
+                    const amrex::Real time)
+{
+    std::string header =
+        "<?xml version=\"1.0\"?>\n"
+        "<VTKFile type=\"Collection\" version=\"0.1\" byte_order=\"LittleEndian\">\n"
+        "  <Collection>\n";
+    std::string footer =
+        "  </Collection>\n"
+        "</VTKFile>\n";
+
+    std::ostringstream dataset;
+    dataset << "    <DataSet timestep=\"" << std::setprecision(17) << time
+            << "\" group=\"\" part=\"0\" file=\"" << vtk_file << "\"/>\n";
+
+    std::ifstream in(pvd_name);
+    if (!in.good()) {
+        std::ofstream out(pvd_name, std::ios::out | std::ios::trunc);
+        out << header << dataset.str() << footer;
+        return;
+    }
+
+    std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    auto pos = content.rfind("  </Collection>");
+    if (pos == std::string::npos) {
+        std::ofstream out(pvd_name, std::ios::out | std::ios::trunc);
+        out << header << dataset.str() << footer;
+        return;
+    }
+
+    content.insert(pos, dataset.str());
+    std::ofstream out(pvd_name, std::ios::out | std::ios::trunc);
+    out << content;
+}
+} // namespace
 
 /**
  * Read in the turbine locations in latitude-longitude from windturbines.txt
@@ -49,6 +115,39 @@ WindFarm::read_windfarm_locations_table (const std::string windfarm_loc_table,
     }
 
     set_turb_loc(xloc, yloc);
+}
+
+void
+WindFarm::read_windfarm_yaw_file (const std::string& yaw_file)
+{
+    const int nturb = static_cast<int>(xloc.size());
+    m_yaw_offset_deg.assign(nturb, 0.0);
+
+    if (yaw_file.empty() || nturb == 0) {
+        return;
+    }
+
+    std::ifstream file(yaw_file);
+    if (!file.is_open()) {
+        amrex::Error("Wind turbine yaw offsets file not found. The file specified by erf.yaw_file = " +
+                     yaw_file + " is missing.");
+    }
+
+    amrex::Vector<amrex::Real> offsets;
+    offsets.reserve(nturb);
+    amrex::Real value;
+    while (file >> value) {
+        offsets.push_back(value);
+    }
+    file.close();
+
+    if (static_cast<int>(offsets.size()) != nturb) {
+        amrex::Error("Yaw offsets file " + yaw_file + " has " + std::to_string(offsets.size()) +
+                     " entries but windfarm_loc_table has " + std::to_string(nturb) +
+                     " turbines. The yaw file must have exactly one entry per turbine.");
+    }
+
+    m_yaw_offset_deg = std::move(offsets);
 }
 
 void
@@ -415,7 +514,7 @@ WindFarm::fill_Nturb_multifab (const Geometry& geom,
     for ( MFIter mfi(mf_Nturb,TilingIfNotGPU()); mfi.isValid(); ++mfi) {
         const Box& bx     = mfi.tilebox();
         auto  Nturb_array = mf_Nturb.array(mfi);
-        const Array4<const Real>& z_nd_arr = z_phys_nd->const_array(mfi);
+        const Array4<const Real>& z_nd_arr = (z_phys_nd) ? z_phys_nd->const_array(mfi) : Array4<Real>{};
         int k0 = bx.smallEnd()[2];
         ParallelFor(bx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
             int li = amrex::min(amrex::max(i, i_lo), i_hi);
@@ -507,7 +606,7 @@ WindFarm::fill_SMark_multifab_mesoscale_models (const Geometry& geom,
         const Box& gbx    = mfi.growntilebox(1);
         auto  SMark_array = mf_SMark.array(mfi);
         auto  Nturb_array = mf_Nturb.array(mfi);
-        const Array4<const Real>& z_nd_arr = z_phys_nd->const_array(mfi);
+        const Array4<const Real>& z_nd_arr = (z_phys_nd) ? z_phys_nd->const_array(mfi) : Array4<Real>{};
         int k0 = gbx.smallEnd()[2];
 
         ParallelFor(gbx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
@@ -516,11 +615,16 @@ WindFarm::fill_SMark_multifab_mesoscale_models (const Geometry& geom,
                 int lj = amrex::min(amrex::max(j, j_lo), j_hi);
                 int lk = amrex::min(amrex::max(k, k_lo), k_hi);
 
-                Real z1 = z_nd_arr(li,lj,lk  );
-                Real z2 = z_nd_arr(li,lj,lk+1);
+                Real z1 = (z_nd_arr) ? z_nd_arr(li,lj,lk) : ProbLoArr[2] + lk * dx[2];
+                Real z2 = (z_nd_arr) ? z_nd_arr(li,lj,lk+1) : ProbLoArr[2] + (lk+1) * dx[2];
 
-                Real zturb = z_nd_arr(li,lj,k0) + d_hub_height;
-                if (zturb+1e-3 > z1 and zturb+1e-3 < z2) {
+                Real zturb;
+                if(z_nd_arr) {
+                    zturb = z_nd_arr(li,lj,k0) + d_hub_height;
+                } else {
+                    zturb = d_hub_height;
+                }
+                if(zturb+1e-3 > z1 and zturb+1e-3 < z2) {
                     SMark_array(i,j,k,0) = 1.0;
                 }
             }
@@ -537,7 +641,7 @@ WindFarm::fill_SMark_multifab (const Geometry& geom,
 {
     amrex::Gpu::DeviceVector<Real> d_xloc(xloc.size());
     amrex::Gpu::DeviceVector<Real> d_yloc(yloc.size());
-    amrex::Gpu::DeviceVector<Real> d_zloc(yloc.size());
+    amrex::Gpu::DeviceVector<Real> d_zloc(xloc.size());
     amrex::Gpu::copyAsync(amrex::Gpu::hostToDevice, xloc.begin(), xloc.end(), d_xloc.begin());
     amrex::Gpu::copyAsync(amrex::Gpu::hostToDevice, yloc.begin(), yloc.end(), d_yloc.begin());
     amrex::Gpu::copyAsync(amrex::Gpu::hostToDevice, zloc.begin(), zloc.end(), d_zloc.begin());
@@ -563,6 +667,10 @@ WindFarm::fill_SMark_multifab (const Geometry& geom,
 
     set_turb_disk_angle(theta);
     my_turb_disk_angle = theta;
+    {
+        amrex::Vector<amrex::Real> theta_rad(xloc.size(), theta);
+        set_turb_disk_angles(theta_rad);
+    }
 
     Real nx = -std::cos(theta);
     Real ny = -std::sin(theta);
@@ -572,7 +680,7 @@ WindFarm::fill_SMark_multifab (const Geometry& geom,
         const Box& gbx      = mfi.growntilebox(1);
         auto  SMark_array = mf_SMark.array(mfi);
 
-        const Array4<const Real>& z_cc_arr = z_phys_cc->const_array(mfi)
+        const Array4<const Real>& z_cc_arr = (z_phys_cc) ? z_phys_cc->const_array(mfi) : Array4<Real>{};
 
         ParallelFor(gbx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
             int ii = amrex::min(amrex::max(i, i_lo), i_hi);
@@ -588,7 +696,7 @@ WindFarm::fill_SMark_multifab (const Geometry& geom,
 
             // The mesh cell centered z value
 
-            Real z = z_cc_arr(ii,jj,kk);
+            Real z = (z_cc_arr) ? z_cc_arr(ii,jj,kk) : ProbLoArr[2] + (kk+0.5) * dx[2];
 
             int turb_indices_overlap[2];
             int check_int = 0;
@@ -596,7 +704,10 @@ WindFarm::fill_SMark_multifab (const Geometry& geom,
                 Real x0 = d_xloc_ptr[it] + d_sampling_distance*nx;
                 Real y0 = d_yloc_ptr[it] + d_sampling_distance*ny;
 
-                Real z0 = d_zloc_ptr[it];
+                Real z0 = 0.0;
+                if(z_cc_arr) {
+                    z0 = d_zloc_ptr[it];
+                }
 
                 bool is_cell_marked = find_if_marked(x1, x2, y1, y2, x0, y0,
                                                      nx, ny, d_hub_height+z0, d_rotor_rad, z);
@@ -651,6 +762,11 @@ WindFarm::write_actuator_disks_vtk (const Geometry& geom,
     Real sampling_distance = sampling_distance_by_D*2.0*rotor_rad;
 
     if (ParallelDescriptor::IOProcessor()){
+        amrex::Vector<amrex::Real> turb_disk_angles;
+        get_turb_disk_angles(turb_disk_angles);
+        const bool have_per_turb_angles =
+            (!turb_disk_angles.empty() && turb_disk_angles.size() == xloc.size());
+
         FILE *file_actuator_disks_all, *file_actuator_disks_in_dom, *file_averaging_disks_in_dom;
         file_actuator_disks_all = fopen("actuator_disks_all.vtk","w");
         fprintf(file_actuator_disks_all, "%s\n","# vtk DataFile Version 3.0");
@@ -689,13 +805,13 @@ WindFarm::write_actuator_disks_vtk (const Geometry& geom,
         fprintf(file_actuator_disks_in_dom, "%s %ld %s\n", "POINTS", static_cast<long int>(num_turb_in_dom*npts), "float");
         fprintf(file_averaging_disks_in_dom, "%s %ld %s\n", "POINTS", static_cast<long int>(num_turb_in_dom*npts), "float");
 
-        Real nx = std::cos(my_turb_disk_angle+0.5*M_PI);
-        Real ny = std::sin(my_turb_disk_angle+0.5*M_PI);
-
-        Real nx1 = -std::cos(my_turb_disk_angle);
-        Real ny1 = -std::sin(my_turb_disk_angle);
-
         for(int it=0; it<xloc.size(); it++){
+            const Real theta_face = have_per_turb_angles ? turb_disk_angles[it] : my_turb_disk_angle;
+            const Real nx  = std::cos(theta_face + 0.5*M_PI);
+            const Real ny  = std::sin(theta_face + 0.5*M_PI);
+            const Real nx1 = -std::cos(theta_face);
+            const Real ny1 = -std::sin(theta_face);
+
             for(int pt=0;pt<100;pt++){
                 Real x, y, z, xavg, yavg;
                 Real theta = 2.0*M_PI/npts*pt;
@@ -748,4 +864,551 @@ WindFarm::write_actuator_disks_vtk (const Geometry& geom,
     }
 }
 
+void
+WindFarm::init_dynamic_yaw (const amrex::Real disk_angle0_deg,
+                            const amrex::Real yaw_period,
+                            const amrex::Real windfarm_start_time)
+{
+    if (xloc.empty()) {
+        return;
+    }
 
+    m_dynamic_yaw_enabled = true;
+    m_disk_angle0_deg = disk_angle0_deg;
+    m_yaw_period = yaw_period;
+    m_tau_yaw = yaw_period/3.0;
+    m_yaw_update_idx = 0;
+
+    const int nturb = static_cast<int>(xloc.size());
+    m_yaw_angle_deg.assign(nturb, 0.0);
+    m_yaw_cmd_deg.assign(nturb, 0.0);
+    m_next_update_time.assign(nturb, windfarm_start_time + yaw_period);
+    m_sum_u.assign(nturb, 0.0);
+    m_sum_v.assign(nturb, 0.0);
+    m_sum_t.assign(nturb, 0.0);
+    m_yaw_angle_geom_deg.assign(nturb, 0.0);
+
+    // Initialize per-turbine disk angles in the actuator model.
+    amrex::Vector<amrex::Real> disk_face_angles_deg;
+    get_disk_face_angles_deg(disk_face_angles_deg);
+
+    amrex::Vector<amrex::Real> theta_rad(nturb, 0.0);
+    for (int it = 0; it < nturb; ++it) {
+        theta_rad[it] = disk_face_angles_deg[it] * M_PI/180.0 - 0.5*M_PI;
+    }
+    set_turb_disk_angles(theta_rad);
+}
+
+void
+WindFarm::sample_upstream_uv (const amrex::MultiFab& U_old,
+                              const amrex::MultiFab& V_old,
+                              const amrex::MultiFab& mf_SMark,
+                              amrex::Vector<amrex::Real>& u_sum,
+                              amrex::Vector<amrex::Real>& v_sum,
+                              amrex::Vector<amrex::Real>& counts) const
+{
+    const int nturb = static_cast<int>(xloc.size());
+    u_sum.assign(nturb, 0.0);
+    v_sum.assign(nturb, 0.0);
+    counts.assign(nturb, 0.0);
+
+    if (nturb == 0) {
+        return;
+    }
+
+    Gpu::DeviceVector<Real> d_u_sum(nturb, 0.0);
+    Gpu::DeviceVector<Real> d_v_sum(nturb, 0.0);
+    Gpu::DeviceVector<Real> d_counts(nturb, 0.0);
+
+    Real* d_u_sum_ptr = d_u_sum.data();
+    Real* d_v_sum_ptr = d_v_sum.data();
+    Real* d_counts_ptr = d_counts.data();
+
+    for (MFIter mfi(mf_SMark, TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+        auto SMark_array = mf_SMark.array(mfi);
+        auto u_vel = U_old.array(mfi);
+        auto v_vel = V_old.array(mfi);
+
+        Box tbx = mfi.nodaltilebox(0);
+        ParallelFor(tbx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+            if (SMark_array(i,j,k,0) != -1.0) {
+                int turb_index = static_cast<int>(SMark_array(i,j,k,0));
+                Gpu::Atomic::Add(&d_u_sum_ptr[turb_index], u_vel(i,j,k));
+                Gpu::Atomic::Add(&d_v_sum_ptr[turb_index], v_vel(i,j,k));
+                Gpu::Atomic::Add(&d_counts_ptr[turb_index], 1.0);
+            }
+        });
+    }
+
+    Gpu::copy(Gpu::deviceToHost, d_u_sum.begin(), d_u_sum.end(), u_sum.begin());
+    Gpu::copy(Gpu::deviceToHost, d_v_sum.begin(), d_v_sum.end(), v_sum.begin());
+    Gpu::copy(Gpu::deviceToHost, d_counts.begin(), d_counts.end(), counts.begin());
+
+    amrex::ParallelAllReduce::Sum(u_sum.data(), u_sum.size(),
+                                  amrex::ParallelContext::CommunicatorAll());
+    amrex::ParallelAllReduce::Sum(v_sum.data(), v_sum.size(),
+                                  amrex::ParallelContext::CommunicatorAll());
+    amrex::ParallelAllReduce::Sum(counts.data(), counts.size(),
+                                  amrex::ParallelContext::CommunicatorAll());
+}
+
+void
+WindFarm::accumulate_yaw_samples (const amrex::Vector<amrex::Real>& u_mean,
+                                  const amrex::Vector<amrex::Real>& v_mean,
+                                  const amrex::Vector<amrex::Real>& counts,
+                                  const amrex::Real dt)
+{
+    const int nturb = static_cast<int>(xloc.size());
+    for (int it = 0; it < nturb; ++it) {
+        if (counts[it] > 0.0) {
+            m_sum_u[it] += u_mean[it] * dt;
+            m_sum_v[it] += v_mean[it] * dt;
+            m_sum_t[it] += dt;
+        }
+    }
+}
+
+bool
+WindFarm::update_yaw_controller (const amrex::Real time,
+                                 const amrex::Real dt)
+{
+    if (!m_dynamic_yaw_enabled) {
+        return false;
+    }
+
+    const amrex::Real step_end = time + dt;
+    const amrex::Real eps = 1e-12;
+    const int nturb = static_cast<int>(xloc.size());
+
+    bool did_cmd_update = false;
+
+    // Command update (boxcar over yaw_period)
+    for (int it = 0; it < nturb; ++it) {
+        if (step_end + eps >= m_next_update_time[it]) {
+            if (m_sum_t[it] > 0.0) {
+                const amrex::Real u_bar = m_sum_u[it] / m_sum_t[it];
+                const amrex::Real v_bar = m_sum_v[it] / m_sum_t[it];
+                const amrex::Real phi_deg = std::atan2(v_bar, u_bar) * 180.0 / M_PI;
+                const amrex::Real disk_face_cmd_deg = wrap_360(phi_deg + 90.0);
+                m_yaw_cmd_deg[it] = wrap_180(disk_face_cmd_deg - m_disk_angle0_deg);
+            }
+            m_sum_u[it] = 0.0;
+            m_sum_v[it] = 0.0;
+            m_sum_t[it] = 0.0;
+
+            while (m_next_update_time[it] <= step_end + eps) {
+                m_next_update_time[it] += m_yaw_period;
+            }
+
+            did_cmd_update = true;
+        }
+    }
+
+    // Smooth yaw actuator (first-order) every timestep
+    for (int it = 0; it < nturb; ++it) {
+        const amrex::Real e = wrap_180(m_yaw_cmd_deg[it] - m_yaw_angle_deg[it]);
+        m_yaw_angle_deg[it] = wrap_180(m_yaw_angle_deg[it] + (dt / m_tau_yaw) * e);
+    }
+
+    // Push per-turbine disk angles down into the actuator model each timestep.
+    amrex::Vector<amrex::Real> disk_face_angles_deg;
+    get_disk_face_angles_deg(disk_face_angles_deg);
+    amrex::Vector<amrex::Real> theta_rad(nturb, 0.0);
+    for (int it = 0; it < nturb; ++it) {
+        theta_rad[it] = disk_face_angles_deg[it] * M_PI/180.0 - 0.5*M_PI;
+    }
+    set_turb_disk_angles(theta_rad);
+
+    if (did_cmd_update) {
+        ++m_yaw_update_idx;
+        write_yaw_angles_time_series(step_end);
+    }
+
+    return did_cmd_update;
+}
+
+bool
+WindFarm::should_rebuild_SMark (const amrex::Real dx_eff) const
+{
+    if (!m_dynamic_yaw_enabled) {
+        return false;
+    }
+    const int nturb = static_cast<int>(xloc.size());
+    const amrex::Real alpha_dx = m_yaw_alpha * dx_eff;
+    for (int it = 0; it < nturb; ++it) {
+        const amrex::Real dpsi_deg = wrap_180(m_yaw_angle_deg[it] - m_yaw_angle_geom_deg[it]);
+        const amrex::Real rim_disp = rotor_rad * std::abs(dpsi_deg) * M_PI/180.0;
+        if (rim_disp > alpha_dx) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void
+WindFarm::commit_yaw_geometry ()
+{
+    m_yaw_angle_geom_deg = m_yaw_angle_deg;
+}
+
+void
+WindFarm::get_disk_face_angles_deg (amrex::Vector<amrex::Real>& disk_face_angles_deg) const
+{
+    const int nturb = static_cast<int>(xloc.size());
+    disk_face_angles_deg.resize(nturb);
+    for (int it = 0; it < nturb; ++it) {
+        const amrex::Real dyn =
+            (m_dynamic_yaw_enabled && it < static_cast<int>(m_yaw_angle_deg.size())) ? m_yaw_angle_deg[it] : 0.0;
+        const amrex::Real off =
+            (it < static_cast<int>(m_yaw_offset_deg.size())) ? m_yaw_offset_deg[it] : 0.0;
+        disk_face_angles_deg[it] = wrap_360(m_disk_angle0_deg + dyn + off);
+    }
+}
+
+void
+WindFarm::fill_SMark_multifab_dynamic (const amrex::Geometry& geom,
+                                       amrex::MultiFab& mf_SMark,
+                                       const amrex::Real& sampling_distance_by_D,
+                                       const amrex::Vector<amrex::Real>& disk_face_angles_deg,
+                                       std::unique_ptr<amrex::MultiFab>& z_phys_cc)
+{
+    amrex::Gpu::DeviceVector<Real> d_xloc(xloc.size());
+    amrex::Gpu::DeviceVector<Real> d_yloc(yloc.size());
+    amrex::Gpu::DeviceVector<Real> d_zloc(yloc.size());
+    amrex::Gpu::copyAsync(amrex::Gpu::hostToDevice, xloc.begin(), xloc.end(), d_xloc.begin());
+    amrex::Gpu::copyAsync(amrex::Gpu::hostToDevice, yloc.begin(), yloc.end(), d_yloc.begin());
+    amrex::Gpu::copyAsync(amrex::Gpu::hostToDevice, zloc.begin(), zloc.end(), d_zloc.begin());
+
+    const int num_turb = static_cast<int>(xloc.size());
+
+    amrex::Vector<amrex::Real> theta_rad(num_turb, 0.0);
+    amrex::Vector<amrex::Real> nx_h(num_turb, 0.0);
+    amrex::Vector<amrex::Real> ny_h(num_turb, 0.0);
+    for (int it = 0; it < num_turb; ++it) {
+        theta_rad[it] = disk_face_angles_deg[it] * M_PI/180.0 - 0.5*M_PI;
+        nx_h[it] = -std::cos(theta_rad[it]);
+        ny_h[it] = -std::sin(theta_rad[it]);
+    }
+    set_turb_disk_angles(theta_rad);
+
+    amrex::Gpu::DeviceVector<Real> d_nx(num_turb);
+    amrex::Gpu::DeviceVector<Real> d_ny(num_turb);
+    amrex::Gpu::copyAsync(amrex::Gpu::hostToDevice, nx_h.begin(), nx_h.end(), d_nx.begin());
+    amrex::Gpu::copyAsync(amrex::Gpu::hostToDevice, ny_h.begin(), ny_h.end(), d_ny.begin());
+
+    Real* d_xloc_ptr     = d_xloc.data();
+    Real* d_yloc_ptr     = d_yloc.data();
+    Real* d_zloc_ptr     = d_zloc.data();
+    Real* d_nx_ptr       = d_nx.data();
+    Real* d_ny_ptr       = d_ny.data();
+
+    Real d_rotor_rad = rotor_rad;
+    Real d_hub_height = hub_height;
+    Real d_sampling_distance = sampling_distance_by_D*2.0*rotor_rad;
+
+    mf_SMark.setVal(-1.0);
+
+    int i_lo = geom.Domain().smallEnd(0); int i_hi = geom.Domain().bigEnd(0);
+    int j_lo = geom.Domain().smallEnd(1); int j_hi = geom.Domain().bigEnd(1);
+    int k_lo = geom.Domain().smallEnd(2); int k_hi = geom.Domain().bigEnd(2);
+    auto dx = geom.CellSizeArray();
+    auto ProbLoArr = geom.ProbLoArray();
+
+    for (MFIter mfi(mf_SMark, TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+        const Box& gbx = mfi.growntilebox(1);
+        auto SMark_array = mf_SMark.array(mfi);
+        const Array4<const Real>& z_cc_arr = (z_phys_cc) ? z_phys_cc->const_array(mfi) : Array4<Real>{};
+
+        ParallelFor(gbx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+            int ii = amrex::min(amrex::max(i, i_lo), i_hi);
+            int jj = amrex::min(amrex::max(j, j_lo), j_hi);
+            int kk = amrex::min(amrex::max(k, k_lo), k_hi);
+
+            Real x1 = ProbLoArr[0] + ii*dx[0];
+            Real x2 = ProbLoArr[0] + (ii+1)*dx[0];
+            Real y1 = ProbLoArr[1] + jj*dx[1];
+            Real y2 = ProbLoArr[1] + (jj+1)*dx[1];
+
+            Real z = (z_cc_arr) ? z_cc_arr(ii,jj,kk) : ProbLoArr[2] + (kk+0.5) * dx[2];
+
+            int turb_indices_overlap[2];
+            int check_int = 0;
+
+            for (int it = 0; it < num_turb; ++it) {
+                Real nx = d_nx_ptr[it];
+                Real ny = d_ny_ptr[it];
+
+                Real x0 = d_xloc_ptr[it] + d_sampling_distance*nx;
+                Real y0 = d_yloc_ptr[it] + d_sampling_distance*ny;
+
+                Real z0 = 0.0;
+                if (z_cc_arr) {
+                    z0 = d_zloc_ptr[it];
+                }
+
+                bool is_cell_marked = find_if_marked(x1, x2, y1, y2, x0, y0,
+                                                     nx, ny, d_hub_height+z0, d_rotor_rad, z);
+                if (is_cell_marked) {
+                    SMark_array(i,j,k,0) = it;
+                }
+
+                x0 = d_xloc_ptr[it];
+                y0 = d_yloc_ptr[it];
+
+                is_cell_marked = find_if_marked(x1, x2, y1, y2, x0, y0,
+                                                nx, ny, d_hub_height+z0, d_rotor_rad, z);
+                if (is_cell_marked) {
+                    SMark_array(i,j,k,1) = it;
+                    turb_indices_overlap[check_int] = it;
+                    check_int++;
+                    if (check_int > 1) {
+                        printf("Actuator disks with indices %d and %d are overlapping\n",
+                               turb_indices_overlap[0], turb_indices_overlap[1]);
+                        amrex::Error("Actuator disks are overlapping. Visualize actuator_disks.vtk "
+                                     " and check the windturbine locations input file. Exiting..");
+                    }
+                }
+            }
+        });
+    }
+}
+
+void
+WindFarm::write_dynamic_vtk_series (const amrex::Geometry& geom,
+                                    const amrex::Real& sampling_distance_by_D,
+                                    const amrex::Vector<amrex::Real>& disk_face_angles_deg,
+                                    const amrex::Real time)
+{
+    if (!ParallelDescriptor::IOProcessor()) {
+        return;
+    }
+
+    const std::string suf = vtk_suffix(m_yaw_update_idx);
+
+    const std::string f_turb = "turbine_locations" + suf + ".vtk";
+    const std::string f_all  = "actuator_disks_all" + suf + ".vtk";
+    const std::string f_dom  = "actuator_disks_in_dom" + suf + ".vtk";
+    const std::string f_avg  = "averaging_disks_in_dom" + suf + ".vtk";
+
+    // turbine locations
+    {
+        FILE* fp = fopen(f_turb.c_str(), "w");
+        fprintf(fp, "%s\n","# vtk DataFile Version 3.0");
+        fprintf(fp, "%s\n","Wind turbine locations");
+        fprintf(fp, "%s\n","ASCII");
+        fprintf(fp, "%s\n","DATASET POLYDATA");
+        fprintf(fp, "%s %ld %s\n", "POINTS", xloc.size(), "float");
+        for (int it = 0; it < xloc.size(); ++it) {
+            fprintf(fp, "%0.15g %0.15g %0.15g\n", xloc[it], yloc[it], hub_height + zloc[it]);
+        }
+        fclose(fp);
+    }
+
+    Real sampling_distance = sampling_distance_by_D*2.0*rotor_rad;
+    int npts = 100;
+
+    auto ProbLoArr = geom.ProbLoArray();
+    auto ProbHiArr = geom.ProbHiArray();
+    int num_turb_in_dom = 0;
+    for (int it = 0; it < xloc.size(); ++it) {
+        Real x = xloc[it];
+        Real y = yloc[it];
+        if (x > ProbLoArr[0] and x < ProbHiArr[0] and y > ProbLoArr[1] and y < ProbHiArr[1]) {
+            num_turb_in_dom++;
+        }
+    }
+
+    FILE *fp_all = fopen(f_all.c_str(), "w");
+    FILE *fp_dom = fopen(f_dom.c_str(), "w");
+    FILE *fp_avg = fopen(f_avg.c_str(), "w");
+
+    fprintf(fp_all, "%s\n","# vtk DataFile Version 3.0");
+    fprintf(fp_all, "%s\n","Actuator Disks");
+    fprintf(fp_all, "%s\n","ASCII");
+    fprintf(fp_all, "%s\n","DATASET POLYDATA");
+
+    fprintf(fp_dom, "%s\n","# vtk DataFile Version 3.0");
+    fprintf(fp_dom, "%s\n","Actuator Disks");
+    fprintf(fp_dom, "%s\n","ASCII");
+    fprintf(fp_dom, "%s\n","DATASET POLYDATA");
+
+    fprintf(fp_avg, "%s\n","# vtk DataFile Version 3.0");
+    fprintf(fp_avg, "%s\n","Actuator Disks");
+    fprintf(fp_avg, "%s\n","ASCII");
+    fprintf(fp_avg, "%s\n","DATASET POLYDATA");
+
+    fprintf(fp_all, "%s %ld %s\n", "POINTS", xloc.size()*npts, "float");
+    fprintf(fp_dom, "%s %ld %s\n", "POINTS", static_cast<long int>(num_turb_in_dom*npts), "float");
+    fprintf(fp_avg, "%s %ld %s\n", "POINTS", static_cast<long int>(num_turb_in_dom*npts), "float");
+
+    for (int it = 0; it < xloc.size(); ++it) {
+        const Real disk_face_deg = disk_face_angles_deg[it];
+        const Real theta = disk_face_deg*M_PI/180.0 - 0.5*M_PI;
+
+        Real ehx = std::cos(theta + 0.5*M_PI);
+        Real ehy = std::sin(theta + 0.5*M_PI);
+        Real nx  = -std::cos(theta);
+        Real ny  = -std::sin(theta);
+
+        bool in_dom = (xloc[it] > ProbLoArr[0] and xloc[it] < ProbHiArr[0] and
+                       yloc[it] > ProbLoArr[1] and yloc[it] < ProbHiArr[1]);
+        for (int pt = 0; pt < npts; ++pt) {
+            Real ang = 2.0*M_PI/npts*pt;
+            Real x = xloc[it] + rotor_rad*std::cos(ang)*ehx;
+            Real y = yloc[it] + rotor_rad*std::cos(ang)*ehy;
+            Real z = hub_height + zloc[it] + rotor_rad*std::sin(ang);
+
+            Real xavg = xloc[it] + sampling_distance*nx + rotor_rad*std::cos(ang)*ehx;
+            Real yavg = yloc[it] + sampling_distance*ny + rotor_rad*std::cos(ang)*ehy;
+
+            fprintf(fp_all, "%0.15g %0.15g %0.15g\n", x, y, z);
+            if (in_dom) {
+                fprintf(fp_dom, "%0.15g %0.15g %0.15g\n", x, y, z);
+                fprintf(fp_avg, "%0.15g %0.15g %0.15g\n", xavg, yavg, z);
+            }
+        }
+    }
+
+    fprintf(fp_all, "%s %ld %ld\n", "LINES", xloc.size()*(npts-1), static_cast<long int>(xloc.size()*(npts-1)*3));
+    fprintf(fp_dom, "%s %ld %ld\n", "LINES", static_cast<long int>(num_turb_in_dom*(npts-1)), static_cast<long int>(num_turb_in_dom*(npts-1)*3));
+    fprintf(fp_avg, "%s %ld %ld\n", "LINES", static_cast<long int>(num_turb_in_dom*(npts-1)), static_cast<long int>(num_turb_in_dom*(npts-1)*3));
+
+    for (int it = 0; it < xloc.size(); ++it) {
+        for (int pt = 0; pt < npts-1; ++pt) {
+            fprintf(fp_all, "%ld %ld %ld\n",
+                    static_cast<long int>(2),
+                    static_cast<long int>(it*npts+pt),
+                    static_cast<long int>(it*npts+pt+1));
+        }
+    }
+
+    for (int it = 0; it < num_turb_in_dom; ++it) {
+        for (int pt = 0; pt < npts-1; ++pt) {
+            fprintf(fp_dom, "%ld %ld %ld\n",
+                    static_cast<long int>(2),
+                    static_cast<long int>(it*npts+pt),
+                    static_cast<long int>(it*npts+pt+1));
+            fprintf(fp_avg, "%ld %ld %ld\n",
+                    static_cast<long int>(2),
+                    static_cast<long int>(it*npts+pt),
+                    static_cast<long int>(it*npts+pt+1));
+        }
+    }
+
+    fclose(fp_all);
+    fclose(fp_dom);
+    fclose(fp_avg);
+
+    append_to_pvd("turbine_locations.pvd", f_turb, time);
+    append_to_pvd("actuator_disks_all.pvd", f_all, time);
+    append_to_pvd("actuator_disks_in_dom.pvd", f_dom, time);
+    append_to_pvd("averaging_disks_in_dom.pvd", f_avg, time);
+}
+
+void
+WindFarm::write_yaw_angles_time_series (const amrex::Real time) const
+{
+    if (!ParallelDescriptor::IOProcessor()) {
+        return;
+    }
+
+    static std::ofstream file("yaw_angles_SimpleAD.txt", std::ios::app);
+    static bool wrote_header = false;
+    if (!file.is_open()) {
+        amrex::Abort("Could not open file to write yaw angles (yaw_angles_SimpleAD.txt)");
+    }
+
+    if (!wrote_header) {
+        file << "# time";
+        for (int it = 0; it < m_yaw_angle_deg.size(); ++it) {
+            file << " yaw_turb" << it;
+        }
+        file << "\n";
+        wrote_header = true;
+    }
+
+    file << std::setprecision(17) << time;
+    for (int it = 0; it < m_yaw_angle_deg.size(); ++it) {
+        file << " " << m_yaw_angle_deg[it];
+    }
+    file << "\n";
+    file.flush();
+}
+
+void
+WindFarm::write_dynamic_yaw_state (const std::string& checkpointname) const
+{
+    if (!ParallelDescriptor::IOProcessor()) {
+        return;
+    }
+    if (!m_dynamic_yaw_enabled) {
+        return;
+    }
+
+    std::ofstream out(checkpointname + "/DynamicYawState", std::ios::out | std::ios::trunc);
+    if (!out.good()) {
+        amrex::Abort("Failed to open DynamicYawState for checkpoint write");
+    }
+
+    out << std::setprecision(17);
+    out << "DynamicYawState_v1\n";
+    out << xloc.size() << "\n";
+    out << m_disk_angle0_deg << " " << m_yaw_period << " " << m_tau_yaw << " " << m_yaw_alpha << " " << m_yaw_update_idx << "\n";
+    for (int it = 0; it < xloc.size(); ++it) {
+        out << m_yaw_angle_deg[it] << " " << m_yaw_cmd_deg[it] << " " << m_next_update_time[it] << " "
+            << m_sum_u[it] << " " << m_sum_v[it] << " " << m_sum_t[it] << " " << m_yaw_angle_geom_deg[it] << "\n";
+    }
+}
+
+bool
+WindFarm::read_dynamic_yaw_state (const std::string& restart_chkfile)
+{
+    std::string fname = restart_chkfile + "/DynamicYawState";
+    if (!amrex::FileExists(fname)) {
+        return false;
+    }
+
+    Vector<char> fileCharPtr;
+    ParallelDescriptor::ReadAndBcastFile(fname, fileCharPtr);
+    std::string content(fileCharPtr.dataPtr());
+    std::istringstream is(content, std::istringstream::in);
+
+    std::string tag;
+    is >> tag;
+    if (tag != "DynamicYawState_v1") {
+        amrex::Abort("Unknown DynamicYawState format");
+    }
+
+    int nturb_file = 0;
+    is >> nturb_file;
+    if (nturb_file != xloc.size()) {
+        amrex::Abort("DynamicYawState: number of turbines does not match current configuration");
+    }
+
+    is >> m_disk_angle0_deg >> m_yaw_period >> m_tau_yaw >> m_yaw_alpha >> m_yaw_update_idx;
+    m_dynamic_yaw_enabled = true;
+
+    const int nturb = nturb_file;
+    m_yaw_angle_deg.resize(nturb);
+    m_yaw_cmd_deg.resize(nturb);
+    m_next_update_time.resize(nturb);
+    m_sum_u.resize(nturb);
+    m_sum_v.resize(nturb);
+    m_sum_t.resize(nturb);
+    m_yaw_angle_geom_deg.resize(nturb);
+
+    for (int it = 0; it < nturb; ++it) {
+        is >> m_yaw_angle_deg[it] >> m_yaw_cmd_deg[it] >> m_next_update_time[it]
+           >> m_sum_u[it] >> m_sum_v[it] >> m_sum_t[it] >> m_yaw_angle_geom_deg[it];
+    }
+
+    // Push restored per-turbine angles down into the actuator model.
+    amrex::Vector<amrex::Real> disk_face_angles_deg;
+    get_disk_face_angles_deg(disk_face_angles_deg);
+    amrex::Vector<amrex::Real> theta_rad(nturb, 0.0);
+    for (int it = 0; it < nturb; ++it) {
+        theta_rad[it] = disk_face_angles_deg[it] * M_PI/180.0 - 0.5*M_PI;
+    }
+    set_turb_disk_angles(theta_rad);
+    return true;
+}
