@@ -223,7 +223,9 @@ SimpleAD::source_terms_cellcentered (const Geometry& geom,
     for (int it = 0; it < static_cast<int>(nturbs); ++it) {
         nx_h[it] = -std::cos(turb_disk_angles[it]);
         ny_h[it] = -std::sin(turb_disk_angles[it]);
-        cos_theta_h[it] = std::cos(turb_disk_angles[it]);
+        // Keep the projected disk area positive so turbines facing +x do not
+        // inject momentum in the same direction as a negative-x inflow.
+        cos_theta_h[it] = std::abs(std::cos(turb_disk_angles[it]));
     }
 
     Gpu::DeviceVector<Real> d_nx(nturbs);
