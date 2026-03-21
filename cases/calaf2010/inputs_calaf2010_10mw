@@ -6,27 +6,31 @@
 erf.anelastic = 1
 erf.use_fft   = true
 
-stop_time = 64800.0
+stop_time = 43200.0
 
 amrex.fpe_trap_invalid = 0
 fabarray.mfiter_tile_size = 1024 1024 1024
 
 # ------------------  PROBLEM SIZE & GEOMETRY  -------------------
 geometry.prob_extent =  6400.0 6400.0  1400.0
-amr.n_cell           =   400    400     280
+amr.n_cell           =   640    640     350
 amr.max_level        = 0
 
 geometry.is_periodic = 1 1 0
 
 # ------------------  BOUNDARY CONDITIONS  -------------------
-zlo.type      = "surface_layer"
-erf.most.z0   = 0.15
+zlo.type = "surface_layer"
+erf.surface_layer.flux_type = "custom"
+erf.most.ustar = 0.28
+erf.most.tstar = 0.0
+erf.most.qstar = 0.0
+erf.most.z0 = 0.15
 
 zhi.type = "SlipWall"
 zhi.theta_grad = 0.0
 
 # ------------------  TIME STEP CONTROL  -------------------
-erf.cfl = 0.4
+erf.cfl = 0.3
 
 # ------------------  FORCING TERMS  -------------------
 erf.use_gravity  = true
@@ -56,10 +60,10 @@ erf.dycore_horiz_adv_type  = "Blended_5th6th"
 erf.dycore_vert_adv_type   = "Blended_5th6th"
 erf.dryscal_horiz_adv_type = "Blended_5th6th"
 erf.dryscal_vert_adv_type  = "Blended_5th6th"
-erf.dycore_horiz_upw_frac  = 0.5
-erf.dycore_vert_upw_frac   = 0.3
-erf.dryscal_horiz_upw_frac = 0.5
-erf.dryscal_vert_upw_frac  = 0.3
+erf.dycore_horiz_upw_frac  = 0.25
+erf.dycore_vert_upw_frac   = 0.25
+erf.dryscal_horiz_upw_frac = 0.25
+erf.dryscal_vert_upw_frac  = 0.25
 
 # ------------------  INITIAL CONDITIONS  -------------------
 erf.init_type = "input_sounding"
@@ -89,6 +93,7 @@ erf.turb_disk_angle_from_x = 90.0
 
 erf.dynamic_yaw = true
 erf.yaw_period  = 300
+erf.yaw_file    = "turb_yaw.txt"
 
 # ------------------  OUTPUTS  -------------------
 erf.sum_interval    = 50
@@ -104,7 +109,7 @@ erf.plot_file_1     = plt
 erf.plot_per_1      = 300
 erf.plot_vars_1     = x_velocity y_velocity z_velocity u_t_avg v_t_avg w_t_avg umag_t_avg 
 erf.data_log        = surf_hist.dat mean_profiles.dat flux_profiles.dat sfs_profiles.dat
-erf.profile_int     = 600
+erf.profile_int     = 300
 
 # ------------------  2D SLICES  -------------------
 #erf.do_plane_sampling   = true
