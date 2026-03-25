@@ -874,6 +874,7 @@ private:
     amrex::Vector<amrex::MultiFab> SMark; // A multifab that holds an integer corresponding
                                                    // to the number of the wind turbine to sample
                                                    // velocity upstream of the turbine
+    amrex::Vector<amrex::MultiFab> RMask; // Effective radius for actuator-disk masked cells
 #endif
 
     LandSurface lsm;

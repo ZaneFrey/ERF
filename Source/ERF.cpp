@@ -182,6 +182,7 @@ ERF::ERF_shared ()
     Nturb.resize(nlevs_max);
     vars_windfarm.resize(nlevs_max);
     SMark.resize(nlevs_max);
+    RMask.resize(nlevs_max);
 #endif
 
     qheating_rates.resize(nlevs_max);

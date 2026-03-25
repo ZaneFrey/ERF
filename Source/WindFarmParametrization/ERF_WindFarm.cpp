@@ -635,6 +635,7 @@ WindFarm::fill_SMark_multifab_mesoscale_models (const Geometry& geom,
 void
 WindFarm::fill_SMark_multifab (const Geometry& geom,
                                MultiFab& mf_SMark,
+                               MultiFab& mf_RMask,
                                const Real& sampling_distance_by_D,
                                const Real& turb_disk_angle,
                                std::unique_ptr<MultiFab>& z_phys_cc)
@@ -655,6 +656,7 @@ WindFarm::fill_SMark_multifab (const Geometry& geom,
     Real* d_zloc_ptr     = d_zloc.data();
 
     mf_SMark.setVal(-1.0);
+    mf_RMask.setVal(-1.0);
 
     int i_lo = geom.Domain().smallEnd(0); int i_hi = geom.Domain().bigEnd(0);
     int j_lo = geom.Domain().smallEnd(1); int j_hi = geom.Domain().bigEnd(1);
@@ -679,6 +681,7 @@ WindFarm::fill_SMark_multifab (const Geometry& geom,
     for ( MFIter mfi(mf_SMark,TilingIfNotGPU()); mfi.isValid(); ++mfi) {
         const Box& gbx      = mfi.growntilebox(1);
         auto  SMark_array = mf_SMark.array(mfi);
+        auto  RMask_array = mf_RMask.array(mfi);
 
         const Array4<const Real>& z_cc_arr = (z_phys_cc) ? z_phys_cc->const_array(mfi) : Array4<Real>{};
 
@@ -721,6 +724,16 @@ WindFarm::fill_SMark_multifab (const Geometry& geom,
                                                 nx, ny, d_hub_height+z0, d_rotor_rad, z);
                 if(is_cell_marked) {
                     SMark_array(i,j,k,1) = it;
+                    Real xc = ProbLoArr[0] + (ii+0.5_rt)*dx[0];
+                    Real yc = ProbLoArr[1] + (jj+0.5_rt)*dx[1];
+                    Real zhub = d_hub_height + z0;
+                    Real dxp = xc - x0;
+                    Real dyp = yc - y0;
+                    Real dzp = z - zhub;
+                    Real a = dxp*nx + dyp*ny;
+                    Real rx = dxp - a*nx;
+                    Real ry = dyp - a*ny;
+                    RMask_array(i,j,k,0) = std::sqrt(rx*rx + ry*ry + dzp*dzp);
                     turb_indices_overlap[check_int] = it;
                     check_int++;
                     if(check_int > 1){
@@ -1068,6 +1081,7 @@ WindFarm::get_disk_face_angles_deg (amrex::Vector<amrex::Real>& disk_face_angles
 void
 WindFarm::fill_SMark_multifab_dynamic (const amrex::Geometry& geom,
                                        amrex::MultiFab& mf_SMark,
+                                       amrex::MultiFab& mf_RMask,
                                        const amrex::Real& sampling_distance_by_D,
                                        const amrex::Vector<amrex::Real>& disk_face_angles_deg,
                                        std::unique_ptr<amrex::MultiFab>& z_phys_cc)
@@ -1107,6 +1121,7 @@ WindFarm::fill_SMark_multifab_dynamic (const amrex::Geometry& geom,
     Real d_sampling_distance = sampling_distance_by_D*2.0*rotor_rad;
 
     mf_SMark.setVal(-1.0);
+    mf_RMask.setVal(-1.0);
 
     int i_lo = geom.Domain().smallEnd(0); int i_hi = geom.Domain().bigEnd(0);
     int j_lo = geom.Domain().smallEnd(1); int j_hi = geom.Domain().bigEnd(1);
@@ -1117,6 +1132,7 @@ WindFarm::fill_SMark_multifab_dynamic (const amrex::Geometry& geom,
     for (MFIter mfi(mf_SMark, TilingIfNotGPU()); mfi.isValid(); ++mfi) {
         const Box& gbx = mfi.growntilebox(1);
         auto SMark_array = mf_SMark.array(mfi);
+        auto RMask_array = mf_RMask.array(mfi);
         const Array4<const Real>& z_cc_arr = (z_phys_cc) ? z_phys_cc->const_array(mfi) : Array4<Real>{};
 
         ParallelFor(gbx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
@@ -1159,6 +1175,16 @@ WindFarm::fill_SMark_multifab_dynamic (const amrex::Geometry& geom,
                                                 nx, ny, d_hub_height+z0, d_rotor_rad, z);
                 if (is_cell_marked) {
                     SMark_array(i,j,k,1) = it;
+                    Real xc = ProbLoArr[0] + (ii+0.5_rt)*dx[0];
+                    Real yc = ProbLoArr[1] + (jj+0.5_rt)*dx[1];
+                    Real zhub = d_hub_height + z0;
+                    Real dxp = xc - x0;
+                    Real dyp = yc - y0;
+                    Real dzp = z - zhub;
+                    Real a = dxp*nx + dyp*ny;
+                    Real rx = dxp - a*nx;
+                    Real ry = dyp - a*ny;
+                    RMask_array(i,j,k,0) = std::sqrt(rx*rx + ry*ry + dzp*dzp);
                     turb_indices_overlap[check_int] = it;
                     check_int++;
                     if (check_int > 1) {

@@ -973,7 +973,7 @@ ERF::ReadCheckpointFile ()
                 amrex::Vector<amrex::Real> disk_face_angles_deg;
                 windfarm->get_disk_face_angles_deg(disk_face_angles_deg);
                 for (int lev = 0; lev <= finest_level; ++lev) {
-                    windfarm->fill_SMark_multifab_dynamic(Geom(lev), SMark[lev],
+                    windfarm->fill_SMark_multifab_dynamic(Geom(lev), SMark[lev], RMask[lev],
                                                           solverChoice.sampling_distance_by_D,
                                                           disk_face_angles_deg, z_phys_cc[lev]);
                 }

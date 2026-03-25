@@ -76,6 +76,7 @@ public:
 
     void fill_SMark_multifab (const amrex::Geometry& geom,
                               amrex::MultiFab& mf_SMark,
+                              amrex::MultiFab& mf_RMask,
                               const amrex::Real& sampling_distance_by_D,
                               const amrex::Real& turb_disk_angle,
                               std::unique_ptr<amrex::MultiFab>& z_phys_cc);
@@ -123,6 +124,7 @@ public:
 
     void fill_SMark_multifab_dynamic (const amrex::Geometry& geom,
                                       amrex::MultiFab& mf_SMark,
+                                      amrex::MultiFab& mf_RMask,
                                       const amrex::Real& sampling_distance_by_D,
                                       const amrex::Vector<amrex::Real>& disk_face_angles_deg,
                                       std::unique_ptr<amrex::MultiFab>& z_phys_cc);

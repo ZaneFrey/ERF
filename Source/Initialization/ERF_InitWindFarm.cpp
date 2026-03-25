@@ -61,12 +61,12 @@ ERF::init_windfarm (int lev)
             !solverChoice.yaw_file.empty()) {
             amrex::Vector<amrex::Real> disk_face_angles_deg;
             windfarm->get_disk_face_angles_deg(disk_face_angles_deg);
-            windfarm->fill_SMark_multifab_dynamic(geom[lev], SMark[lev],
+            windfarm->fill_SMark_multifab_dynamic(geom[lev], SMark[lev], RMask[lev],
                                                   solverChoice.sampling_distance_by_D,
                                                   disk_face_angles_deg,
                                                   z_phys_cc[lev]);
         } else {
-            windfarm->fill_SMark_multifab(geom[lev], SMark[lev],
+            windfarm->fill_SMark_multifab(geom[lev], SMark[lev], RMask[lev],
                                           solverChoice.sampling_distance_by_D,
                                           solverChoice.turb_disk_angle,
                                           z_phys_cc[lev]);

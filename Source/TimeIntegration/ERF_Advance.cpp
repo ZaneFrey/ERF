@@ -190,7 +190,7 @@ ERF::Advance (int lev, Real time, Real dt_lev, int iteration, int /*ncycle*/)
                 amrex::Vector<amrex::Real> disk_face_angles_deg;
                 windfarm->get_disk_face_angles_deg(disk_face_angles_deg);
                 for (int lev2 = 0; lev2 <= finest_level; ++lev2) {
-                    windfarm->fill_SMark_multifab_dynamic(Geom(lev2), SMark[lev2],
+                    windfarm->fill_SMark_multifab_dynamic(Geom(lev2), SMark[lev2], RMask[lev2],
                                                           solverChoice.sampling_distance_by_D,
                                                           disk_face_angles_deg, z_phys_cc[lev2]);
                 }

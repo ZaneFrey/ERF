@@ -359,6 +359,7 @@ ERF::init_stuff (int lev, const BoxArray& ba, const DistributionMapping& dm,
         Nturb[lev].define(ba, dm, 1, ngrow_state); // Number of turbines in a cell
         SMark[lev].define(ba, dm, 2, 1); // Free stream velocity/source term
                                                    // sampling marker in a cell - 2 components
+        RMask[lev].define(ba, dm, 1, 1); // Effective radius for actuator-disk masked cells
 #endif
 
     if(solverChoice.init_type == InitType::HindCast and
