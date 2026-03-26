@@ -21,6 +21,8 @@ ERF::init_windfarm (int lev)
                               solverChoice.windfarm_type == WindFarmType::GeneralAD);
     const bool defer_ad_outputs = is_ad_model && (solverChoice.windfarm_start_time > 0.0);
 
+    windfarm->set_wake_rotation_params(solverChoice.wake_rotation, 9.0, 0.9);
+
     if(solverChoice.windfarm_loc_type == WindFarmLocType::lat_lon) {
         windfarm->read_tables(solverChoice.windfarm_loc_table,
                               solverChoice.windfarm_spec_table,
@@ -101,9 +103,10 @@ ERF::advance_windfarm (const Geometry& a_geom,
                        MultiFab& W_old,
                        MultiFab& mf_vars_windfarm,
                        const MultiFab& mf_Nturb,
+                       const MultiFab& mf_RMask,
                        const MultiFab& mf_SMark,
                        const Real& time)
 {
         windfarm->advance(a_geom, dt_advance, cons_in, mf_vars_windfarm,
-                          U_old, V_old, W_old, mf_Nturb, mf_SMark, time);
+                          U_old, V_old, W_old, mf_Nturb, mf_RMask, mf_SMark, time);
 }

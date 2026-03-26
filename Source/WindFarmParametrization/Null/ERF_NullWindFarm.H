@@ -22,6 +22,7 @@ public:
                           amrex::MultiFab& V_old,
                           amrex::MultiFab& W_old,
                           const amrex::MultiFab& mf_Nturb,
+                          const amrex::MultiFab& mf_RMask,
                           const amrex::MultiFab& mf_SMark,
                           const amrex::Real& time) = 0;
 
@@ -43,6 +44,11 @@ public:
     {
         m_xloc = xloc;
         m_yloc = yloc;
+    }
+
+    virtual void set_turb_zloc (const amrex::Vector<amrex::Real>& zloc)
+    {
+        m_zloc = zloc;
     }
 
     virtual void set_turb_disk_angle (const amrex::Real& turb_disk_angle)
@@ -86,6 +92,15 @@ public:
         m_blade_pitch = blade_pitch;
     }
 
+    virtual void set_wake_rotation_params (const bool wake_rotation,
+                                           const amrex::Real tsr,
+                                           const amrex::Real C_P_prime)
+    {
+        m_wake_rotation = wake_rotation;
+        m_tsr = tsr;
+        m_C_P_prime = C_P_prime;
+    }
+
     void get_turb_spec (amrex::Real& rotor_rad, amrex::Real& hub_height,
                         amrex::Real& thrust_coeff_standing, amrex::Vector<amrex::Real>& wind_speed,
                         amrex::Vector<amrex::Real>& thrust_coeff, amrex::Vector<amrex::Real>& power)
@@ -103,6 +118,11 @@ public:
     {
         xloc = m_xloc;
         yloc = m_yloc;
+    }
+
+    void get_turb_zloc (amrex::Vector<amrex::Real>& zloc)
+    {
+        zloc = m_zloc;
     }
 
     void get_turb_disk_angle (amrex::Real& turb_disk_angle)
@@ -144,6 +164,15 @@ public:
         C_T = m_C_T;
         rotor_RPM = m_rotor_RPM;
         blade_pitch = m_blade_pitch;
+    }
+
+    void get_wake_rotation_params (bool& wake_rotation,
+                                   amrex::Real& tsr,
+                                   amrex::Real& C_P_prime)
+    {
+        wake_rotation = m_wake_rotation;
+        tsr = m_tsr;
+        C_P_prime = m_C_P_prime;
     }
 
 static AMREX_GPU_DEVICE
@@ -189,7 +218,7 @@ bool find_if_marked (amrex::Real x1, amrex::Real x2, amrex::Real y1, amrex::Real
 
 protected:
 
-    amrex::Vector<amrex::Real> m_xloc, m_yloc;
+    amrex::Vector<amrex::Real> m_xloc, m_yloc, m_zloc;
     amrex::Real m_turb_disk_angle;
     amrex::Vector<amrex::Real> m_turb_disk_angles;
     amrex::Real m_hub_height, m_rotor_rad, m_thrust_coeff_standing, m_nominal_power;
@@ -197,6 +226,9 @@ protected:
     amrex::Vector<amrex::Real> m_bld_rad_loc, m_bld_twist, m_bld_chord;
     amrex::Vector<amrex::Vector<amrex::Real>> m_bld_airfoil_aoa, m_bld_airfoil_Cl, m_bld_airfoil_Cd;
     amrex::Vector<amrex::Real> m_velocity, m_C_P, m_C_T, m_rotor_RPM, m_blade_pitch;
+    bool m_wake_rotation{false};
+    amrex::Real m_tsr{9.0};
+    amrex::Real m_C_P_prime{0.9};
 };
 
 

@@ -13,14 +13,17 @@ SimpleAD::advance (const Geometry& geom,
                    MultiFab& V_old,
                    MultiFab& W_old,
                    const MultiFab& mf_Nturb,
+                   const MultiFab& mf_RMask,
                    const MultiFab& mf_SMark,
                    const Real& time)
 {
     AMREX_ALWAYS_ASSERT(W_old.nComp() > 0);
     AMREX_ALWAYS_ASSERT(mf_Nturb.nComp() > 0);
+    AMREX_ALWAYS_ASSERT(mf_RMask.nComp() > 0);
+    AMREX_ALWAYS_ASSERT(mf_vars_simpleAD.nComp() > 2);
     compute_freestream_velocity(cons_in, U_old, V_old, mf_SMark);
-    source_terms_cellcentered(geom, cons_in, mf_SMark, mf_vars_simpleAD);
-    update(dt_advance, cons_in, U_old, V_old, mf_vars_simpleAD);
+    source_terms_cellcentered(geom, cons_in, mf_SMark, mf_RMask, mf_vars_simpleAD);
+    update(dt_advance, cons_in, U_old, V_old, W_old, mf_vars_simpleAD);
     compute_power_output(time);
 }
 
@@ -67,7 +70,9 @@ SimpleAD::compute_power_output (const Real& time)
 void
 SimpleAD::update (const Real& dt_advance,
                   MultiFab& cons_in,
-                  MultiFab& U_old, MultiFab& V_old,
+                  MultiFab& U_old,
+                  MultiFab& V_old,
+                  MultiFab& W_old,
                   const MultiFab& mf_vars_simpleAD)
 {
 
@@ -75,12 +80,14 @@ SimpleAD::update (const Real& dt_advance,
 
         Box tbx = mfi.nodaltilebox(0);
         Box tby = mfi.nodaltilebox(1);
+        Box tbz = mfi.nodaltilebox(2);
 
         auto simpleAD_array = mf_vars_simpleAD.array(mfi);
         auto u_vel       = U_old.array(mfi);
         auto v_vel       = V_old.array(mfi);
+        auto w_vel       = W_old.array(mfi);
 
-        ParallelFor(tbx, tby,
+        ParallelFor(tbx, tby, tbz,
         [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept
         {
             u_vel(i,j,k) = u_vel(i,j,k) + (simpleAD_array(i-1,j,k,0) + simpleAD_array(i,j,k,0))/2.0*dt_advance;
@@ -88,6 +95,10 @@ SimpleAD::update (const Real& dt_advance,
         [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept
         {
             v_vel(i,j,k) = v_vel(i,j,k) + (simpleAD_array(i,j-1,k,1) + simpleAD_array(i,j,k,1))/2.0*dt_advance;
+        },
+        [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept
+        {
+            w_vel(i,j,k) = w_vel(i,j,k) + (simpleAD_array(i,j,k-1,2) + simpleAD_array(i,j,k,2))/2.0*dt_advance;
         });
     }
 }
@@ -171,19 +182,25 @@ void
 SimpleAD::source_terms_cellcentered (const Geometry& geom,
                                      const MultiFab& cons_in,
                                      const MultiFab& mf_SMark,
+                                     const MultiFab& mf_RMask,
                                      MultiFab& mf_vars_simpleAD)
 {
 
     get_turb_loc(xloc, yloc);
+    get_turb_zloc(zloc);
     get_turb_spec(rotor_rad, hub_height, thrust_coeff_standing,
                   wind_speed, thrust_coeff, power);
+    get_wake_rotation_params(wake_rotation, tsr, C_P_prime);
 
     Gpu::DeviceVector<Real> d_xloc(xloc.size());
     Gpu::DeviceVector<Real> d_yloc(yloc.size());
+    Gpu::DeviceVector<Real> d_zloc(zloc.size());
     Gpu::copy(Gpu::hostToDevice, xloc.begin(), xloc.end(), d_xloc.begin());
     Gpu::copy(Gpu::hostToDevice, yloc.begin(), yloc.end(), d_yloc.begin());
+    Gpu::copy(Gpu::hostToDevice, zloc.begin(), zloc.end(), d_zloc.begin());
 
       auto dx = geom.CellSizeArray();
+      auto ProbLoArr = geom.ProbLoArray();
 
   // Domain valid box
       const amrex::Box& domain = geom.Domain();
@@ -198,6 +215,16 @@ SimpleAD::source_terms_cellcentered (const Geometry& geom,
       mf_vars_simpleAD.setVal(0.0);
 
       long unsigned int nturbs = xloc.size();
+
+     Real* d_xloc_ptr = d_xloc.data();
+     Real* d_yloc_ptr = d_yloc.data();
+     Real* d_zloc_ptr = d_zloc.data();
+     const Real d_hub_height = hub_height;
+     const Real d_rotor_rad = rotor_rad;
+     const bool d_wake_rotation = wake_rotation;
+     const Real d_tsr = tsr;
+     const Real d_C_P_prime = C_P_prime;
+     const Real eps = 1.0e-12;
 
      Gpu::DeviceVector<Real> d_freestream_velocity(nturbs);
      Gpu::DeviceVector<Real> d_freestream_phi(nturbs);
@@ -254,6 +281,7 @@ SimpleAD::source_terms_cellcentered (const Geometry& geom,
 
         const Box& gbx      = mfi.growntilebox(1);
         auto SMark_array    = mf_SMark.array(mfi);
+        auto RMask_array    = mf_RMask.const_array(mfi);
         auto simpleAD_array = mf_vars_simpleAD.array(mfi);
 
         ParallelFor(gbx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
@@ -264,6 +292,7 @@ SimpleAD::source_terms_cellcentered (const Geometry& geom,
 
             Real source_x = 0.0;
             Real source_y = 0.0;
+            Real source_z = 0.0;
 
             int it = static_cast<int>(SMark_array(ii,jj,kk,1));
 
@@ -290,10 +319,42 @@ SimpleAD::source_terms_cellcentered (const Geometry& geom,
                         source_x = S*nx_it;
                         source_y = S*ny_it;
                     }
+
+                    if (d_wake_rotation) {
+                        Real r = RMask_array(ii,jj,kk,0);
+                        if (r > eps) {
+                            Real xc = ProbLoArr[0] + (ii+0.5_rt)*dx[0];
+                            Real yc = ProbLoArr[1] + (jj+0.5_rt)*dx[1];
+                            Real z = ProbLoArr[2] + (kk+0.5_rt)*dx[2];
+                            Real x0 = d_xloc_ptr[it];
+                            Real y0 = d_yloc_ptr[it];
+                            Real zhub = d_hub_height + d_zloc_ptr[it];
+                            Real dxp = xc - x0;
+                            Real dyp = yc - y0;
+                            Real dzp = z - zhub;
+                            Real a = dxp*nx_it + dyp*ny_it;
+                            Real rx = dxp - a*nx_it;
+                            Real ry = dyp - a*ny_it;
+                            Real omega = d_tsr * Uinfty_dot_nhat / d_rotor_rad;
+                            Real omega_r = omega * r;
+                            if (std::abs(omega_r) > eps) {
+                                Real DeltaA = dx[1] * dx[2] * cos_theta_it;
+                                Real P = 0.5*d_C_P_prime*Uinfty_dot_nhat*Uinfty_dot_nhat*
+                                         (Uinfty_dot_nhat/(omega_r))*(DeltaA/(dx[0]*dx[1]*dx[2]));
+                                Real t_x = ny_it*dzp/r;
+                                Real t_y = -nx_it*dzp/r;
+                                Real t_z = (nx_it*ry - ny_it*rx)/r;
+                                source_x += P*t_x;
+                                source_y += P*t_y;
+                                source_z += P*t_z;
+                            }
+                        }
+                    }
              }
 
             simpleAD_array(i,j,k,0) = source_x;
             simpleAD_array(i,j,k,1) = source_y;
+            simpleAD_array(i,j,k,2) = source_z;
          });
     }
 }

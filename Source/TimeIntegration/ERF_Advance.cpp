@@ -218,7 +218,7 @@ ERF::Advance (int lev, Real time, Real dt_lev, int iteration, int /*ncycle*/)
 
             advance_windfarm(Geom(lev), dt_windfarm, S_old,
                              U_old, V_old, W_old, vars_windfarm[lev],
-                             Nturb[lev], SMark[lev], windfarm_time_for_io);
+                             Nturb[lev], RMask[lev], SMark[lev], windfarm_time_for_io);
         }
     }
 

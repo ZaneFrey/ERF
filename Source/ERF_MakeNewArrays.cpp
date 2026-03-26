@@ -351,7 +351,7 @@ ERF::init_stuff (int lev, const BoxArray& ba, const DistributionMapping& dm,
         vars_windfarm[lev].define(ba, dm, 3, ngrow_state); // dudt, dvdt, dTKEdt
     }
     if (solverChoice.windfarm_type == WindFarmType::SimpleAD) {
-        vars_windfarm[lev].define(ba, dm, 2, ngrow_state);// dudt, dvdt
+        vars_windfarm[lev].define(ba, dm, 3, ngrow_state);// dudt, dvdt, dwdt
     }
     if (solverChoice.windfarm_type == WindFarmType::GeneralAD) {
         vars_windfarm[lev].define(ba, dm, 3, ngrow_state);// dudt, dvdt, dwdt

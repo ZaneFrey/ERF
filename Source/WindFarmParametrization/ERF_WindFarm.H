@@ -147,11 +147,12 @@ public:
                   amrex::MultiFab& V_old,
                   amrex::MultiFab& W_old,
                   const amrex::MultiFab& mf_Nturb,
+                  const amrex::MultiFab& mf_RMask,
                   const amrex::MultiFab& mf_SMark,
                   const amrex::Real& time) override
     {
         m_windfarm_model[0]->advance(a_geom, dt_advance, cons_in, mf_vars_windfarm,
-                                     U_old, V_old, W_old, mf_Nturb, mf_SMark, time);
+                                     U_old, V_old, W_old, mf_Nturb, mf_RMask, mf_SMark, time);
     }
 
     void set_turb_spec (const amrex::Real& a_rotor_rad, const amrex::Real& a_hub_height,
@@ -167,6 +168,11 @@ public:
                        const amrex::Vector<amrex::Real>& a_yloc) override
     {
         m_windfarm_model[0]->set_turb_loc(a_xloc, a_yloc);
+    }
+
+    void set_turb_zloc (const amrex::Vector<amrex::Real>& a_zloc) override
+    {
+        m_windfarm_model[0]->set_turb_zloc(a_zloc);
     }
 
     void set_turb_disk_angle (const amrex::Real& a_turb_disk_angle) override
@@ -200,6 +206,25 @@ public:
                               const amrex::Vector<amrex::Real>& a_blade_pitch) override
     {
         m_windfarm_model[0]->set_turb_spec_extra(a_velocity, a_C_P, a_C_T, a_rotor_RPM, a_blade_pitch);
+    }
+
+    void set_wake_rotation_params (const bool wake_rotation,
+                                   const amrex::Real tsr,
+                                   const amrex::Real C_P_prime) override
+    {
+        m_windfarm_model[0]->set_wake_rotation_params(wake_rotation, tsr, C_P_prime);
+    }
+
+    void get_turb_zloc (amrex::Vector<amrex::Real>& a_zloc)
+    {
+        m_windfarm_model[0]->get_turb_zloc(a_zloc);
+    }
+
+    void get_wake_rotation_params (bool& wake_rotation,
+                                   amrex::Real& tsr,
+                                   amrex::Real& C_P_prime)
+    {
+        m_windfarm_model[0]->get_wake_rotation_params(wake_rotation, tsr, C_P_prime);
     }
 
 protected:

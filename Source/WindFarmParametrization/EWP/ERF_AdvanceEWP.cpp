@@ -14,9 +14,11 @@ EWP::advance (const Geometry& geom,
               MultiFab& V_old,
               MultiFab& W_old,
               const MultiFab& mf_Nturb,
+              const MultiFab& mf_RMask,
               const MultiFab& mf_SMark,
               const Real& time)
  {
+    (void) mf_RMask;
     AMREX_ALWAYS_ASSERT(mf_SMark.nComp() > 0);
     AMREX_ALWAYS_ASSERT(time > -1.0);
     source_terms_cellcentered(geom, cons_in, mf_vars_ewp, U_old, V_old, W_old, mf_Nturb);

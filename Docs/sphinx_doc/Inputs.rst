@@ -1318,6 +1318,9 @@ List of Parameters
 |                                     |                        | "SimpleActuator", |                     |
 |                                     |                        | "GeneralActuator" |                     |
 +-------------------------------------+------------------------+-------------------+---------------------+
+| **erf.wake_rotation**               | Enable tangential wake | true / false      | false               |
+|                                     | forcing for SimpleAD   |                   |                     |
++-------------------------------------+------------------------+-------------------+---------------------+
 | **erf.const_massflux_u**            | Include a momentum     | Real              | 0.                  |
 | **erf.const_massflux_v**            | source at each time,   |                   |                     |
 |                                     | (e.g., representing a  |                   |                     |

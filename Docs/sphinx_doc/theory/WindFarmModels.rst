@@ -366,6 +366,9 @@ The following are the inputs required for wind farm simulations.
     // The angle of the turbine actuator disk from the x axis
     erf.turb_disk_angle_from_x = 135.0
 
+    // Optional: add tangential forcing for wake rotation in SimpleAD
+    erf.wake_rotation = true
+
     // In addition to the above, for generalized actuator disk model the following parameters are needed
 
     // Table containing additional specification information of the wind turbine.
@@ -434,7 +437,7 @@ The following are the inputs required for wind farm simulations.
 .. code-block:: cpp
 
     4
-    119.0 178.0 0.130 2.0
+    119.0 178.0 0.130 2.0 9.0 0.9
     9   0.805    50.0
     10   0.805    50.0
     11   0.805    50.0
@@ -443,6 +446,9 @@ The following are the inputs required for wind farm simulations.
 The first line is the number of pairs of entries for the power curve and thrust coefficient (there are 4 entries in this table which are in the last four lines of the table).
 The second line gives the height in meters of the turbine hub, the diameter in
 meters of the rotor, the standing thrust coefficient, and the nominal power of the turbine in MW.
+For SimpleAD, this line may optionally append the tip speed ratio and ``C_P_prime`` used for
+wake rotation. If ``erf.wake_rotation = true`` and these two values are omitted, ERF uses
+``tsr = 9.0`` and ``C_P_prime = 0.9``.
 The remaining lines (four in this case) contain the three values of: wind speed (m/s), thrust coefficient, and power production in kW.
 
 .. _Outputs:
@@ -455,4 +461,3 @@ Outputs
 
 These `vtk` files can be visualized in both VisIt and ParaView. The `turbine_locations.vtk` can be visualized using the `Points Gaussian` feature in ParaView or the `Mesh`
 feature in VisIt. The `actuator_disks_in_dom.vtk` and `actuator_disks_all.vtk` files can be visualized using the `Wireframe` feature in ParaView or `Mesh` feature in VisIt.
-

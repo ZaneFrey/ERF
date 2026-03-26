@@ -296,8 +296,48 @@ WindFarm::read_windfarm_spec_table (const std::string windfarm_spec_table)
     thrust_coeff.resize(nlines);
     power.resize(nlines);
 
-    Real rotor_dia;
-    file_turb_table >> hub_height >> rotor_dia >> thrust_coeff_standing >> nominal_power;
+    bool wake_rotation = false;
+    Real tsr = 9.0;
+    Real C_P_prime = 0.9;
+    get_wake_rotation_params(wake_rotation, tsr, C_P_prime);
+
+    std::string spec_line;
+    std::getline(file_turb_table, spec_line);
+    while (std::getline(file_turb_table, spec_line)) {
+        if (spec_line.find_first_not_of(" \t\r") != std::string::npos) {
+            break;
+        }
+    }
+
+    if (spec_line.find_first_not_of(" \t\r") == std::string::npos) {
+        Abort("Could not read the second line in " + windfarm_spec_table + ". Aborting.....");
+    }
+
+    std::istringstream spec_stream(spec_line);
+    amrex::Vector<Real> spec_entries;
+    Real spec_entry;
+    while (spec_stream >> spec_entry) {
+        spec_entries.push_back(spec_entry);
+    }
+
+    if (spec_entries.size() != 4 && spec_entries.size() != 6) {
+        Abort("The second line in " + windfarm_spec_table +
+              " must contain either 4 values (hub_height diameter standing_thrust_coeff rated_power) "
+              "or 6 values with optional tsr and C_P_prime appended. Aborting.....");
+    }
+
+    hub_height = spec_entries[0];
+    Real rotor_dia = spec_entries[1];
+    thrust_coeff_standing = spec_entries[2];
+    nominal_power = spec_entries[3];
+    if (spec_entries.size() == 6) {
+        tsr = spec_entries[4];
+        C_P_prime = spec_entries[5];
+    } else if (wake_rotation) {
+        tsr = 9.0;
+        C_P_prime = 0.9;
+    }
+
     rotor_rad = rotor_dia*0.5;
     if(rotor_rad > hub_height) {
         Abort("The blade length is more than the hub height. Check the second line in wind-turbine-1.tbl. Aborting.....");
@@ -316,6 +356,7 @@ WindFarm::read_windfarm_spec_table (const std::string windfarm_spec_table)
 
     set_turb_spec(rotor_rad, hub_height, thrust_coeff_standing,
                   wind_speed, thrust_coeff, power);
+    set_wake_rotation_params(wake_rotation, tsr, C_P_prime);
 
 }
 
@@ -574,6 +615,8 @@ WindFarm::fill_Nturb_multifab (const Geometry& geom,
     for(int it=0;it<num_turb;it++) {
         std::cout << "The value of zloc is " << my_rank << " " << zloc[it] << " " << is_counted[it] << "\n";
     }*/
+
+    set_turb_zloc(zloc);
 }
 
 void

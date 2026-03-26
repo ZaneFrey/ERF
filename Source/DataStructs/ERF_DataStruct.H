@@ -695,6 +695,7 @@ struct SolverChoice {
         pp.query("yaw_file", yaw_file);
         pp.query("windfarm_start_time", windfarm_start_time);
         pp.query("windfarm_ramp_tau", windfarm_ramp_tau);
+        pp.query("wake_rotation", wake_rotation);
 
         pp.query("windfarm_x_shift",windfarm_x_shift);
         pp.query("windfarm_y_shift",windfarm_y_shift);
@@ -808,6 +809,9 @@ struct SolverChoice {
             if (yaw_period <= 0.0) {
                 amrex::Error("To use dynamic yaw, you must provide a positive value for erf.yaw_period (seconds).");
             }
+        }
+        if (wake_rotation && windfarm_type != WindFarmType::SimpleAD) {
+            amrex::Error("Wake rotation is only supported for windfarm_type = SimpleAD");
         }
         if (!yaw_file.empty()) {
             if (!(windfarm_type == WindFarmType::SimpleAD || windfarm_type == WindFarmType::GeneralAD)) {
@@ -1255,6 +1259,7 @@ struct SolverChoice {
     amrex::Real sampling_distance_by_D = -1.0;
     amrex::Real turb_disk_angle = -1.0;
     bool dynamic_yaw = false;
+    bool wake_rotation = false;
     amrex::Real yaw_period = -1.0;
     std::string yaw_file;
     amrex::Real windfarm_start_time = 0.0;

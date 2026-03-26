@@ -21,6 +21,7 @@ public:
                   amrex::MultiFab& V_old,
                   amrex::MultiFab& W_old,
                   const amrex::MultiFab& mf_Nturb,
+                  const amrex::MultiFab& mf_RMask,
                   const amrex::MultiFab& mf_SMark,
                   const amrex::Real& time) override;
 
@@ -55,4 +56,3 @@ protected:
 };
 
 #endif
-
