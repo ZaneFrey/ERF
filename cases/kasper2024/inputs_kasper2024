@@ -6,14 +6,14 @@
 erf.anelastic = 1
 erf.use_fft   = true
 
-stop_time = 14400.0
+stop_time = 7200.0
 
 amrex.fpe_trap_invalid = 0
 fabarray.mfiter_tile_size = 1024 1024 1024
 
 # ------------------  PROBLEM SIZE & GEOMETRY  -------------------
 geometry.prob_extent = 64856.0      10680.0     1000.0
-amr.n_cell           = 2594         427         143
+amr.n_cell           = 2162         427         143
 amr.max_level        = 0
 
 geometry.is_periodic = 0 1 0
@@ -96,20 +96,14 @@ erf.theta_ref = 300.0
 
 erf.molec_diff_type = "None"
 
-#erf.dycore_horiz_adv_type  = "Blended_5th6th"
-#erf.dycore_vert_adv_type   = "Blended_5th6th"
-#erf.dryscal_horiz_adv_type = "Blended_5th6th"
-#erf.dryscal_vert_adv_type  = "Blended_5th6th"
-#erf.dycore_horiz_upw_frac  = 0.3
-#erf.dycore_vert_upw_frac   = 0.3
-#erf.dryscal_horiz_upw_frac = 0.3
-#erf.dryscal_vert_upw_frac  = 0.3
-
-erf.dycore_horiz_adv_type  = "WENOZ7"
-erf.dycore_vert_adv_type   = "WENOZ7"
-erf.dryscal_horiz_adv_type = "WENOZ7"
-erf.dryscal_vert_adv_type  = "WENOZ7"
-
+erf.dycore_horiz_adv_type  = "Blended_5th6th"
+erf.dycore_vert_adv_type   = "Blended_5th6th"
+erf.dryscal_horiz_adv_type = "Blended_5th6th"
+erf.dryscal_vert_adv_type  = "Blended_5th6th"
+erf.dycore_horiz_upw_frac  = 0.3
+erf.dycore_vert_upw_frac   = 0.3
+erf.dryscal_horiz_upw_frac = 0.3
+erf.dryscal_vert_upw_frac  = 0.3
 
 # ------------------  INITIAL CONDITIONS  -------------------
 erf.init_type = "input_sounding"
@@ -130,7 +124,7 @@ prob.pert_rhotheta = false
 # ------------------  WIND FARM (SIMPLE ACTUATOR DISK)  -------------------
 erf.windfarm_type = "SimpleAD"
 erf.windfarm_loc_type = "x_y"
-erf.windfarm_loc_table = "turb_loc_xy_10mw.txt"
+erf.windfarm_loc_table = "turb_loc_xy.txt"
 erf.windfarm_spec_table = "dtu10mw_spec.tbl"
 
 # Required for SimpleAD

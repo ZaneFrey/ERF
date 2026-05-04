@@ -11,33 +11,32 @@ erf.anelastic = 1
 erf.use_fft   = true
 
 # ------------------  PROBLEM SIZE & GEOMETRY  -------------------
-# Domain / base resolution
 geometry.prob_extent = 6400 6400 4000
-amr.n_cell           =  400  400  800
+#amr.n_cell           =  400  400  500
+#amr.n_cell           =  256  256  320
+amr.n_cell           =  400  400  650
 
-# AMR hierarchy: 20 -> 10 -> 5 in z only
+#erf.initial_dz = 5.0
+#erf.grid_stretching_ratio = 1.005084186675
+
 amr.max_level      = 0
-#amr.ref_ratio_vect = 1 1 2  1 1 2
-#erf.dt_ref_ratio   = 2 2
-#erf.regrid_int     = 10
-#amr.n_error_buf    = 0
-
-# Keep flat/non-terrain mesh for MOST compatibility
-#erf.terrain_type   = None
 
 geometry.is_periodic = 1 1 0
 
 
 # ------------------  BOUNDARY CONDITIONS  -------------------
 
-# MOST BOUNDARY (DEFAULT IS ADIABATIC FOR THETA)
+#RICO options
 zlo.type = "surface_layer"
-erf.surface_layer.flux_type = "custom"
-erf.most.ustar  = 0.28   # ustar
-erf.most.tstar  = 8.0e-3 # theta flux
-erf.most.qstar  = 5.2e-5 # qv    flux
-erf.most.z0     = 0.1
-erf.most.zref   = 20.0
+erf.surface_layer.flux_type = "rico" # new MOST type
+erf.most.ustar  = 0.0022 # Cm
+erf.most.tstar  = 0.0029 # Ch
+erf.most.qstar  = 0.0019 # Cq
+erf.most.z0     = 0.1 # from BOMEX
+erf.most.zref   = 20.0 # from BOMEX
+
+erf.most.rico.theta_z0 = 299.1
+erf.most.rico.qsat_z0 = 0.02245
 
 # NOTE: This should have a qv grad too (use hoextrapcc?!)
 zhi.type = "SlipWall"
@@ -51,7 +50,8 @@ zhi.type = "SlipWall"
 #stop_time = 7200    #  2 hours
 #stop_time = 21600   #   6 hours
 #stop_time = 36000   #   10 hours
-stop_time = 43200    #  12 hours
+#stop_time = 43200    #  12 hours
+stop_time = 57600   # 16 hours
 
 erf.cfl = 0.3
 
@@ -92,21 +92,15 @@ erf.buoyancy_type   = 4
 
 
 # ------------------  NUMERICAL SCHEMES  -------------------
-#erf.dycore_horiz_adv_type    = Upwind_3rd
-#erf.dycore_vert_adv_type     = Upwind_3rd
-#erf.dryscal_horiz_adv_type   = Upwind_3rd_SL
-#erf.dryscal_vert_adv_type    = Upwind_3rd_SL
-#erf.moistscal_horiz_adv_type = Upwind_3rd_SL
-#erf.moistscal_vert_adv_type  = Upwind_3rd_SL
 
 erf.dycore_horiz_adv_type  = "Blended_5th6th"
 erf.dycore_vert_adv_type   = "Blended_5th6th"
 erf.dryscal_horiz_adv_type = "Blended_5th6th"
 erf.dryscal_vert_adv_type  = "Blended_5th6th"
-erf.dycore_horiz_upw_frac  = 0.25
-erf.dycore_vert_upw_frac   = 0.25
-erf.dryscal_horiz_upw_frac = 0.25
-erf.dryscal_vert_upw_frac  = 0.25
+erf.dycore_horiz_upw_frac  = 0.5
+erf.dycore_vert_upw_frac   = 0.5
+erf.dryscal_horiz_upw_frac = 0.5
+erf.dryscal_vert_upw_frac  = 0.5
 
 erf.molec_diff_type = "None"
 
@@ -140,18 +134,20 @@ prob.qv_0_Pert_Mag   = 0.000025
 # ------------------  WIND FARM (SAD)  -------------------
 erf.windfarm_type = "SimpleAD"
 erf.windfarm_loc_type = "x_y"
-erf.windfarm_loc_table = "turb_loc_xy_10mw.txt"
-erf.windfarm_spec_table = "dtu10mw_spec.tbl"
-erf.windfarm_start_time = 0
-erf.windfarm_ramp_tau   = 60
+erf.windfarm_loc_table = "turb_loc_xy_10mw_5x5.txt"
+erf.windfarm_spec_table = "dtu10mw_ideal_spec.tbl"
+erf.windfarm_start_time = 21600
+erf.windfarm_ramp_tau   = 600
 
 # Inputs match trade wind direction
-erf.sampling_distance_by_D = 1.5
+erf.sampling_distance_by_D = 1.0
 erf.turb_disk_angle_from_x = 270.0
 
 erf.dynamic_yaw = true
 erf.yaw_period  = 300
-erf.yaw_file    = "turb_yaw.txt"
+erf.yaw_file    = "turb_yaw_5x5.txt"
+
+erf.wake_rotation = true
 
 
 # ------------------  OUTPUTS  -------------------
@@ -165,10 +161,12 @@ amr.v              = 1       # verbosity in Amr.cpp
 erf.check_file      = chk  
 erf.check_per       = 1800
 
+erf.time_avg_vel    = true
+
 # PLOTFILES
 erf.plot_file_1     = plt  
 erf.plot_per_1      = 15
 #erf.plot_vars_1     = density rhotheta x_velocity y_velocity z_velocity pressure temp theta qt qv qc qsat
-erf.plot_vars_1     = x_velocity y_velocity z_velocity theta qt qc qsat
+erf.plot_vars_1     = x_velocity y_velocity z_velocity magvel qc qsat theta w_t_avg umag_t_avg
 erf.data_log        = surf_hist.dat mean_profiles.dat flux_profiles.dat sfs_profiles.dat
 erf.profile_int     = 100

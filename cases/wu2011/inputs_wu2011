@@ -2,48 +2,43 @@
 erf.anelastic = 1
 erf.use_fft   = true
 
-stop_time = 7200.0
+stop_time = 600.0
 
 amrex.fpe_trap_invalid = 0
 fabarray.mfiter_tile_size = 1024 1024 1024
 
 # ------------------  PROBLEM SIZE & GEOMETRY  -------------------
-geometry.prob_extent = 2670.0 2000.0  1000.0
-amr.n_cell           = 267    200     250
+geometry.prob_extent =  4.320   0.720   0.460
+amr.n_cell           =  288     48      64
 amr.max_level        = 0
 
 geometry.is_periodic = 0 1 0
 
 # ------------------  BOUNDARY CONDITIONS  -------------------
+zlo.type = "surface_layer"
+erf.most.z0 = 0.003
+
 xlo.type = "Inflow"
 xhi.type = "Outflow"
+xlo.velocity = 1. 0. 0.
 xlo.dirichlet_file = "inflow_file"
 xlo.density  = 1.0
 xlo.theta = 300.0
-
-zlo.type      = "surface_layer"
-erf.most.z0   = 0.10
 
 zhi.type = "SlipWall"
 zhi.theta_grad = 0.0
 
 # ------------------  TIME STEP CONTROL  -------------------
-erf.cfl = 0.3
+erf.cfl = 0.2
 
 # ------------------  FORCING TERMS  -------------------
-erf.use_gravity  = true
+erf.use_gravity  = false
 
-erf.use_coriolis = false
-erf.abl_driver_type = "PressureGradient"
-erf.abl_pressure_grad = -0.00025 0 0
+# INCLUDE PRESSURE GRADIENT FORCING
 
 # ------------------  NUMERICAL SCHEMES  -------------------
-erf.les_type  = "Deardorff"
-erf.Ck        = 0.1
-erf.sigma_k   = 0.5
-erf.Ce        = 0.93
-erf.Ce_wall   = 3.9
-erf.theta_ref = 300.0
+erf.les_type  = "Smagorinsky"
+erf.Cs = 0.17
 
 erf.molec_diff_type = "None"
 
@@ -62,11 +57,11 @@ erf.sounding_type = Ideal
 erf.input_sounding_file = "input_sounding"
 
 # Turbulence seeding: divergence-free sinusoidal velocity perturbations
-prob.pert_ref_height = 1000.0
+prob.pert_ref_height = 1400.0
 prob.pert_deltaU = 0.5
 prob.pert_deltaV = 0.5
-prob.pert_periods_U = 50.0
-prob.pert_periods_V = 250.0
+prob.pert_periods_U = 32.0
+prob.pert_periods_V = 32.0
 
 # Turbulence seeding: random theta perturbations (not rho*theta)
 prob.T_0_Pert_Mag = 1.0
@@ -75,46 +70,28 @@ prob.pert_rhotheta = false
 # ------------------  WIND FARM (SIMPLE ACTUATOR DISK)  -------------------
 erf.windfarm_type = "SimpleAD"
 erf.windfarm_loc_type = "x_y"
-erf.windfarm_loc_table = "windturbines_loc_xy.txt"
-erf.windfarm_spec_table = "dtu10mw_ideal_spec.tbl"
-erf.windfarm_start_time = 0
-erf.windfarm_ramp_tau   = 300
+erf.windfarm_loc_table = "turb_loc.txt"
+erf.windfarm_spec_table = "ad_spec.tbl"
 
-# Required for SimpleAD
-erf.sampling_distance_by_D = 1.5
+erf.sampling_distance_by_D = 1.0
 erf.turb_disk_angle_from_x = 90.0
-erf.wake_rotation = true
 
 erf.dynamic_yaw = false
-#erf.yaw_period  = 60
-erf.yaw_file    = "turb_yaw_1x1.txt"
+
+erf.wake_rotation = false
 
 # ------------------  OUTPUTS  -------------------
-erf.sum_interval   = 50
-erf.v              = 1
-amr.v              = 1
+erf.sum_interval    = 50
+erf.v               = 1
+amr.v               = 1
 
-# erf.check_file      = chk
-# erf.check_int       = 5000
+erf.check_file      = chk
+erf.check_int       = 2500
 
 erf.time_avg_vel    = true
 
 erf.plot_file_1     = plt
 erf.plot_per_1      = 300
-erf.plot_vars_1     = x_velocity y_velocity z_velocity magvel u_t_avg v_t_avg w_t_avg umag_t_avg
-
+erf.plot_vars_1     = x_velocity y_velocity z_velocity u_t_avg v_t_avg w_t_avg umag_t_avg 
 erf.data_log        = surf_hist.dat mean_profiles.dat flux_profiles.dat sfs_profiles.dat
-erf.profile_int     = 100 # steps
-
-# ------------------  2D SLICES  -------------------
-#erf.do_plane_sampling       = true
-#erf.plane_sampling_interval = 1000   # coarse (level-0) timesteps
-
-# Each plane is defined by two opposite corners (lo/hi) in physical space (m),
-# plus a normal direction: 2=z-normal (xy plane), 1=y-normal (xz), 0=x-normal (yz).
-#
-# Domain here is x:[0,2560], y:[0,2560], z:[0,896] (from geometry.prob_extent).
-#erf.sample_plane_lo   = 0.0    0.0    150.0    0.0    1280.0  0.0     1280.0  0.0    0.0
-#erf.sample_plane_hi   = 2560.0 2560.0 150.0    2560.0 1280.0  896.0   1280.0  2560.0 896.0
-#erf.sample_plane_dir  = 2 1 0
-#erf.sample_plane_name = plane_xy_z150m plane_xz_y1280m plane_yz_x1280m
+erf.profile_int     = 300

@@ -1,0 +1,200 @@
+# ------------------  INPUTS TO MAIN PROGRAM  -------------------
+erf.prob_name = "RICO"
+
+amrex.fpe_trap_invalid = 0
+
+fabarray.mfiter_tile_size = 1024 1024 1024
+
+
+# ------------------  GOVERNING EQUATIONS  -------------------
+erf.anelastic = 1
+erf.use_fft   = true
+
+# ------------------  PROBLEM SIZE & GEOMETRY  -------------------
+# Domain / base resolution
+geometry.prob_extent =  12800     12800    4000
+amr.n_cell           =    128       128     100
+
+geometry.is_periodic = 1 1 0
+
+amr.max_level      = 0
+
+
+# ------------------  BOUNDARY CONDITIONS  -------------------
+
+#RICO options
+zlo.type = "surface_layer"
+erf.surface_layer.flux_type = "rico" # new MOST type
+erf.most.ustar  = 0.001229 # Cm
+erf.most.tstar  = 0.001094 # Ch
+erf.most.qstar  = 0.001133 # Cq
+erf.most.z0     = 0.1 # from BOMEX
+erf.most.zref   = 20.0 # from BOMEX
+erf.most.rico.theta_z0 = 300.0
+erf.most.rico.qsat_z0 = 0.022
+
+zhi.type = "SlipWall"
+
+# ------------------  TIME STEP CONTROL  -------------------
+
+#stop_time = 3600    #  1 hour
+#stop_time = 4800    #  1.5 hours
+#stop_time = 7200    #  2 hours
+#stop_time = 21600   #   6 hours
+#stop_time = 36000   #   10 hours
+#stop_time = 43200   #  12 hours
+stop_time = 86400   #  24 hours
+
+erf.cfl = 0.3
+
+
+# ------------------  FORCING TERMS  -------------------
+erf.alpha_T = 0.0
+erf.alpha_C = 0.0
+erf.use_gravity = true
+
+erf.use_coriolis    = true
+erf.coriolis_3d     = false
+erf.latitude        = 14.982176712702886  # f = 0.376e-4 1/s
+
+erf.add_custom_rhotheta_forcing        = true
+erf.add_custom_moisture_forcing        = true
+erf.add_custom_geostrophic_profile     = true
+erf.add_custom_w_subsidence            = true
+erf.custom_forcing_uses_primitive_vars = true
+
+prob.advection_heating_rate   = -2.8935E-5
+prob.source_cutoff            = 1500.0
+prob.source_cutoff_transition = 1500.0
+
+prob.advection_moisture_rate            = -1.157E-8
+prob.moisture_source_cutoff            	= 2980.0
+prob.moisture_source_cutoff_transition 	= 200.0
+
+prob.wbar_sub_max    = -0.005
+prob.wbar_cutoff_max = 2260.0
+prob.wbar_cutoff_min = 2500.0
+
+prob.custom_TKE      = true
+
+
+# ------------------  MOISTURE / MICROPHYSICS  -------------------
+
+# Saturation Adjustment
+#erf.moisture_model  = "SatAdj"
+#erf.buoyancy_type   = 4
+
+# SAM
+#erf.moisture_model  = "SAM"
+#erf.buoyancy_type   = 1
+
+# Kessler
+#erf.moisture_model  = "Kessler"
+#erf.buoyancy_type   = 1
+
+# SDM 
+erf.moisture_model  = "SuperDroplets"
+erf.buoyancy_type   = 1
+super_droplets_moisture.initial_distribution_type = "uniform"
+super_droplets_moisture.diagnostics_interval = 100
+super_droplets_moisture.coalescence_kernel = "Halls"
+super_droplets_moisture.aerosols = NH4HSO4
+super_droplets_moisture.num_initializations = 2
+super_droplets_moisture.density_scaling = true
+super_droplets_moisture.0.initial_aerosol_distribution_type_NH4HSO4 = "radius_log_normal"
+super_droplets_moisture.0.initial_aerosol_mean_radius_NH4HSO4 = 30.0e-9 #kg (0.03 mu-m)
+#super_droplets_moisture.0.initial_aerosol_mean_radius_NH4HSO4 = 1.5440783508342682e-07 #kg (0.03 mu-m)
+super_droplets_moisture.0.initial_aerosol_std_radius_NH4HSO4 = 0.2468600779315258
+super_droplets_moisture.0.initial_number_density = 9.0e7 #m^{-3}
+super_droplets_moisture.0.initial_particles_per_cell = 64
+super_droplets_moisture.1.initial_aerosol_distribution_type_NH4HSO4 = "radius_log_normal"
+super_droplets_moisture.1.initial_aerosol_mean_radius_NH4HSO4 = 140.0e-9 #kg (0.14 mu-m)
+#super_droplets_moisture.1.initial_aerosol_mean_radius_NH4HSO4 = 2.993331986277269e-06
+super_droplets_moisture.1.initial_aerosol_std_radius_NH4HSO4 = 0.5596157879354227
+super_droplets_moisture.1.initial_number_density = 1.5e7 #m^{-3}
+super_droplets_moisture.1.initial_particles_per_cell = 64
+
+
+# ------------------  NUMERICAL SCHEMES  -------------------
+erf.dycore_horiz_adv_type  = "Blended_5th6th"
+erf.dycore_vert_adv_type   = "Blended_5th6th"
+erf.dryscal_horiz_adv_type = "Blended_5th6th"
+erf.dryscal_vert_adv_type  = "Blended_5th6th"
+erf.dycore_horiz_upw_frac  = 0.3
+erf.dycore_vert_upw_frac   = 0.3
+erf.dryscal_horiz_upw_frac = 0.3
+erf.dryscal_vert_upw_frac  = 0.3
+
+erf.molec_diff_type = "None"
+
+#erf.les_type        = "Smagorinsky"
+#erf.Cs              = 0.17
+
+erf.les_type  = "Deardorff"
+erf.Ck        = 0.1
+erf.sigma_k   = 0.5 
+erf.Ce        = 0.93
+erf.Ce_wall   = 3.9
+erf.theta_ref = 300.0
+
+erf.Pr_t      = 0.33333333333333
+erf.Sc_t      = 0.33333333333333
+
+
+# ------------------  INITIAL CONDITIONS  -------------------
+erf.init_type = "input_sounding"
+erf.init_sounding_ideal = true
+
+prob.U_0_Pert_Mag = 0.01
+prob.V_0_Pert_Mag = 0.01 
+prob.W_0_Pert_Mag = 0.0
+
+prob.pert_ref_height = 1600.0
+prob.T_0_Pert_Mag    = 0.1
+prob.qv_0_Pert_Mag   = 0.000025
+
+
+# ------------------  WIND FARM  -------------------
+erf.windfarm_type = "SimpleAD"
+erf.windfarm_loc_type = "x_y"
+erf.windfarm_loc_table = "turb_loc_xy_10mw.txt"
+erf.windfarm_spec_table = "dtu10mw_spec.tbl"
+erf.windfarm_start_time = 0
+erf.windfarm_ramp_tau   = 60
+
+# Inputs match trade wind direction
+erf.sampling_distance_by_D = 1.5
+erf.turb_disk_angle_from_x = 338.5
+
+erf.dynamic_yaw = true
+erf.yaw_period  = 300
+erf.yaw_file    = "turb_yaw.txt"
+
+
+# ------------------  OUTPUTS  -------------------
+ 
+# DIAGNOSTICS & VERBOSITY
+erf.sum_interval   = 1       # timesteps between computing mass
+erf.v              = 1       # verbosity in ERF.cpp
+amr.v              = 1       # verbosity in Amr.cpp
+erf.data_log       = surf_hist.dat mean_profiles.dat flux_profiles.dat sfs_profiles.dat
+erf.profile_int    = 60
+
+# CHECKPOINT FILES
+erf.check_file      = chk  
+erf.check_per       = 1800
+
+# PLOTFILES
+erf.plot_file_1     = plt  
+erf.plot_per_1      = 900
+#erf.plot_vars_1     = x_velocity y_velocity z_velocity theta qt qc qsat
+
+#   SAM
+#erf.plot_vars_1     = density rhotheta x_velocity y_velocity z_velocity pressure temp theta qt qp qv qc qsat
+
+#   Kessler
+#erf.plot_vars_1     = density rhotheta x_velocity y_velocity z_velocity pressure temp theta qt qp qv qc qsat qrain rain_accum
+
+#   SDM
+erf.plot_vars_1     = density rhotheta x_velocity y_velocity z_velocity pressure temp theta qt qp qv qc qsat qrain rain_accum rel_humidity super_droplets_moisture_number_density
+particles.disable_plt = true
