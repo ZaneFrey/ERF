@@ -38,39 +38,45 @@ std::string vtk_suffix (int idx)
     return oss.str();
 }
 
-void append_to_pvd (const std::string& pvd_name,
-                    const std::string& vtk_file,
-                    const amrex::Real time)
+void append_to_series (const std::string& series_name,
+                       const std::string& vtk_file,
+                       const amrex::Real time)
 {
     std::string header =
-        "<?xml version=\"1.0\"?>\n"
-        "<VTKFile type=\"Collection\" version=\"0.1\" byte_order=\"LittleEndian\">\n"
-        "  <Collection>\n";
+        "{\n"
+        "  \"file-series-version\" : \"1.0\",\n"
+        "  \"files\" : [\n";
     std::string footer =
-        "  </Collection>\n"
-        "</VTKFile>\n";
+        "  ]\n"
+        "}\n";
 
     std::ostringstream dataset;
-    dataset << "    <DataSet timestep=\"" << std::setprecision(17) << time
-            << "\" group=\"\" part=\"0\" file=\"" << vtk_file << "\"/>\n";
+    dataset << "    { \"name\" : \"" << vtk_file
+            << "\", \"time\" : " << std::setprecision(17) << time << " }\n";
 
-    std::ifstream in(pvd_name);
+    std::ifstream in(series_name);
     if (!in.good()) {
-        std::ofstream out(pvd_name, std::ios::out | std::ios::trunc);
+        std::ofstream out(series_name, std::ios::out | std::ios::trunc);
         out << header << dataset.str() << footer;
         return;
     }
 
     std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    auto pos = content.rfind("  </Collection>");
+    if (content.find("\"name\" : \"" + vtk_file + "\"") != std::string::npos) {
+        return;
+    }
+
+    auto pos = content.rfind("  ]");
     if (pos == std::string::npos) {
-        std::ofstream out(pvd_name, std::ios::out | std::ios::trunc);
+        std::ofstream out(series_name, std::ios::out | std::ios::trunc);
         out << header << dataset.str() << footer;
         return;
     }
 
-    content.insert(pos, dataset.str());
-    std::ofstream out(pvd_name, std::ios::out | std::ios::trunc);
+    const bool has_entries = (content.find("\"name\"") != std::string::npos);
+    content.insert(pos, (has_entries ? ",\n" : "") + dataset.str());
+
+    std::ofstream out(series_name, std::ios::out | std::ios::trunc);
     out << content;
 }
 } // namespace
@@ -1368,10 +1374,10 @@ WindFarm::write_dynamic_vtk_series (const amrex::Geometry& geom,
     fclose(fp_dom);
     fclose(fp_avg);
 
-    append_to_pvd("turbine_locations.pvd", f_turb, time);
-    append_to_pvd("actuator_disks_all.pvd", f_all, time);
-    append_to_pvd("actuator_disks_in_dom.pvd", f_dom, time);
-    append_to_pvd("averaging_disks_in_dom.pvd", f_avg, time);
+    append_to_series("turbine_locations.vtk.series", f_turb, time);
+    append_to_series("actuator_disks_all.vtk.series", f_all, time);
+    append_to_series("actuator_disks_in_dom.vtk.series", f_dom, time);
+    append_to_series("averaging_disks_in_dom.vtk.series", f_avg, time);
 }
 
 void
