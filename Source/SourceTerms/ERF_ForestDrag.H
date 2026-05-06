@@ -2,6 +2,7 @@
 #define ERF_FORESTDRAG_H_
 
 #include <memory>
+#include <string>
 #include <AMReX_MultiFab.H>
 
 /*
@@ -24,10 +25,14 @@ public:
                        amrex::MultiFab* z_phys_cc,
                        amrex::MultiFab* z_phys_nd);
 
+    void
+    write_geometry_vtp (const std::string& output_file = "") const;
+
     amrex::MultiFab*
     get_drag_field () { return m_forest_drag.get(); }
 
 private:
+    std::string m_forestfile;
     amrex::Vector<amrex::Real> m_type_forest;
     amrex::Vector<amrex::Real> m_x_forest;
     amrex::Vector<amrex::Real> m_y_forest;

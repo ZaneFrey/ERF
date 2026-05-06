@@ -1407,6 +1407,10 @@ List of Parameters
 | **erf.forest_file**                 | Name(s) of the         | String            | None                |
 |                                     | canopy forest file     |                   |                     |
 +-------------------------------------+------------------------+-------------------+---------------------+
+| **erf.forest_geometry**             | Write forest canopy    | true / false      | false               |
+|                                     | cylinders to a ParaView|                   |                     |
+|                                     | ``.vtp`` geometry file |                   |                     |
++-------------------------------------+------------------------+-------------------+---------------------+
 | **erf.input_sounding_time**         | Time(s) of the         | Real(s)           | 0.0                 |
 |                                     | input sounding file(s) |                   |                     |
 +-------------------------------------+------------------------+-------------------+---------------------+

@@ -458,6 +458,7 @@ struct SolverChoice {
         // flags for whether to apply other source terms in substep only
         pp.query("immersed_forcing_substep", immersed_forcing_substep); // apply immersed forcing source terms in substep only
         pp.query("forest_substep", forest_substep);                     // apply canopy-related source terms in substep only
+        pp.query("forest_geometry", forest_geometry);                   // write a ParaView geometry file for forest canopies
 
         // immersed forcing parameters
         pp.query("if_Cd_scalar", if_Cd_scalar);
@@ -1272,6 +1273,7 @@ struct SolverChoice {
 
     // Use forest canopy model?
     bool do_forest_drag {false};
+    bool forest_geometry {false};
 
     // Enforce constant mass flux?
     amrex::Real const_massflux_u = 0.0;
