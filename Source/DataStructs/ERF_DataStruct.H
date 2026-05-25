@@ -697,6 +697,7 @@ struct SolverChoice {
         pp.query("windfarm_start_time", windfarm_start_time);
         pp.query("windfarm_ramp_tau", windfarm_ramp_tau);
         pp.query("wake_rotation", wake_rotation);
+        pp.query("turb_mem_time", turb_mem_time);
 
         pp.query("windfarm_x_shift",windfarm_x_shift);
         pp.query("windfarm_y_shift",windfarm_y_shift);
@@ -813,6 +814,9 @@ struct SolverChoice {
         }
         if (wake_rotation && windfarm_type != WindFarmType::SimpleAD) {
             amrex::Error("Wake rotation is only supported for windfarm_type = SimpleAD");
+        }
+        if (windfarm_type == WindFarmType::SimpleAD && turb_mem_time < 0.0) {
+            amrex::Error("erf.turb_mem_time must be >= 0.0 for windfarm_type = SimpleAD");
         }
         if (!yaw_file.empty()) {
             if (!(windfarm_type == WindFarmType::SimpleAD || windfarm_type == WindFarmType::GeneralAD)) {
@@ -1265,6 +1269,7 @@ struct SolverChoice {
     std::string yaw_file;
     amrex::Real windfarm_start_time = 0.0;
     amrex::Real windfarm_ramp_tau = -1.0;
+    amrex::Real turb_mem_time = 600.0;
     amrex::Real windfarm_x_shift = -1.0;
     amrex::Real windfarm_y_shift = -1.0;
 

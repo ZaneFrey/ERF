@@ -271,7 +271,7 @@ ERF::WriteCheckpointFile () const
         }
 #endif
 
-        if (m_SurfaceLayer)  {
+        if (m_SurfaceLayer && has_surface_layer_at_level(lev))  {
             amrex::Print() << "Writing SurfaceLayer variables at level " << lev << std::endl;
             ng = IntVect(1,1,0);
             MultiFab m_var(ba2d[lev],dmap[lev],1,ng);
@@ -454,6 +454,9 @@ ERF::WriteCheckpointFile () const
 #if defined(ERF_USE_WINDFARM)
     if (solverChoice.dynamic_yaw && solverChoice.windfarm_type == WindFarmType::SimpleAD) {
         windfarm->write_dynamic_yaw_state(checkpointname);
+    }
+    if (solverChoice.windfarm_type == WindFarmType::SimpleAD) {
+        windfarm->write_memory_state(checkpointname);
     }
 #endif
 
@@ -967,6 +970,9 @@ ERF::ReadCheckpointFile ()
     } // for lev
 
 #if defined(ERF_USE_WINDFARM)
+        if (solverChoice.windfarm_type == WindFarmType::SimpleAD) {
+            windfarm->read_memory_state(restart_chkfile);
+        }
         if (solverChoice.dynamic_yaw && solverChoice.windfarm_type == WindFarmType::SimpleAD) {
             bool read_state = windfarm->read_dynamic_yaw_state(restart_chkfile);
             if (read_state) {
@@ -1139,6 +1145,10 @@ ERF::ReadCheckpointFileSurfaceLayer ()
 {
     for (int lev = 0; lev <= finest_level; ++lev)
     {
+        if (!has_surface_layer_at_level(lev)) {
+            continue;
+        }
+
         amrex::Print() << "Reading MOST variables" << std::endl;
 
         IntVect ng(1,1,0);

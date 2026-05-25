@@ -101,6 +101,22 @@ public:
         m_C_P_prime = C_P_prime;
     }
 
+    virtual void set_turb_mem_time (const amrex::Real turb_mem_time)
+    {
+        m_turb_mem_time = turb_mem_time;
+    }
+
+    virtual void write_memory_state (const std::string& checkpointname) const
+    {
+        amrex::ignore_unused(checkpointname);
+    }
+
+    virtual bool read_memory_state (const std::string& restart_chkfile)
+    {
+        amrex::ignore_unused(restart_chkfile);
+        return false;
+    }
+
     void get_turb_spec (amrex::Real& rotor_rad, amrex::Real& hub_height,
                         amrex::Real& thrust_coeff_standing, amrex::Vector<amrex::Real>& wind_speed,
                         amrex::Vector<amrex::Real>& thrust_coeff, amrex::Vector<amrex::Real>& power)
@@ -229,6 +245,7 @@ protected:
     bool m_wake_rotation{false};
     amrex::Real m_tsr{9.0};
     amrex::Real m_C_P_prime{0.9};
+    amrex::Real m_turb_mem_time{600.0};
 };
 
 

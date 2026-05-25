@@ -31,6 +31,7 @@ public:
                                       const amrex::MultiFab& mf_SMark);
 
     void source_terms_cellcentered (const amrex::Geometry& geom,
+                                    const amrex::Real& dt_advance,
                                     const amrex::MultiFab& cons_in,
                                     const amrex::MultiFab& mf_Smark,
                                     const amrex::MultiFab& mf_RMask,
@@ -44,6 +45,8 @@ public:
                  const amrex::MultiFab& mf_vars);
 
     void compute_power_output (const amrex::Real& time);
+    void write_memory_state (const std::string& checkpointname) const override;
+    bool read_memory_state (const std::string& restart_chkfile) override;
 
 protected:
     amrex::Vector<amrex::Real> xloc, yloc, zloc;
@@ -51,6 +54,8 @@ protected:
     amrex::Real hub_height, rotor_rad, thrust_coeff_standing, nominal_power;
     amrex::Vector<amrex::Real> wind_speed, thrust_coeff, power;
     amrex::Vector<amrex::Real> freestream_velocity, freestream_phi, disk_cell_count;
+    amrex::Vector<amrex::Real> filtered_disk_velocity_nhat;
+    bool filtered_disk_velocity_initialized{false};
     bool wake_rotation{false};
     amrex::Real tsr{9.0};
     amrex::Real C_P_prime{0.9};

@@ -1,6 +1,9 @@
 #include <ERF_SimpleAD.H>
 #include <ERF_IndexDefines.H>
 #include <ERF_Interpolation_1D.H>
+#include <fstream>
+#include <iomanip>
+#include <sstream>
 
 using namespace amrex;
 
@@ -22,7 +25,7 @@ SimpleAD::advance (const Geometry& geom,
     AMREX_ALWAYS_ASSERT(mf_RMask.nComp() > 0);
     AMREX_ALWAYS_ASSERT(mf_vars_simpleAD.nComp() > 2);
     compute_freestream_velocity(cons_in, U_old, V_old, mf_SMark);
-    source_terms_cellcentered(geom, cons_in, mf_SMark, mf_RMask, mf_vars_simpleAD);
+    source_terms_cellcentered(geom, dt_advance, cons_in, mf_SMark, mf_RMask, mf_vars_simpleAD);
     update(dt_advance, cons_in, U_old, V_old, W_old, mf_vars_simpleAD);
     compute_power_output(time);
 }
@@ -65,6 +68,65 @@ SimpleAD::compute_power_output (const Real& time)
 	        file << "\n";
 	        file.flush();
 	    }
+}
+
+void
+SimpleAD::write_memory_state (const std::string& checkpointname) const
+{
+    if (!ParallelDescriptor::IOProcessor()) {
+        return;
+    }
+
+    std::ofstream out(checkpointname + "/SimpleADMemoryState", std::ios::out | std::ios::trunc);
+    if (!out.good()) {
+        amrex::Abort("Failed to open SimpleADMemoryState for checkpoint write");
+    }
+
+    out << std::setprecision(17);
+    out << "SimpleADMemoryState_v1\n";
+    out << m_xloc.size() << " " << static_cast<int>(filtered_disk_velocity_initialized) << "\n";
+    for (int it = 0; it < static_cast<int>(m_xloc.size()); ++it) {
+        const Real stored_value = (it < static_cast<int>(filtered_disk_velocity_nhat.size()))
+                                    ? filtered_disk_velocity_nhat[it]
+                                    : 0.0;
+        out << stored_value << "\n";
+    }
+}
+
+bool
+SimpleAD::read_memory_state (const std::string& restart_chkfile)
+{
+    std::string fname = restart_chkfile + "/SimpleADMemoryState";
+    if (!amrex::FileExists(fname)) {
+        filtered_disk_velocity_nhat.clear();
+        filtered_disk_velocity_initialized = false;
+        return false;
+    }
+
+    Vector<char> fileCharPtr;
+    ParallelDescriptor::ReadAndBcastFile(fname, fileCharPtr);
+    std::string content(fileCharPtr.dataPtr());
+    std::istringstream is(content, std::istringstream::in);
+
+    std::string tag;
+    is >> tag;
+    if (tag != "SimpleADMemoryState_v1") {
+        amrex::Abort("Unknown SimpleADMemoryState format");
+    }
+
+    int nturb_file = 0;
+    int initialized_flag = 0;
+    is >> nturb_file >> initialized_flag;
+    if (nturb_file != static_cast<int>(m_xloc.size())) {
+        amrex::Abort("SimpleADMemoryState: number of turbines does not match current configuration");
+    }
+
+    filtered_disk_velocity_nhat.resize(nturb_file, 0.0);
+    for (int it = 0; it < nturb_file; ++it) {
+        is >> filtered_disk_velocity_nhat[it];
+    }
+    filtered_disk_velocity_initialized = (initialized_flag != 0);
+    return true;
 }
 
 void
@@ -180,6 +242,7 @@ void SimpleAD::compute_freestream_velocity (const MultiFab& cons_in,
 
 void
 SimpleAD::source_terms_cellcentered (const Geometry& geom,
+                                     const Real& dt_advance,
                                      const MultiFab& cons_in,
                                      const MultiFab& mf_SMark,
                                      const MultiFab& mf_RMask,
@@ -227,14 +290,11 @@ SimpleAD::source_terms_cellcentered (const Geometry& geom,
      const Real eps = 1.0e-12;
 
      Gpu::DeviceVector<Real> d_freestream_velocity(nturbs);
-     Gpu::DeviceVector<Real> d_freestream_phi(nturbs);
      Gpu::DeviceVector<Real> d_disk_cell_count(nturbs);
      Gpu::copy(Gpu::hostToDevice, freestream_velocity.begin(), freestream_velocity.end(), d_freestream_velocity.begin());
-     Gpu::copy(Gpu::hostToDevice, freestream_phi.begin(), freestream_phi.end(), d_freestream_phi.begin());
      Gpu::copy(Gpu::hostToDevice, disk_cell_count.begin(), disk_cell_count.end(), d_disk_cell_count.begin());
 
      Real* d_freestream_velocity_ptr = d_freestream_velocity.data();
-     Real* d_freestream_phi_ptr = d_freestream_phi.data();
      Real* d_disk_cell_count_ptr     = d_disk_cell_count.data();
 
     amrex::Vector<amrex::Real> turb_disk_angles;
@@ -247,24 +307,51 @@ SimpleAD::source_terms_cellcentered (const Geometry& geom,
     amrex::Vector<amrex::Real> nx_h(nturbs, 0.0);
     amrex::Vector<amrex::Real> ny_h(nturbs, 0.0);
     amrex::Vector<amrex::Real> cos_theta_h(nturbs, 0.0);
+    amrex::Vector<amrex::Real> filtered_disk_velocity_nhat_h(nturbs, 0.0);
+    if (filtered_disk_velocity_nhat.size() != nturbs) {
+        filtered_disk_velocity_nhat.assign(nturbs, 0.0);
+        filtered_disk_velocity_initialized = false;
+    }
+
+    const Real weight = (m_turb_mem_time > 0.0)
+                          ? dt_advance / (m_turb_mem_time + dt_advance)
+                          : 1.0;
     for (int it = 0; it < static_cast<int>(nturbs); ++it) {
         nx_h[it] = -std::cos(turb_disk_angles[it]);
         ny_h[it] = -std::sin(turb_disk_angles[it]);
         // Keep the projected disk area positive so turbines facing +x do not
         // inject momentum in the same direction as a negative-x inflow.
         cos_theta_h[it] = std::abs(std::cos(turb_disk_angles[it]));
+
+        Real avg_vel = freestream_velocity[it] / (disk_cell_count[it] + 1e-10);
+        Real phi = freestream_phi[it] / (disk_cell_count[it] + 1e-10);
+        Real raw_disk_velocity_nhat = avg_vel * (std::cos(phi) * nx_h[it] + std::sin(phi) * ny_h[it]);
+
+        if (!filtered_disk_velocity_initialized) {
+            filtered_disk_velocity_nhat[it] = raw_disk_velocity_nhat;
+        } else {
+            filtered_disk_velocity_nhat[it] =
+                (1.0 - weight) * filtered_disk_velocity_nhat[it] + weight * raw_disk_velocity_nhat;
+        }
+
+        filtered_disk_velocity_nhat_h[it] = filtered_disk_velocity_nhat[it];
     }
+    filtered_disk_velocity_initialized = true;
 
     Gpu::DeviceVector<Real> d_nx(nturbs);
     Gpu::DeviceVector<Real> d_ny(nturbs);
     Gpu::DeviceVector<Real> d_cos_theta(nturbs);
+    Gpu::DeviceVector<Real> d_filtered_disk_velocity_nhat(nturbs);
     Gpu::copy(Gpu::hostToDevice, nx_h.begin(), nx_h.end(), d_nx.begin());
     Gpu::copy(Gpu::hostToDevice, ny_h.begin(), ny_h.end(), d_ny.begin());
     Gpu::copy(Gpu::hostToDevice, cos_theta_h.begin(), cos_theta_h.end(), d_cos_theta.begin());
+    Gpu::copy(Gpu::hostToDevice, filtered_disk_velocity_nhat_h.begin(), filtered_disk_velocity_nhat_h.end(),
+              d_filtered_disk_velocity_nhat.begin());
 
     Real* d_nx_ptr = d_nx.data();
     Real* d_ny_ptr = d_ny.data();
     Real* d_cos_theta_ptr = d_cos_theta.data();
+    Real* d_filtered_disk_velocity_nhat_ptr = d_filtered_disk_velocity_nhat.data();
 
     Gpu::DeviceVector<Real> d_wind_speed(wind_speed.size());
     Gpu::DeviceVector<Real> d_thrust_coeff(thrust_coeff.size());
@@ -298,8 +385,6 @@ SimpleAD::source_terms_cellcentered (const Geometry& geom,
 
               if(it != -1) {
                 Real avg_vel  = d_freestream_velocity_ptr[it]/(d_disk_cell_count_ptr[it] + 1e-10);
-                Real phi      = d_freestream_phi_ptr[it]/(d_disk_cell_count_ptr[it] + 1e-10);
-
                 Real C_T = interpolate_1d(wind_speed_d, thrust_coeff_d, avg_vel, n_spec_table);
                 Real a;
                 if(C_T <= 1) {
@@ -308,7 +393,7 @@ SimpleAD::source_terms_cellcentered (const Geometry& geom,
                 Real nx_it = d_nx_ptr[it];
                 Real ny_it = d_ny_ptr[it];
                 Real cos_theta_it = d_cos_theta_ptr[it];
-                Real Uinfty_dot_nhat = avg_vel*(std::cos(phi)*nx_it + std::sin(phi)*ny_it);
+                Real Uinfty_dot_nhat = d_filtered_disk_velocity_nhat_ptr[it];
                     if(C_T <= 1) {
                         Real S = 2.0*std::pow(Uinfty_dot_nhat, 2.0)*a*(1.0-a)*dx[1]*dx[2]*cos_theta_it/(dx[0]*dx[1]*dx[2]);
                         source_x = S*nx_it;

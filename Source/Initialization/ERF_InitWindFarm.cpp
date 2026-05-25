@@ -22,6 +22,7 @@ ERF::init_windfarm (int lev)
     const bool defer_ad_outputs = is_ad_model && (solverChoice.windfarm_start_time > 0.0);
 
     windfarm->set_wake_rotation_params(solverChoice.wake_rotation, 9.0, 0.9);
+    windfarm->set_turb_mem_time(solverChoice.turb_mem_time);
 
     if(solverChoice.windfarm_loc_type == WindFarmLocType::lat_lon) {
         windfarm->read_tables(solverChoice.windfarm_loc_table,

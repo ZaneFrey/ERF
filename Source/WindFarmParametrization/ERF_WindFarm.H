@@ -138,6 +138,14 @@ public:
 
     void write_dynamic_yaw_state (const std::string& checkpointname) const;
     bool read_dynamic_yaw_state (const std::string& restart_chkfile);
+    void write_memory_state (const std::string& checkpointname) const override
+    {
+        m_windfarm_model[0]->write_memory_state(checkpointname);
+    }
+    bool read_memory_state (const std::string& restart_chkfile) override
+    {
+        return m_windfarm_model[0]->read_memory_state(restart_chkfile);
+    }
 
     void advance (const amrex::Geometry& a_geom,
                   const amrex::Real& dt_advance,
@@ -213,6 +221,11 @@ public:
                                    const amrex::Real C_P_prime) override
     {
         m_windfarm_model[0]->set_wake_rotation_params(wake_rotation, tsr, C_P_prime);
+    }
+
+    void set_turb_mem_time (const amrex::Real turb_mem_time) override
+    {
+        m_windfarm_model[0]->set_turb_mem_time(turb_mem_time);
     }
 
     void get_turb_zloc (amrex::Vector<amrex::Real>& a_zloc)
