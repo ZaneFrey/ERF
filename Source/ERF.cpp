@@ -2471,6 +2471,9 @@ ERF::ReadParameters ()
         for (int lev = 0; lev <= max_level; ++lev) {
             m_forest_drag[lev] = std::make_unique<ForestDrag>(forestfile);
         }
+        if (solverChoice.forest_geometry) {
+            m_forest_drag[0]->write_geometry_vtp();
+        }
     }
 
     // If init from WRFInput or Metgrid make sure a valid file name is present at level zero

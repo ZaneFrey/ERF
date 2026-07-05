@@ -29,3 +29,9 @@ of the maximum LAD, :math:`L_m` is the maximum value of LAD at :math:`z_m` and :
 
 The simplified model with uniform LAD is recommended for forested regions with no knowledge of the individual trees. LAI values can be used from
 climate model look-up tables for different regions around the world if no local remote sensing data is available.
+
+If ``erf.forest_geometry = true``, ERF also writes a ParaView-readable ``.vtp`` file that
+represents each row in ``erf.forest_file`` as a vertical cylinder. The cylinder center,
+diameter, and height are taken directly from the forest input file. The output file name is
+derived from the forest input file name, e.g. ``forest_domain_tt2`` produces
+``forest_domain_tt2.vtp``.
