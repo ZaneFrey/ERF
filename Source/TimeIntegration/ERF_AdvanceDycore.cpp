@@ -63,9 +63,19 @@ void ERF::advance_dycore (int level,
     MultiFab* p0  = &p_hse;
     MultiFab* pi0 = &pi_hse;
 
+    const bool use_shared_large_scale_forcing = use_level0_shared_large_scale_forcing();
+    if (use_shared_large_scale_forcing && level == 0) {
+        refresh_level0_shared_large_scale_forcing(old_time, state_old);
+    }
+
     MultiFab* rhotheta_src_ptr = solverChoice.custom_rhotheta_forcing ? rhotheta_src[level].get() : nullptr;
     MultiFab* rhoqt_src_ptr    = solverChoice.custom_moisture_forcing ? rhoqt_src[level].get()   : nullptr;
-    Real* dptr_wbar_sub        = solverChoice.custom_w_subsidence     ? d_w_subsid[level].data()     : nullptr;
+    Real* dptr_wbar_sub        = solverChoice.custom_w_subsidence     ? d_w_subsid[level].data() : nullptr;
+    Real* dptr_theta_ref       = (use_shared_large_scale_forcing && solverChoice.custom_w_subsidence) ? d_theta_ref[level].data()+1 : nullptr;
+    Real* dptr_qv_ref          = (use_shared_large_scale_forcing && solverChoice.custom_w_subsidence) ? d_qv_ref[level].data()+1    : nullptr;
+    Real* dptr_qc_ref          = (use_shared_large_scale_forcing && solverChoice.custom_w_subsidence) ? d_qc_ref[level].data()+1    : nullptr;
+    Real* dptr_u_ref           = (use_shared_large_scale_forcing && solverChoice.custom_w_subsidence) ? d_u_ref[level].data()+1     : nullptr;
+    Real* dptr_v_ref           = (use_shared_large_scale_forcing && solverChoice.custom_w_subsidence) ? d_v_ref[level].data()+1     : nullptr;
 
     // Turbulent Perturbation Pointer
     //Real* dptr_rhotheta_src = solverChoice.pert_type ? d_rhotheta_src[level].data() : nullptr;
@@ -96,7 +106,9 @@ void ERF::advance_dycore (int level,
     bool l_use_diff    = ( (dc.molec_diff_type != MolecDiffType::None) ||
                            l_use_kturb );
 
-    const bool use_SurfLayer = (m_SurfaceLayer != nullptr);
+    const bool use_SurfLayer = (m_SurfaceLayer != nullptr) && has_surface_layer_at_level(level);
+    std::unique_ptr<SurfaceLayer> null_SurfaceLayer;
+    std::unique_ptr<SurfaceLayer>& SurfLayer_at_level = (use_SurfLayer) ? m_SurfaceLayer : null_SurfaceLayer;
     const MultiFab* z_0     = (use_SurfLayer) ? m_SurfaceLayer->get_z0(level) : nullptr;
 
     const BoxArray& ba            = state_old[IntVars::cons].boxArray();
@@ -250,7 +262,7 @@ void ERF::advance_dycore (int level,
                                   *eddyDiffs, *Hfx1, *Hfx2, *Hfx3, *Diss, // to be updated
                                   fine_geom, mapfac[level],
                                   z_phys_nd[level], solverChoice,
-                                  m_SurfaceLayer, z_0, l_use_terrain_fitted_coords,
+                                  SurfLayer_at_level, z_0, l_use_terrain_fitted_coords,
                                   l_use_moisture, level,
                                   bc_ptr_h,
                                   get_eb(level));
@@ -265,7 +277,7 @@ void ERF::advance_dycore (int level,
                                       fine_geom, z_phys_cc[level]);
     }
 
-    if (solverChoice.custom_moisture_forcing) {
+    if (solverChoice.custom_moisture_forcing && !use_shared_large_scale_forcing) {
         prob->update_rhoqt_sources(old_time,
                                    rhoqt_src_ptr,
                                    fine_geom, z_phys_cc[level]);
@@ -278,7 +290,7 @@ void ERF::advance_dycore (int level,
                                    fine_geom, z_phys_cc[level]);
     }
 
-    if (solverChoice.custom_w_subsidence) {
+    if (solverChoice.custom_w_subsidence && !use_shared_large_scale_forcing) {
         prob->update_w_subsidence(old_time,
                                   h_w_subsid[level], d_w_subsid[level],base_state[level],
                                   fine_geom, z_phys_nd[level]);

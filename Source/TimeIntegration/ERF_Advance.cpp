@@ -91,40 +91,8 @@ ERF::Advance (int lev, Real time, Real dt_lev, int iteration, int /*ncycle*/)
         }
     }
 
-    // configure SurfaceLayer params if needed
-    if (phys_bc_type[Orientation(Direction::z,Orientation::low)] == ERF_BC::surface_layer) {
-        if (m_SurfaceLayer) {
-            IntVect ng = Theta_prim[lev]->nGrowVect();
-            MultiFab::Copy(  *Theta_prim[lev], S_old, RhoTheta_comp, 0, 1, ng);
-            MultiFab::Divide(*Theta_prim[lev], S_old, Rho_comp     , 0, 1, ng);
-            if (solverChoice.moisture_type != MoistureType::None) {
-                ng = Qv_prim[lev]->nGrowVect();
-
-                MultiFab::Copy(  *Qv_prim[lev], S_old, RhoQ1_comp, 0, 1, ng);
-                MultiFab::Divide(*Qv_prim[lev], S_old, Rho_comp  , 0, 1, ng);
-
-                if (solverChoice.moisture_indices.qr > -1) {
-                    MultiFab::Copy(  *Qr_prim[lev], S_old, solverChoice.moisture_indices.qr, 0, 1, ng);
-                    MultiFab::Divide(*Qr_prim[lev], S_old, Rho_comp  , 0, 1, ng);
-                } else {
-                    Qr_prim[lev]->setVal(0.0);
-                }
-            }
-            // NOTE: std::swap above causes the field ptrs to be out of date.
-            //       Reassign the field ptrs for MAC avg computation.
-            m_SurfaceLayer->update_mac_ptrs(lev, vars_old, Theta_prim, Qv_prim, Qr_prim);
-            m_SurfaceLayer->update_pblh(lev, vars_old, z_phys_cc[lev].get(),
-                                        solverChoice.moisture_indices);
-
-#ifdef ERF_USE_NETCDF
-            Real elapsed_time_since_start_low = time + (start_time - start_low_time);
-#else
-            Real elapsed_time_since_start_low = time;
-#endif
-            m_SurfaceLayer->update_fluxes(lev, elapsed_time_since_start_low,
-                                          S_old, z_phys_nd[lev], walldist[lev]);
-        }
-    }
+    // SurfaceLayer fields are refreshed from the finest bottom-touching level and
+    // restricted down to coarser surface-touching levels outside this routine.
 
 #if defined(ERF_USE_WINDFARM)
     // **************************************************************************************
@@ -153,11 +121,11 @@ ERF::Advance (int lev, Real time, Real dt_lev, int iteration, int /*ncycle*/)
             }
         }
 
-        if (windfarm_active && lev == 0 &&
+        if (windfarm_active &&
             solverChoice.dynamic_yaw &&
             solverChoice.windfarm_type == WindFarmType::SimpleAD) {
 
-            if (first_active_step) {
+            if (first_active_step && lev == 0) {
                 windfarm->write_yaw_angles_time_series(wf_start);
                 amrex::Vector<amrex::Real> disk_face_angles_deg;
                 windfarm->get_disk_face_angles_deg(disk_face_angles_deg);
@@ -167,43 +135,50 @@ ERF::Advance (int lev, Real time, Real dt_lev, int iteration, int /*ncycle*/)
                                                    wf_start);
             }
 
-            amrex::Vector<amrex::Real> u_sum, v_sum, counts;
-            windfarm->sample_upstream_uv(U_old, V_old, SMark[lev], u_sum, v_sum, counts);
+            const auto& level_turbines = windfarm->turbines_on_level(lev);
+            if (!level_turbines.empty()) {
+                amrex::Vector<amrex::Real> u_sum, v_sum, counts;
+                windfarm->sample_upstream_uv(U_old, V_old, SMark[lev], u_sum, v_sum, counts);
 
-            const int nturb = static_cast<int>(u_sum.size());
-            amrex::Vector<amrex::Real> u_mean(nturb, 0.0);
-            amrex::Vector<amrex::Real> v_mean(nturb, 0.0);
-            for (int it = 0; it < nturb; ++it) {
-                if (counts[it] > 0.0) {
-                    u_mean[it] = u_sum[it] / counts[it];
-                    v_mean[it] = v_sum[it] / counts[it];
+                const int nturb = static_cast<int>(u_sum.size());
+                amrex::Vector<amrex::Real> u_mean(nturb, 0.0);
+                amrex::Vector<amrex::Real> v_mean(nturb, 0.0);
+                for (int it = 0; it < nturb; ++it) {
+                    if (counts[it] > 0.0) {
+                        u_mean[it] = u_sum[it] / counts[it];
+                        v_mean[it] = v_sum[it] / counts[it];
+                    }
                 }
-            }
 
-            windfarm->accumulate_yaw_samples(u_mean, v_mean, counts, dt_lev);
-            bool did_cmd_update = windfarm->update_yaw_controller(time, dt_lev);
+                windfarm->accumulate_yaw_samples(u_mean, v_mean, counts, dt_lev);
+                bool did_cmd_update = windfarm->update_yaw_controller(level_turbines, time, dt_lev);
 
-            const auto dx = Geom(0).CellSize();
-            const amrex::Real dx_eff = amrex::min(dx[0], dx[1]);
+                if (did_cmd_update && turb_refine_info.enabled &&
+                    lev < static_cast<int>(turb_refine_force_regrid.size())) {
+                    turb_refine_force_regrid[lev] = 1;
+                }
 
-            if (windfarm->should_rebuild_SMark(dx_eff)) {
-                amrex::Vector<amrex::Real> disk_face_angles_deg;
-                windfarm->get_disk_face_angles_deg(disk_face_angles_deg);
-                for (int lev2 = 0; lev2 <= finest_level; ++lev2) {
-                    windfarm->fill_SMark_multifab_dynamic(Geom(lev2), SMark[lev2], RMask[lev2],
+                const auto dx = Geom(lev).CellSize();
+                const amrex::Real dx_eff = amrex::min(dx[0], dx[1]);
+
+                if (windfarm->should_rebuild_SMark(level_turbines, dx_eff)) {
+                    amrex::Vector<amrex::Real> disk_face_angles_deg;
+                    windfarm->get_disk_face_angles_deg(disk_face_angles_deg);
+                    windfarm->fill_SMark_multifab_dynamic(Geom(lev), SMark[lev], RMask[lev],
                                                           solverChoice.sampling_distance_by_D,
-                                                          disk_face_angles_deg, z_phys_cc[lev2]);
+                                                          disk_face_angles_deg, z_phys_cc[lev],
+                                                          level_turbines);
+                    windfarm->commit_yaw_geometry(level_turbines);
                 }
-                windfarm->commit_yaw_geometry();
-            }
 
-            if (did_cmd_update) {
-                amrex::Vector<amrex::Real> disk_face_angles_deg;
-                windfarm->get_disk_face_angles_deg(disk_face_angles_deg);
-                windfarm->write_dynamic_vtk_series(Geom(0),
-                                                   solverChoice.sampling_distance_by_D,
-                                                   disk_face_angles_deg,
-                                                   time + dt_lev);
+                if (did_cmd_update) {
+                    amrex::Vector<amrex::Real> disk_face_angles_deg;
+                    windfarm->get_disk_face_angles_deg(disk_face_angles_deg);
+                    windfarm->write_dynamic_vtk_series(Geom(0),
+                                                       solverChoice.sampling_distance_by_D,
+                                                       disk_face_angles_deg,
+                                                       time + dt_lev);
+                }
             }
         }
 
@@ -211,9 +186,11 @@ ERF::Advance (int lev, Real time, Real dt_lev, int iteration, int /*ncycle*/)
             if (first_active_step && lev == 0 &&
                 !solverChoice.dynamic_yaw &&
                 is_ad_model &&
-                wf_start > 0.0) {
+                wf_start > 0.0 &&
+                !m_windfarm_outputs_written) {
                 windfarm->write_turbine_locations_vtk();
                 windfarm->write_actuator_disks_vtk(Geom(0), solverChoice.sampling_distance_by_D);
+                m_windfarm_outputs_written = true;
             }
 
             advance_windfarm(Geom(lev), dt_windfarm, S_old,
@@ -235,7 +212,7 @@ ERF::Advance (int lev, Real time, Real dt_lev, int iteration, int /*ncycle*/)
     // **************************************************************************************
     if (solverChoice.use_shoc) {
         // Get SFC fluxes from SurfaceLayer
-        if (m_SurfaceLayer) {
+        if (m_SurfaceLayer && has_surface_layer_at_level(lev)) {
             Vector<const MultiFab*> mfs = {&S_old, &U_old, &V_old, &W_old};
             m_SurfaceLayer->impose_SurfaceLayer_bcs(lev, mfs, Tau[lev],
                                                     SFS_hfx1_lev[lev].get() , SFS_hfx2_lev[lev].get() , SFS_hfx3_lev[lev].get(),

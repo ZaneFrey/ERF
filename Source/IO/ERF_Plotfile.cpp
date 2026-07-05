@@ -2114,11 +2114,13 @@ ERF::Write2DPlotFile (int which, PlotFileType plotfile_type, Vector<std::string>
 
         ///////////////////////////////////////////////////////////////////////
         // These quantities are diagnosed by the surface layer
+        const bool use_SurfaceLayer = (m_SurfaceLayer != nullptr) && has_surface_layer_at_level(lev);
+
         if (containerHasElement(plot_var_names, "u_star")) {
 #ifdef _OPENMP
 #pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
 #endif
-            if (m_SurfaceLayer) {
+            if (use_SurfaceLayer) {
                 for ( MFIter mfi(mf[lev],TilingIfNotGPU()); mfi.isValid(); ++mfi)
                 {
                     const Box& bx = mfi.tilebox();
@@ -2138,7 +2140,7 @@ ERF::Write2DPlotFile (int which, PlotFileType plotfile_type, Vector<std::string>
 #ifdef _OPENMP
 #pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
 #endif
-            if (m_SurfaceLayer) {
+            if (use_SurfaceLayer) {
                 for ( MFIter mfi(mf[lev],TilingIfNotGPU()); mfi.isValid(); ++mfi)
                 {
                     const Box& bx = mfi.tilebox();
@@ -2158,7 +2160,7 @@ ERF::Write2DPlotFile (int which, PlotFileType plotfile_type, Vector<std::string>
 #ifdef _OPENMP
 #pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
 #endif
-            if (m_SurfaceLayer) {
+            if (use_SurfaceLayer) {
                 for ( MFIter mfi(mf[lev],TilingIfNotGPU()); mfi.isValid(); ++mfi)
                 {
                     const Box& bx = mfi.tilebox();
@@ -2178,7 +2180,7 @@ ERF::Write2DPlotFile (int which, PlotFileType plotfile_type, Vector<std::string>
 #ifdef _OPENMP
 #pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
 #endif
-            if (m_SurfaceLayer) {
+            if (use_SurfaceLayer) {
                 for ( MFIter mfi(mf[lev],TilingIfNotGPU()); mfi.isValid(); ++mfi)
                 {
                     const Box& bx = mfi.tilebox();
@@ -2198,7 +2200,7 @@ ERF::Write2DPlotFile (int which, PlotFileType plotfile_type, Vector<std::string>
 #ifdef _OPENMP
 #pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
 #endif
-            if (m_SurfaceLayer) {
+            if (use_SurfaceLayer) {
                 for ( MFIter mfi(mf[lev],TilingIfNotGPU()); mfi.isValid(); ++mfi)
                 {
                     const Box& bx = mfi.tilebox();
@@ -2218,7 +2220,7 @@ ERF::Write2DPlotFile (int which, PlotFileType plotfile_type, Vector<std::string>
 #ifdef _OPENMP
 #pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
 #endif
-            if (m_SurfaceLayer) {
+            if (use_SurfaceLayer) {
                 for ( MFIter mfi(mf[lev],TilingIfNotGPU()); mfi.isValid(); ++mfi)
                 {
                     const Box& bx = mfi.tilebox();
@@ -2238,7 +2240,7 @@ ERF::Write2DPlotFile (int which, PlotFileType plotfile_type, Vector<std::string>
 #ifdef _OPENMP
 #pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
 #endif
-            if (m_SurfaceLayer) {
+            if (use_SurfaceLayer) {
                 for ( MFIter mfi(mf[lev],TilingIfNotGPU()); mfi.isValid(); ++mfi)
                 {
                     const Box& bx = mfi.tilebox();
@@ -2258,7 +2260,7 @@ ERF::Write2DPlotFile (int which, PlotFileType plotfile_type, Vector<std::string>
 #ifdef _OPENMP
 #pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
 #endif
-            if (m_SurfaceLayer) {
+            if (use_SurfaceLayer) {
                 for ( MFIter mfi(mf[lev],TilingIfNotGPU()); mfi.isValid(); ++mfi)
                 {
                     const Box& bx = mfi.tilebox();
@@ -2278,7 +2280,7 @@ ERF::Write2DPlotFile (int which, PlotFileType plotfile_type, Vector<std::string>
 #ifdef _OPENMP
 #pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
 #endif
-            if (m_SurfaceLayer) {
+            if (use_SurfaceLayer) {
                 for ( MFIter mfi(mf[lev],TilingIfNotGPU()); mfi.isValid(); ++mfi)
                 {
                     const Box& bx = mfi.tilebox();

@@ -49,6 +49,9 @@ void make_sources (int level,
                    const MultiFab* rhotheta_src,
                    const MultiFab* rhoqt_src,
                    const Real* dptr_wbar_sub,
+                   const Real* dptr_theta_ref,
+                   const Real* dptr_qv_ref,
+                   const Real* dptr_qc_ref,
                    const Vector<Real*> d_rayleigh_ptrs_at_lev,
                    const Real* d_sinesq_at_lev,
                    const MultiFab* surface_state_at_lev,
@@ -95,9 +98,13 @@ void make_sources (int level,
     // *****************************************************************************
     Table1D<Real>      dptr_r_plane, dptr_t_plane, dptr_qv_plane, dptr_qc_plane;
     TableData<Real, 1>  r_plane_tab,  t_plane_tab,  qv_plane_tab,  qc_plane_tab;
+    const bool use_shared_subsidence_refs = is_slow_step &&
+                                            (dptr_wbar_sub != nullptr) &&
+                                            (dptr_theta_ref != nullptr);
     bool compute_averages = false;
     compute_averages = compute_averages ||
-        ( is_slow_step && (dptr_wbar_sub || solverChoice.nudging_from_input_sounding) );
+        ( is_slow_step && (solverChoice.nudging_from_input_sounding ||
+                           (dptr_wbar_sub && !use_shared_subsidence_refs)) );
 
     if (compute_averages)
     {
@@ -344,8 +351,8 @@ void make_sources (int level,
                 ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
                 {
                     Real dzInv = (z_cc_arr) ? 1.0/ (z_cc_arr(i,j,k+1) - z_cc_arr(i,j,k-1)) : 0.5*dxInv[2];
-                    Real T_hi = dptr_t_plane(k+1) / dptr_r_plane(k+1);
-                    Real T_lo = dptr_t_plane(k-1) / dptr_r_plane(k-1);
+                    Real T_hi = use_shared_subsidence_refs ? dptr_theta_ref[k+1] : dptr_t_plane(k+1) / dptr_r_plane(k+1);
+                    Real T_lo = use_shared_subsidence_refs ? dptr_theta_ref[k-1] : dptr_t_plane(k-1) / dptr_r_plane(k-1);
                     Real wbar_cc = 0.5 * (dptr_wbar_sub[k] + dptr_wbar_sub[k+1]);
                     cell_src(i, j, k, n) -= cell_data(i,j,k,nr) * wbar_cc * (T_hi - T_lo) * dzInv;
                 });
@@ -353,8 +360,8 @@ void make_sources (int level,
                 ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
                 {
                     Real dzInv = (z_cc_arr) ? 1.0/ (z_cc_arr(i,j,k+1) - z_cc_arr(i,j,k-1)) : 0.5*dxInv[2];
-                    Real T_hi = dptr_t_plane(k+1) / dptr_r_plane(k+1);
-                    Real T_lo = dptr_t_plane(k-1) / dptr_r_plane(k-1);
+                    Real T_hi = use_shared_subsidence_refs ? dptr_theta_ref[k+1] : dptr_t_plane(k+1) / dptr_r_plane(k+1);
+                    Real T_lo = use_shared_subsidence_refs ? dptr_theta_ref[k-1] : dptr_t_plane(k-1) / dptr_r_plane(k-1);
                     Real wbar_cc = 0.5 * (dptr_wbar_sub[k] + dptr_wbar_sub[k+1]);
                     cell_src(i, j, k, n) -= wbar_cc * (T_hi - T_lo) * dzInv;
                 });
@@ -371,10 +378,10 @@ void make_sources (int level,
                 ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
                 {
                     Real dzInv = (z_cc_arr) ? 1.0/ (z_cc_arr(i,j,k+1) - z_cc_arr(i,j,k-1)) : 0.5*dxInv[2];
-                    Real Qv_hi = dptr_qv_plane(k+1) / dptr_r_plane(k+1);
-                    Real Qv_lo = dptr_qv_plane(k-1) / dptr_r_plane(k-1);
-                    Real Qc_hi = dptr_qc_plane(k+1) / dptr_r_plane(k+1);
-                    Real Qc_lo = dptr_qc_plane(k-1) / dptr_r_plane(k-1);
+                    Real Qv_hi = use_shared_subsidence_refs ? dptr_qv_ref[k+1] : dptr_qv_plane(k+1) / dptr_r_plane(k+1);
+                    Real Qv_lo = use_shared_subsidence_refs ? dptr_qv_ref[k-1] : dptr_qv_plane(k-1) / dptr_r_plane(k-1);
+                    Real Qc_hi = use_shared_subsidence_refs ? dptr_qc_ref[k+1] : dptr_qc_plane(k+1) / dptr_r_plane(k+1);
+                    Real Qc_lo = use_shared_subsidence_refs ? dptr_qc_ref[k-1] : dptr_qc_plane(k-1) / dptr_r_plane(k-1);
                     Real wbar_cc = 0.5 * (dptr_wbar_sub[k] + dptr_wbar_sub[k+1]);
                     cell_src(i, j, k, nv  ) -= cell_data(i,j,k,nr) * wbar_cc * (Qv_hi - Qv_lo) * dzInv;
                     cell_src(i, j, k, nv+1) -= cell_data(i,j,k,nr) * wbar_cc * (Qc_hi - Qc_lo) * dzInv;
@@ -383,10 +390,10 @@ void make_sources (int level,
                 ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
                 {
                     Real dzInv = (z_cc_arr) ? 1.0/ (z_cc_arr(i,j,k+1) - z_cc_arr(i,j,k-1)) : 0.5*dxInv[2];
-                    Real Qv_hi = dptr_qv_plane(k+1) / dptr_r_plane(k+1);
-                    Real Qv_lo = dptr_qv_plane(k-1) / dptr_r_plane(k-1);
-                    Real Qc_hi = dptr_qc_plane(k+1) / dptr_r_plane(k+1);
-                    Real Qc_lo = dptr_qc_plane(k-1) / dptr_r_plane(k-1);
+                    Real Qv_hi = use_shared_subsidence_refs ? dptr_qv_ref[k+1] : dptr_qv_plane(k+1) / dptr_r_plane(k+1);
+                    Real Qv_lo = use_shared_subsidence_refs ? dptr_qv_ref[k-1] : dptr_qv_plane(k-1) / dptr_r_plane(k-1);
+                    Real Qc_hi = use_shared_subsidence_refs ? dptr_qc_ref[k+1] : dptr_qc_plane(k+1) / dptr_r_plane(k+1);
+                    Real Qc_lo = use_shared_subsidence_refs ? dptr_qc_ref[k-1] : dptr_qc_plane(k-1) / dptr_r_plane(k-1);
                     Real wbar_cc = 0.5 * (dptr_wbar_sub[k] + dptr_wbar_sub[k+1]);
                     cell_src(i, j, k, nv  ) -= wbar_cc * (Qv_hi - Qv_lo) * dzInv;
                     cell_src(i, j, k, nv+1) -= wbar_cc * (Qc_hi - Qc_lo) * dzInv;

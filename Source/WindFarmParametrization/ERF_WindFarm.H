@@ -72,14 +72,16 @@ public:
 
     void fill_Nturb_multifab (const amrex::Geometry& geom,
                               amrex::MultiFab& mf_Nturb,
-                              std::unique_ptr<amrex::MultiFab>& z_phys_nd);
+                              std::unique_ptr<amrex::MultiFab>& z_phys_nd,
+                              const amrex::Vector<int>& turbine_ids);
 
     void fill_SMark_multifab (const amrex::Geometry& geom,
                               amrex::MultiFab& mf_SMark,
                               amrex::MultiFab& mf_RMask,
                               const amrex::Real& sampling_distance_by_D,
                               const amrex::Real& turb_disk_angle,
-                              std::unique_ptr<amrex::MultiFab>& z_phys_cc);
+                              std::unique_ptr<amrex::MultiFab>& z_phys_cc,
+                              const amrex::Vector<int>& turbine_ids);
 
     void fill_SMark_multifab_mesoscale_models (const amrex::Geometry& geom,
                                           amrex::MultiFab& mf_SMark,
@@ -102,6 +104,34 @@ public:
 
     void read_windfarm_yaw_file (const std::string& yaw_file);
 
+    void define_owner_levels (const amrex::Vector<amrex::Geometry>& geom,
+                              const amrex::Vector<amrex::BoxArray>& grids,
+                              const amrex::Vector<amrex::DistributionMapping>& dmap,
+                              const amrex::Vector<amrex::IntVect>& ref_ratio,
+                              const amrex::Vector<std::unique_ptr<amrex::MultiFab>>& z_phys_nd);
+
+    int num_turbines () const { return static_cast<int>(xloc.size()); }
+
+    const amrex::Vector<int>& turbines_on_level (int lev) const
+    {
+        return m_turbines_on_level[lev];
+    }
+
+    int owner_level (int it) const
+    {
+        return m_owner_level[it];
+    }
+
+    void get_turbine_refinement_geometry (int turbine_id,
+                                          amrex::Real& x,
+                                          amrex::Real& y,
+                                          amrex::Real& zhub,
+                                          amrex::Real& diameter,
+                                          amrex::Real& nx,
+                                          amrex::Real& ny,
+                                          amrex::Real& tx,
+                                          amrex::Real& ty);
+
     void sample_upstream_uv (const amrex::MultiFab& U_old,
                              const amrex::MultiFab& V_old,
                              const amrex::MultiFab& mf_SMark,
@@ -117,8 +147,15 @@ public:
     bool update_yaw_controller (const amrex::Real time,
                                 const amrex::Real dt);
 
+    bool update_yaw_controller (const amrex::Vector<int>& turbine_ids,
+                                const amrex::Real time,
+                                const amrex::Real dt);
+
     bool should_rebuild_SMark (const amrex::Real dx_eff) const;
+    bool should_rebuild_SMark (const amrex::Vector<int>& turbine_ids,
+                               const amrex::Real dx_eff) const;
     void commit_yaw_geometry ();
+    void commit_yaw_geometry (const amrex::Vector<int>& turbine_ids);
 
     void get_disk_face_angles_deg (amrex::Vector<amrex::Real>& disk_face_angles_deg) const;
 
@@ -127,7 +164,8 @@ public:
                                       amrex::MultiFab& mf_RMask,
                                       const amrex::Real& sampling_distance_by_D,
                                       const amrex::Vector<amrex::Real>& disk_face_angles_deg,
-                                      std::unique_ptr<amrex::MultiFab>& z_phys_cc);
+                                      std::unique_ptr<amrex::MultiFab>& z_phys_cc,
+                                      const amrex::Vector<int>& turbine_ids);
 
     void write_dynamic_vtk_series (const amrex::Geometry& geom,
                                    const amrex::Real& sampling_distance_by_D,
@@ -228,6 +266,14 @@ public:
         m_windfarm_model[0]->set_turb_mem_time(turb_mem_time);
     }
 
+    void set_force_spreading (const WindFarmSpreadingType spreading_type,
+                              const amrex::Real spreading_nsigma) override
+    {
+        m_windfarm_model[0]->set_force_spreading(spreading_type, spreading_nsigma);
+        m_force_spreading_type = spreading_type;
+        m_force_spreading_nsigma = spreading_nsigma;
+    }
+
     void get_turb_zloc (amrex::Vector<amrex::Real>& a_zloc)
     {
         m_windfarm_model[0]->get_turb_zloc(a_zloc);
@@ -242,7 +288,9 @@ public:
 
 protected:
 
-    amrex::Vector<amrex::Real> xloc, yloc, zloc;
+    amrex::Vector<amrex::Real> xloc, yloc, zloc, ground_z;
+    amrex::Vector<int> m_owner_level;
+    amrex::Vector<amrex::Vector<int>> m_turbines_on_level;
     amrex::Real my_turb_disk_angle;
     amrex::Real hub_height, rotor_rad, thrust_coeff_standing, nominal_power;
     amrex::Vector<amrex::Real> wind_speed, thrust_coeff, power;
@@ -265,6 +313,8 @@ protected:
     amrex::Vector<amrex::Real> m_sum_u, m_sum_v, m_sum_t;
     amrex::Vector<amrex::Real> m_yaw_angle_geom_deg;
     amrex::Vector<amrex::Real> m_yaw_offset_deg;
+    WindFarmSpreadingType m_force_spreading_type{WindFarmSpreadingType::None};
+    amrex::Real m_force_spreading_nsigma{3.0};
 
    /*! \brief Create and set the specified windfarm model */
     template<class NewWindFarmModel>

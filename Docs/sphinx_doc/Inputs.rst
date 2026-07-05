@@ -211,6 +211,52 @@ Examples of Usage
      level-1 grids will be created every 2 level-0 time steps, and new
      level-2 grids will be created every 2 level-1 time steps.
 
+Turbine-Centered Refinement
+---------------------------
+
+The ``turb_refine`` mesh-refinement indicator uses wind-turbine geometry from the actuator-disk
+models to tag AMR cells around each turbine. Enable it with
+``erf.refinement_indicators = turb_refine`` and set the refinement-region extents under the
+``erf.turb_refine`` namespace.
+
++------------------------------------------+---------------------------------------------+--------------------+-------------+
+| Parameter                                | Definition                                  | Acceptable         | Default     |
+|                                          |                                             | Values             |             |
++==========================================+=============================================+====================+=============+
+| **erf.turb_refine.pad_streamwise_by_D**  | Half-extent of the turbine refinement box   | Real >= 0          | must be set |
+|                                          | along the rotor-normal direction,           |                    |             |
+|                                          | normalized by rotor diameter                |                    |             |
++------------------------------------------+---------------------------------------------+--------------------+-------------+
+| **erf.turb_refine.pad_spanwise_by_D**    | Half-extent of the turbine refinement box   | Real >= 0          | must be set |
+|                                          | along the horizontal rotor-tangent          |                    |             |
+|                                          | direction, normalized by rotor diameter     |                    |             |
++------------------------------------------+---------------------------------------------+--------------------+-------------+
+| **erf.turb_refine.box_z_lo**             | Lower physical ``z`` bound of the turbine   | Real >= 0          | must be set |
+|                                          | refinement box                              |                    |             |
++------------------------------------------+---------------------------------------------+--------------------+-------------+
+| **erf.turb_refine.box_z_hi**             | Upper physical ``z`` bound of the turbine   | Real >= box_z_lo   | must be set |
+|                                          | refinement box                              |                    |             |
++------------------------------------------+---------------------------------------------+--------------------+-------------+
+| **erf.turb_refine.max_level**            | Finest AMR level that ``turb_refine`` may   | Integer in         |             |
+|                                          | create, following the usual refinement      | [1, amr.max_level] | amr.max_level |
+|                                          | indicator semantics                         |                    |             |
++------------------------------------------+---------------------------------------------+--------------------+-------------+
+| **erf.turb_refine.start_time**           | Optional activation time for the turbine    | Real               | always on   |
+|                                          | refinement indicator                        |                    |             |
++------------------------------------------+---------------------------------------------+--------------------+-------------+
+| **erf.turb_refine.end_time**             | Optional deactivation time for the turbine  | Real               | always on   |
+|                                          | refinement indicator                        |                    |             |
++------------------------------------------+---------------------------------------------+--------------------+-------------+
+
+Notes:
+
+- ``turb_refine`` is supported for ``erf.windfarm_type = SimpleAD`` and ``erf.windfarm_type = GeneralAD``.
+- The vertical refinement interval is specified directly in physical coordinates with
+  ``erf.turb_refine.box_z_lo`` and ``erf.turb_refine.box_z_hi``.
+- Cells are tagged conservatively whenever the Cartesian cell volume intersects the requested turbine prism.
+- ``turb_refine`` is incompatible with active PBL models.
+- With ``erf.dynamic_yaw = true`` for ``SimpleAD``, ERF requests a one-shot regrid when the yaw controller updates at the ``erf.yaw_period`` cadence, even if that falls between the normal ``amr.regrid_int`` events.
+
 
 Grid Stretching
 ===============
@@ -1320,6 +1366,14 @@ List of Parameters
 +-------------------------------------+------------------------+-------------------+---------------------+
 | **erf.wake_rotation**               | Enable tangential wake | true / false      | false               |
 |                                     | forcing for SimpleAD   |                   |                     |
++-------------------------------------+------------------------+-------------------+---------------------+
+| **erf.windfarm_force_spreading**    | Optional actuator-disk | "None",           | "None"              |
+|                                     | force spreading mode   | "Gaussian"        |                     |
+|                                     | for SimpleAD/GeneralAD |                   |                     |
++-------------------------------------+------------------------+-------------------+---------------------+
+| **erf.windfarm_spreading_nsigma**   | Gaussian support       | Real              | 3.0                 |
+|                                     | half-width in          |                   |                     |
+|                                     | projected grid sigmas  |                   |                     |
 +-------------------------------------+------------------------+-------------------+---------------------+
 | **erf.const_massflux_u**            | Include a momentum     | Real              | 0.                  |
 | **erf.const_massflux_v**            | source at each time,   |                   |                     |

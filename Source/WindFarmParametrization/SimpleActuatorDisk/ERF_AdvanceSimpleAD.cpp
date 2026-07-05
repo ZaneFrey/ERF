@@ -1,6 +1,7 @@
 #include <ERF_SimpleAD.H>
 #include <ERF_IndexDefines.H>
 #include <ERF_Interpolation_1D.H>
+#include <ERF_Constants.H>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
@@ -338,22 +339,70 @@ SimpleAD::source_terms_cellcentered (const Geometry& geom,
     }
     filtered_disk_velocity_initialized = true;
 
-    Gpu::DeviceVector<Real> d_nx(nturbs);
-    Gpu::DeviceVector<Real> d_ny(nturbs);
-    Gpu::DeviceVector<Real> d_cos_theta(nturbs);
-    Gpu::DeviceVector<Real> d_filtered_disk_velocity_nhat(nturbs);
+	    Gpu::DeviceVector<Real> d_nx(nturbs);
+	    Gpu::DeviceVector<Real> d_ny(nturbs);
+	    Gpu::DeviceVector<Real> d_cos_theta(nturbs);
+	    Gpu::DeviceVector<Real> d_filtered_disk_velocity_nhat(nturbs);
     Gpu::copy(Gpu::hostToDevice, nx_h.begin(), nx_h.end(), d_nx.begin());
     Gpu::copy(Gpu::hostToDevice, ny_h.begin(), ny_h.end(), d_ny.begin());
     Gpu::copy(Gpu::hostToDevice, cos_theta_h.begin(), cos_theta_h.end(), d_cos_theta.begin());
     Gpu::copy(Gpu::hostToDevice, filtered_disk_velocity_nhat_h.begin(), filtered_disk_velocity_nhat_h.end(),
               d_filtered_disk_velocity_nhat.begin());
 
-    Real* d_nx_ptr = d_nx.data();
-    Real* d_ny_ptr = d_ny.data();
-    Real* d_cos_theta_ptr = d_cos_theta.data();
-    Real* d_filtered_disk_velocity_nhat_ptr = d_filtered_disk_velocity_nhat.data();
+	    Real* d_nx_ptr = d_nx.data();
+	    Real* d_ny_ptr = d_ny.data();
+	    Real* d_cos_theta_ptr = d_cos_theta.data();
+	    Real* d_filtered_disk_velocity_nhat_ptr = d_filtered_disk_velocity_nhat.data();
 
-    Gpu::DeviceVector<Real> d_wind_speed(wind_speed.size());
+	    WindFarmSpreadingType spreading_type;
+	    Real spreading_nsigma;
+	    get_force_spreading(spreading_type, spreading_nsigma);
+	    const bool use_gaussian_spreading = (spreading_type == WindFarmSpreadingType::Gaussian);
+
+	    Gpu::DeviceVector<Real> d_spread_weight_sum(nturbs, 0.0);
+	    Real* d_spread_weight_sum_ptr = d_spread_weight_sum.data();
+
+	    if (use_gaussian_spreading) {
+	        for ( MFIter mfi(cons_in,TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+	            const Box& gbx      = mfi.growntilebox(1);
+	            auto SMark_array    = mf_SMark.const_array(mfi);
+	            auto RMask_array    = mf_RMask.const_array(mfi);
+
+	            ParallelFor(gbx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+	                int ii = amrex::min(amrex::max(i, domlo_x), domhi_x);
+	                int jj = amrex::min(amrex::max(j, domlo_y), domhi_y);
+	                int kk = amrex::min(amrex::max(k, domlo_z), domhi_z);
+	                int it = static_cast<int>(SMark_array(ii,jj,kk,1));
+	                if (it != -1) {
+	                    Real nx_it = d_nx_ptr[it];
+	                    Real ny_it = d_ny_ptr[it];
+	                    Real sigma = std::abs(dx[0]*nx_it) + std::abs(dx[1]*ny_it);
+	                    Real normal_dist = RMask_array(ii,jj,kk,1);
+	                    if (sigma > eps && std::abs(normal_dist) <= spreading_nsigma*sigma) {
+	                        Real kernel = std::exp(-0.5*normal_dist*normal_dist/(sigma*sigma)) /
+	                                      (std::sqrt(2.0*PI)*sigma);
+	                        Gpu::Atomic::Add(&d_spread_weight_sum_ptr[it], kernel*dx[0]*dx[1]*dx[2]);
+	                    }
+	                }
+	            });
+	        }
+	        amrex::Vector<Real> spread_weight_sum(nturbs, 0.0);
+	        Gpu::copy(Gpu::deviceToHost, d_spread_weight_sum.begin(), d_spread_weight_sum.end(),
+	                  spread_weight_sum.begin());
+	        amrex::ParallelAllReduce::Sum(spread_weight_sum.data(),
+	                                      spread_weight_sum.size(),
+	                                      amrex::ParallelContext::CommunicatorAll());
+	        for (int it = 0; it < static_cast<int>(nturbs); ++it) {
+	            if (disk_cell_count[it] > 0.0 && spread_weight_sum[it] <= eps) {
+	                amrex::Abort("SimpleAD Gaussian force spreading produced zero normalization weight for turbine " +
+	                             std::to_string(it));
+	            }
+	        }
+	        Gpu::copy(Gpu::hostToDevice, spread_weight_sum.begin(), spread_weight_sum.end(),
+	                  d_spread_weight_sum.begin());
+	    }
+
+	    Gpu::DeviceVector<Real> d_wind_speed(wind_speed.size());
     Gpu::DeviceVector<Real> d_thrust_coeff(thrust_coeff.size());
 
     // Copy data from host vectors to device vectors
@@ -394,19 +443,35 @@ SimpleAD::source_terms_cellcentered (const Geometry& geom,
                 Real ny_it = d_ny_ptr[it];
                 Real cos_theta_it = d_cos_theta_ptr[it];
                 Real Uinfty_dot_nhat = d_filtered_disk_velocity_nhat_ptr[it];
-                    if(C_T <= 1) {
-                        Real S = 2.0*std::pow(Uinfty_dot_nhat, 2.0)*a*(1.0-a)*dx[1]*dx[2]*cos_theta_it/(dx[0]*dx[1]*dx[2]);
-                        source_x = S*nx_it;
-                        source_y = S*ny_it;
-                    }
-                    else {
-                        Real S = 0.5*C_T*std::pow(Uinfty_dot_nhat, 2.0)*dx[1]*dx[2]*cos_theta_it/(dx[0]*dx[1]*dx[2]);
-                        source_x = S*nx_it;
-                        source_y = S*ny_it;
-                    }
+	                    Real thrust_coeff_source = 0.0;
+	                    if(C_T <= 1) {
+	                        thrust_coeff_source = 2.0*std::pow(Uinfty_dot_nhat, 2.0)*a*(1.0-a);
+	                    }
+	                    else {
+	                        thrust_coeff_source = 0.5*C_T*std::pow(Uinfty_dot_nhat, 2.0);
+	                    }
 
-                    if (d_wake_rotation) {
-                        Real r = RMask_array(ii,jj,kk,0);
+	                    Real source_factor = 0.0;
+	                    if (use_gaussian_spreading) {
+	                        Real nx_it_tmp = d_nx_ptr[it];
+	                        Real ny_it_tmp = d_ny_ptr[it];
+	                        Real sigma = std::abs(dx[0]*nx_it_tmp) + std::abs(dx[1]*ny_it_tmp);
+	                        Real normal_dist = RMask_array(ii,jj,kk,1);
+	                        if (sigma > eps && d_spread_weight_sum_ptr[it] > eps) {
+	                            Real kernel = std::exp(-0.5*normal_dist*normal_dist/(sigma*sigma)) /
+	                                          (std::sqrt(2.0*PI)*sigma);
+	                            source_factor = PI*d_rotor_rad*d_rotor_rad*kernel /
+	                                            d_spread_weight_sum_ptr[it];
+	                        }
+	                    } else {
+	                        source_factor = dx[1]*dx[2]*cos_theta_it/(dx[0]*dx[1]*dx[2]);
+	                    }
+
+	                    source_x = thrust_coeff_source*source_factor*nx_it;
+	                    source_y = thrust_coeff_source*source_factor*ny_it;
+
+	                    if (d_wake_rotation) {
+	                        Real r = RMask_array(ii,jj,kk,0);
                         if (r > eps) {
                             Real xc = ProbLoArr[0] + (ii+0.5_rt)*dx[0];
                             Real yc = ProbLoArr[1] + (jj+0.5_rt)*dx[1];
@@ -423,10 +488,9 @@ SimpleAD::source_terms_cellcentered (const Geometry& geom,
                             Real omega = d_tsr * Uinfty_dot_nhat / d_rotor_rad;
                             Real omega_r = omega * r;
                             if (std::abs(omega_r) > eps) {
-                                Real DeltaA = dx[1] * dx[2] * cos_theta_it;
-                                Real P = 0.5*d_C_P_prime*Uinfty_dot_nhat*Uinfty_dot_nhat*
-                                         (Uinfty_dot_nhat/(omega_r))*(DeltaA/(dx[0]*dx[1]*dx[2]));
-                                Real t_x = ny_it*dzp/r;
+	                                Real P = 0.5*d_C_P_prime*Uinfty_dot_nhat*Uinfty_dot_nhat*
+	                                         (Uinfty_dot_nhat/(omega_r))*source_factor;
+	                                Real t_x = ny_it*dzp/r;
                                 Real t_y = -nx_it*dzp/r;
                                 Real t_z = (nx_it*ry - ny_it*rx)/r;
                                 source_x += P*t_x;

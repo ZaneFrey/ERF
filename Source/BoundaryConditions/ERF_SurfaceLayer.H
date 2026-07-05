@@ -328,6 +328,24 @@ public:
           q_surf.resize(nlevs);
           olen.resize(nlevs);
           pblh.resize(nlevs);
+          m_cached_tau.resize(nlevs);
+          m_cached_hfx1.resize(nlevs);
+          m_cached_hfx2.resize(nlevs);
+          m_cached_hfx3.resize(nlevs);
+          m_cached_qfx1.resize(nlevs);
+          m_cached_qfx2.resize(nlevs);
+          m_cached_qfx3.resize(nlevs);
+          m_bottom_box_ids.resize(nlevs);
+      }
+
+      const int klo = m_geom[lev].Domain().smallEnd(2);
+      const auto& ba3d = mf.boxArray();
+      m_bottom_box_ids[lev].clear();
+      m_bottom_box_ids[lev].reserve(ba3d.size());
+      for (int ibox = 0; ibox < ba3d.size(); ++ibox) {
+          if (ba3d[ibox].smallEnd(2) == klo) {
+              m_bottom_box_ids[lev].push_back(ibox);
+          }
       }
 
       // Get pointers to SST,TSK and LANDMASK data
@@ -439,6 +457,62 @@ public:
       q_surf[lev] = std::make_unique<amrex::MultiFab>(ba2d, dm, ncomp, ng);
       q_surf[lev]->setVal(default_land_surf_moist);
 
+      amrex::BoxArray ba13 = convert(mf.boxArray(), amrex::IntVect(1,0,1));
+      amrex::BoxArray ba23 = convert(mf.boxArray(), amrex::IntVect(0,1,1));
+
+      m_cached_tau[lev].resize(9);
+      m_cached_tau[lev][TauType::tau13] = std::make_unique<amrex::MultiFab>(ba13, dm, 1, ng);
+      m_cached_tau[lev][TauType::tau23] = std::make_unique<amrex::MultiFab>(ba23, dm, 1, ng);
+      m_cached_tau[lev][TauType::tau13]->setVal(0.0);
+      m_cached_tau[lev][TauType::tau23]->setVal(0.0);
+      if (m_rotate) {
+          m_cached_tau[lev][TauType::tau11] = std::make_unique<amrex::MultiFab>(ba2d, dm, 1, ng);
+          m_cached_tau[lev][TauType::tau22] = std::make_unique<amrex::MultiFab>(ba2d, dm, 1, ng);
+          m_cached_tau[lev][TauType::tau33] = std::make_unique<amrex::MultiFab>(ba2d, dm, 1, ng);
+          m_cached_tau[lev][TauType::tau12] = std::make_unique<amrex::MultiFab>(convert(mf.boxArray(), amrex::IntVect(1,1,0)), dm, 1, ng);
+          m_cached_tau[lev][TauType::tau21] = std::make_unique<amrex::MultiFab>(convert(mf.boxArray(), amrex::IntVect(1,1,0)), dm, 1, ng);
+          m_cached_tau[lev][TauType::tau31] = std::make_unique<amrex::MultiFab>(ba13, dm, 1, ng);
+          m_cached_tau[lev][TauType::tau32] = std::make_unique<amrex::MultiFab>(ba23, dm, 1, ng);
+          for (auto& mf_ptr : m_cached_tau[lev]) {
+              if (mf_ptr) { mf_ptr->setVal(0.0); }
+          }
+      } else {
+          m_cached_tau[lev][TauType::tau31] = std::make_unique<amrex::MultiFab>(ba13, dm, 1, ng);
+          m_cached_tau[lev][TauType::tau32] = std::make_unique<amrex::MultiFab>(ba23, dm, 1, ng);
+          m_cached_tau[lev][TauType::tau31]->setVal(0.0);
+          m_cached_tau[lev][TauType::tau32]->setVal(0.0);
+      }
+
+      m_cached_hfx3[lev] = std::make_unique<amrex::MultiFab>(convert(mf.boxArray(), amrex::IntVect(0,0,1)), dm, 1, ng);
+      m_cached_hfx3[lev]->setVal(0.0);
+      if (m_rotate) {
+          m_cached_hfx1[lev] = std::make_unique<amrex::MultiFab>(convert(mf.boxArray(), amrex::IntVect(1,0,0)), dm, 1, ng);
+          m_cached_hfx2[lev] = std::make_unique<amrex::MultiFab>(convert(mf.boxArray(), amrex::IntVect(0,1,0)), dm, 1, ng);
+          m_cached_hfx1[lev]->setVal(0.0);
+          m_cached_hfx2[lev]->setVal(0.0);
+      } else {
+          m_cached_hfx1[lev] = nullptr;
+          m_cached_hfx2[lev] = nullptr;
+      }
+
+      if (use_moisture) {
+          m_cached_qfx3[lev] = std::make_unique<amrex::MultiFab>(convert(mf.boxArray(), amrex::IntVect(0,0,1)), dm, 1, ng);
+          m_cached_qfx3[lev]->setVal(0.0);
+          if (m_rotate) {
+              m_cached_qfx1[lev] = std::make_unique<amrex::MultiFab>(convert(mf.boxArray(), amrex::IntVect(1,0,0)), dm, 1, ng);
+              m_cached_qfx2[lev] = std::make_unique<amrex::MultiFab>(convert(mf.boxArray(), amrex::IntVect(0,1,0)), dm, 1, ng);
+              m_cached_qfx1[lev]->setVal(0.0);
+              m_cached_qfx2[lev]->setVal(0.0);
+          } else {
+              m_cached_qfx1[lev] = nullptr;
+              m_cached_qfx2[lev] = nullptr;
+          }
+      } else {
+          m_cached_qfx1[lev] = nullptr;
+          m_cached_qfx2[lev] = nullptr;
+          m_cached_qfx3[lev] = nullptr;
+      }
+
       // TODO: Do we want an enum struct for indexing?
 
       bool use_sst = (!m_sst_lev[lev].empty() && m_sst_lev[lev][0]);
@@ -476,6 +550,14 @@ public:
                  const std::unique_ptr<amrex::MultiFab>& z_phys_nd,
                  const std::unique_ptr<amrex::MultiFab>& walldist,
                  int max_iters = 100);
+
+  void compute_surface_flux_cache (const int& lev,
+                                   amrex::Vector<const amrex::MultiFab*> mfs,
+                                   const amrex::MultiFab* z_phys);
+
+  void average_down_to (const int& fine_lev,
+                        const int& crse_lev,
+                        const amrex::IntVect& ref_ratio);
 
   template <typename FluxIter>
   void compute_fluxes (const int& lev,
@@ -707,6 +789,14 @@ private:
   amrex::Vector<std::unique_ptr<amrex::MultiFab>> pblh;
   amrex::Vector<std::unique_ptr<amrex::MultiFab>> t_surf;
   amrex::Vector<std::unique_ptr<amrex::MultiFab>> q_surf;
+  amrex::Vector<amrex::Vector<std::unique_ptr<amrex::MultiFab>>> m_cached_tau;
+  amrex::Vector<std::unique_ptr<amrex::MultiFab>> m_cached_hfx1;
+  amrex::Vector<std::unique_ptr<amrex::MultiFab>> m_cached_hfx2;
+  amrex::Vector<std::unique_ptr<amrex::MultiFab>> m_cached_hfx3;
+  amrex::Vector<std::unique_ptr<amrex::MultiFab>> m_cached_qfx1;
+  amrex::Vector<std::unique_ptr<amrex::MultiFab>> m_cached_qfx2;
+  amrex::Vector<std::unique_ptr<amrex::MultiFab>> m_cached_qfx3;
+  amrex::Vector<amrex::Vector<int>> m_bottom_box_ids;
 
   amrex::Vector<amrex::Vector<amrex::MultiFab*>>  m_sst_lev;
   amrex::Vector<amrex::Vector<amrex::MultiFab*>>  m_tsk_lev;

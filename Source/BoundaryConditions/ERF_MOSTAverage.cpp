@@ -6,6 +6,65 @@
 
 using namespace amrex;
 
+namespace {
+
+#ifdef AMREX_USE_GPU
+constexpr RunOn fab_copy_run_on = RunOn::Device;
+#else
+constexpr RunOn fab_copy_run_on = RunOn::Host;
+#endif
+
+BoxArray
+make_subset_box_array (const BoxArray& ba,
+                       const Vector<int>& box_ids)
+{
+    BoxList bl;
+    for (int idx : box_ids) {
+        bl.push_back(ba[idx]);
+    }
+    return BoxArray(std::move(bl));
+}
+
+DistributionMapping
+make_subset_dm (const DistributionMapping& dm,
+                const Vector<int>& box_ids)
+{
+    Vector<int> pmap;
+    pmap.reserve(box_ids.size());
+    for (int idx : box_ids) {
+        pmap.push_back(dm[idx]);
+    }
+    return DistributionMapping(std::move(pmap));
+}
+
+void
+sync_collapsed_multifab_from_bottom_boxes (MultiFab& mf,
+                                           const Vector<int>& bottom_box_ids,
+                                           const Periodicity& period)
+{
+    if (bottom_box_ids.empty() ||
+        bottom_box_ids.size() == mf.boxArray().size()) {
+        return;
+    }
+
+    MultiFab bottom_only(make_subset_box_array(mf.boxArray(), bottom_box_ids),
+                         make_subset_dm(mf.DistributionMap(), bottom_box_ids),
+                         mf.nComp(), mf.nGrowVect(), MFInfo(), mf.Factory());
+
+    const int myproc = ParallelDescriptor::MyProc();
+    for (int ibox = 0; ibox < bottom_box_ids.size(); ++ibox) {
+        if (bottom_only.DistributionMap()[ibox] == myproc) {
+            const Box& bx = bottom_only[ibox].box();
+            bottom_only[ibox].template copy<fab_copy_run_on>(mf[bottom_box_ids[ibox]],
+                                                             bx, 0, bx, 0, mf.nComp());
+        }
+    }
+
+    mf.ParallelCopy(bottom_only, 0, 0, mf.nComp(), 0, 0, period);
+}
+
+} // namespace
+
 /**
  * Constructor for MOSTAverage class.
  *
@@ -79,6 +138,7 @@ MOSTAverage::MOSTAverage (Vector<Geometry>  geom,
     m_i_indx.resize(m_maxlev);
     m_j_indx.resize(m_maxlev);
     m_k_indx.resize(m_maxlev);
+    m_bottom_box_ids.resize(m_maxlev);
 }
 
 void
@@ -93,6 +153,16 @@ MOSTAverage::make_MOSTAverage_at_level (const int& lev,
     m_rot_fields[lev].resize(m_nvar-1);
     m_averages[lev].resize(m_navg);
     m_z_phys_nd[lev] = z_phys_nd.get();
+
+    const auto& cc_ba = Theta_prim->boxArray();
+    const int klo = m_geom[lev].Domain().smallEnd(2);
+    m_bottom_box_ids[lev].clear();
+    m_bottom_box_ids[lev].reserve(cc_ba.size());
+    for (int ibox = 0; ibox < cc_ba.size(); ++ibox) {
+        if (cc_ba[ibox].smallEnd(2) == klo) {
+            m_bottom_box_ids[lev].push_back(ibox);
+        }
+    }
 
     bool use_terrain_fitted_coords = ( (m_terrain_type == TerrainType::StaticFittedMesh) ||
                                        (m_terrain_type == TerrainType::MovingFittedMesh) );
@@ -249,6 +319,32 @@ MOSTAverage::make_MOSTAverage_at_level (const int& lev,
                 m_Vsg[lev] = 0.32 * std::pow(dx/5000.-1, 0.33);
             }
             Print() << m_Vsg[lev] << std::endl;
+        }
+    }
+}
+
+void
+MOSTAverage::average_down_to (const int& fine_lev,
+                              const int& crse_lev,
+                              const IntVect& ref_ratio)
+{
+    if (!m_zref[fine_lev] || !m_zref[crse_lev]) { return; }
+
+    IntVect ref_ratio_2d = ref_ratio;
+    ref_ratio_2d[2] = 1;
+
+    sync_collapsed_multifab_from_bottom_boxes(*m_zref[fine_lev], m_bottom_box_ids[fine_lev],
+                                              m_geom[fine_lev].periodicity());
+
+    average_down(*m_zref[fine_lev], *m_zref[crse_lev], 0, 1, ref_ratio_2d);
+
+    for (int iavg = 0; iavg < m_navg; ++iavg) {
+        if (m_averages[fine_lev][iavg] && m_averages[crse_lev][iavg]) {
+            sync_collapsed_multifab_from_bottom_boxes(*m_averages[fine_lev][iavg],
+                                                      m_bottom_box_ids[fine_lev],
+                                                      m_geom[fine_lev].periodicity());
+            average_down(*m_averages[fine_lev][iavg], *m_averages[crse_lev][iavg],
+                         0, 1, ref_ratio_2d);
         }
     }
 }

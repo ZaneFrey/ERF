@@ -80,7 +80,7 @@ SAM::Copy_State_to_Micro (const MultiFab& cons_in)
 {
     // Get the temperature, density, theta, qt and qp from input
     for ( MFIter mfi(cons_in); mfi.isValid(); ++mfi) {
-        const auto& box3d = mfi.growntilebox();
+        const auto& box3d = mfi.tilebox();
 
         auto states_array = cons_in.array(mfi);
 
@@ -124,6 +124,12 @@ SAM::Copy_State_to_Micro (const MultiFab& cons_in)
                                                   qv_array(i,j,k));
             pres_array(i,j,k)  = getPgivenRTh(states_array(i,j,k,RhoTheta_comp), qv_array(i,j,k)) * 0.01;
         });
+    }
+
+    // Reconstruct from valid cells only, then restore periodic ghosts explicitly.
+    // This avoids consuming checkpoint/dycore sentinel ghost values during restart.
+    for (int ivar = 0; ivar < MicVar::rain_accum; ++ivar) {
+        mic_fab_vars[ivar]->FillBoundary(m_geom.periodicity());
     }
 }
 

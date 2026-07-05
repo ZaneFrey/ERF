@@ -12,42 +12,46 @@ erf.use_fft   = true
 
 # ------------------  PROBLEM SIZE & GEOMETRY  -------------------
 geometry.prob_extent = 6400 6400 4000
-#amr.n_cell           =  400  400  500
-#amr.n_cell           =  256  256  320
-amr.n_cell           =  256  256  256
+amr.n_cell           =  160  160  100
 
-#erf.initial_dz = 5.0
-#erf.grid_stretching_ratio = 1.005084186675
+#erf.initial_dz           = 20.0
+#erf.grid_stretching_ratio = 1.0049968378054985
 
-amr.max_level      = 0
+amr.max_level      = 3
 
 geometry.is_periodic = 1 1 0
 
+amr.ref_ratio_vect = 2 2 2  2 2 2  1 1 2
+
+erf.refinement_indicators = box1 box2 box3
+erf.box1.max_level = 1
+erf.box1.in_box_lo =  0.    0.    0.
+erf.box1.in_box_hi =  6400. 6400. 2400.
+erf.box2.max_level = 2
+erf.box2.in_box_lo =  0.    0.    0.
+erf.box2.in_box_hi =  6400. 6400. 2000.
+erf.box3.max_level = 3
+erf.box3.in_box_lo =  0.    0.    0.
+erf.box3.in_box_hi =  6400. 6400. 250.
 
 # ------------------  BOUNDARY CONDITIONS  -------------------
 
+#RICO options
 zlo.type = "surface_layer"
-erf.surface_layer.flux_type = "bulk_coeff"
+erf.surface_layer.flux_type = "rico" # new MOST type
+erf.most.ustar  = 0.0022 # Cm
+erf.most.tstar  = 0.0029 # Ch
+erf.most.qstar  = 0.0019 # Cq
+erf.most.z0     = 0.1 # from BOMEX
+erf.most.zref   = 20.0 # from BOMEX
 
-# MOST roughness model
-erf.most.z0                = 1e-3
+erf.most.rico.theta_z0 = 299.1
+erf.most.rico.qsat_z0 = 0.02245
 
-# MOST sampling / averaging
-erf.most.roughness_type_sea = "constant"
-erf.most.average_policy    = 0
-erf.most.time_average      = true
-erf.most.time_window       = 30.0
-erf.most.use_normal_vector = false
-erf.most.zref              = 10.0
+#erf.rayleigh_damp_W   = true          # most common choice
 
-# Bulk Coefficients
-erf.most.Cd = 0.001229    # momentum coeff
-erf.most.Ch = 0.001920    # heat coeff
-erf.most.Cq = 0.001400    # moisture coeff
-
-# Surface temperature and moisture
-erf.most.surf_temp  = 299.1
-erf.most.surf_moist = 0.02245
+#erf.rayleigh_dampcoef = 0.02          # [1/s]
+#erf.rayleigh_zdamp    = 500.0         # [m] depth downward from domain top
 
 # NOTE: This should have a qv grad too (use hoextrapcc?!)
 zhi.type = "SlipWall"
@@ -62,6 +66,7 @@ zhi.type = "SlipWall"
 #stop_time = 21600   #   6 hours
 #stop_time = 36000   #   10 hours
 stop_time = 43200    #  12 hours
+#stop_time = 57600   # 16 hours
 
 erf.cfl = 0.3
 
@@ -107,10 +112,17 @@ erf.dycore_horiz_adv_type  = "Blended_5th6th"
 erf.dycore_vert_adv_type   = "Blended_5th6th"
 erf.dryscal_horiz_adv_type = "Blended_5th6th"
 erf.dryscal_vert_adv_type  = "Blended_5th6th"
-erf.dycore_horiz_upw_frac  = 0.3
-erf.dycore_vert_upw_frac   = 0.3
-erf.dryscal_horiz_upw_frac = 0.3
-erf.dryscal_vert_upw_frac  = 0.3
+erf.dycore_horiz_upw_frac  = 0.25
+erf.dycore_vert_upw_frac   = 0.25
+erf.dryscal_horiz_upw_frac = 0.25
+erf.dryscal_vert_upw_frac  = 0.25
+
+#erf.dycore_horiz_adv_type  = "WENOZ5"
+#erf.dycore_vert_adv_type   = "WENOZ5"
+#erf.dryscal_horiz_adv_type = "WENOZ5"
+#erf.dryscal_vert_adv_type  = "WENOZ5"
+#erf.moistscal_horiz_adv_type = "WENOZ5"
+#erf.moistscal_vert_adv_type  = "WENOZ5"
 
 erf.molec_diff_type = "None"
 
@@ -144,18 +156,18 @@ prob.qv_0_Pert_Mag   = 0.000025
 # ------------------  WIND FARM (SAD)  -------------------
 erf.windfarm_type = "SimpleAD"
 erf.windfarm_loc_type = "x_y"
-erf.windfarm_loc_table = "turb_loc_xy_10mw.txt"
-erf.windfarm_spec_table = "dtu10mw_spec.tbl"
+erf.windfarm_loc_table = "turb_loc_xy_10mw_5x5.txt"
+erf.windfarm_spec_table = "dtu10mw_ideal_spec.tbl"
 erf.windfarm_start_time = 21600
-erf.windfarm_ramp_tau   = 600
+erf.windfarm_ramp_tau   = 300
 
 # Inputs match trade wind direction
 erf.sampling_distance_by_D = 1.0
-erf.turb_disk_angle_from_x = 270.0
+erf.turb_disk_angle_from_x = 281.5
 
 erf.dynamic_yaw = true
 erf.yaw_period  = 300
-erf.yaw_file    = "turb_yaw.txt"
+erf.yaw_file    = "turb_yaw_5x5.txt"
 
 erf.wake_rotation = true
 
@@ -171,10 +183,12 @@ amr.v              = 1       # verbosity in Amr.cpp
 erf.check_file      = chk  
 erf.check_per       = 1800
 
+erf.time_avg_vel    = true
+
 # PLOTFILES
 erf.plot_file_1     = plt  
-erf.plot_per_1      = 120
+erf.plot_per_1      = 300
 #erf.plot_vars_1     = density rhotheta x_velocity y_velocity z_velocity pressure temp theta qt qv qc qsat
-erf.plot_vars_1     = x_velocity y_velocity z_velocity magvel theta qt qc qsat
+erf.plot_vars_1     = x_velocity y_velocity z_velocity magvel qc qsat theta w_t_avg umag_t_avg
 erf.data_log        = surf_hist.dat mean_profiles.dat flux_profiles.dat sfs_profiles.dat
 erf.profile_int     = 100

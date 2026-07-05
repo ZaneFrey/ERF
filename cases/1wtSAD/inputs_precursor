@@ -1,0 +1,126 @@
+# ------------------  GOVERNING EQUATIONS  -------------------
+erf.anelastic = 1
+erf.use_fft   = true
+
+amrex.fpe_trap_invalid = 0
+fabarray.mfiter_tile_size = 1024 1024 1024
+
+# ------------------  PROBLEM SIZE & GEOMETRY  -------------------
+geometry.prob_extent = 5000.0 2000.0  1000.0
+amr.n_cell           = 500    200     200
+
+amr.max_level      = 0
+
+geometry.is_periodic = 1 1 0
+
+# ------------------  BOUNDARY CONDITIONS  -------------------
+zlo.type      = "surface_layer"
+erf.most.z0   = 0.10
+
+zhi.type = "SlipWall"
+zhi.theta_grad = 0.0
+
+# ------------------  TIME STEP CONTROL  -------------------
+erf.cfl = 0.2
+stop_time = 21600.0
+
+# ------------------  FORCING TERMS  -------------------
+erf.use_gravity  = true
+
+erf.use_coriolis = false
+erf.abl_driver_type = "PressureGradient"
+erf.abl_pressure_grad = -0.00025 0.0 0.0
+
+# ------------------  NUMERICAL SCHEMES  -------------------
+#erf.les_type  = "Deardorff"
+#erf.Ck        = 0.1
+#erf.sigma_k   = 0.5
+#erf.Ce        = 0.93
+#erf.Ce_wall   = 3.9
+#erf.theta_ref = 300.0
+
+erf.les_type    = "Smagorinsky"
+erf.Cs          = 0.17
+
+erf.molec_diff_type = "None"
+
+#erf.dycore_horiz_adv_type  = "Blended_5th6th"
+#erf.dycore_vert_adv_type   = "Blended_5th6th"
+#erf.dryscal_horiz_adv_type = "Blended_5th6th"
+#erf.dryscal_vert_adv_type  = "Blended_5th6th"
+#erf.dycore_horiz_upw_frac  = 0.25
+#erf.dycore_vert_upw_frac   = 0.25
+#erf.dryscal_horiz_upw_frac = 0.25
+#erf.dryscal_vert_upw_frac  = 0.25
+
+#erf.dycore_horiz_adv_type  = "Centered_6th"
+#erf.dycore_vert_adv_type   = "Centered_6th"
+#erf.dryscal_horiz_adv_type = "Centered_6th"
+#erf.dryscal_vert_adv_type  = "Centered_6th"
+
+erf.dycore_horiz_adv_type  = "WENOZ7"
+erf.dycore_vert_adv_type   = "WENOZ7"
+erf.dryscal_horiz_adv_type = "WENOZ7"
+erf.dryscal_vert_adv_type  = "WENOZ7"
+
+# ------------------  INITIAL CONDITIONS  -------------------
+erf.init_type = "input_sounding"
+erf.sounding_type = Ideal
+erf.input_sounding_file = "input_sounding_good"
+
+# Turbulence seeding: divergence-free sinusoidal velocity perturbations
+prob.pert_ref_height = 1000.0
+prob.pert_deltaU = 1.0
+prob.pert_deltaV = 1.0
+prob.pert_periods_U = 20.0
+prob.pert_periods_V = 10.0
+
+# Turbulence seeding: random theta perturbations (not rho*theta)
+#prob.T_0_Pert_Mag = 1.0
+#prob.pert_rhotheta = false
+
+
+# ------------------  PRECURSOR CONDITIONS  -------------------
+erf.output_bndry_planes = 1
+erf.bndry_output_planes_interval = 10      # or another cadence you want
+erf.bndry_output_start_time = 3600.0
+erf.bndry_output_planes_file = "precursor_bndry"
+erf.bndry_output_var_names = density temperature velocity
+erf.bndry_output_box_lo = 0.0 0.0
+erf.bndry_output_box_hi = 5000.0 2000.0
+
+
+# ------------------  WIND FARM (SIMPLE ACTUATOR DISK)  -------------------
+erf.windfarm_type = "SimpleAD"
+erf.windfarm_loc_type = "x_y"
+erf.windfarm_loc_table = "windturbines_loc_xy.txt"
+erf.windfarm_spec_table = "dtu10mw_ideal_spec.tbl"
+erf.windfarm_start_time = 21600
+erf.windfarm_ramp_tau   = 300
+
+# Required for SimpleAD
+erf.sampling_distance_by_D = 0.1
+erf.turb_disk_angle_from_x = 0.0
+erf.wake_rotation = false
+erf.turb_mem_time = 60.0
+
+erf.dynamic_yaw = true
+erf.yaw_period  = 5
+erf.yaw_file    = "turb_yaw_1x1.txt"
+
+# ------------------  OUTPUTS  -------------------
+erf.sum_interval   = 50
+erf.v              = 1
+amr.v              = 1
+
+# erf.check_file      = chk
+# erf.check_int       = 5000
+
+erf.time_avg_vel    = true
+
+erf.plot_file_1     = plt
+erf.plot_per_1      = 300
+erf.plot_vars_1     = x_velocity y_velocity z_velocity magvel u_t_avg v_t_avg w_t_avg umag_t_avg
+
+erf.data_log        = surf_hist.dat mean_profiles.dat flux_profiles.dat sfs_profiles.dat
+erf.profile_int     = 100 # steps

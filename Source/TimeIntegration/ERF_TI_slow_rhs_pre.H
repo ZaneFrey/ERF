@@ -106,7 +106,11 @@
                      terrain_blank, fine_geom, solverChoice,
                      mapfac[level],
                      rhotheta_src[level].get(), rhoqt_src[level].get(),
-                     dptr_wbar_sub, d_rayleigh_ptrs_at_lev, d_sinesq_at_lev,
+                     dptr_wbar_sub,
+                     (use_level0_shared_large_scale_forcing() && solverChoice.custom_w_subsidence) ? d_theta_ref[level].data()+1 : nullptr,
+                     (use_level0_shared_large_scale_forcing() && solverChoice.custom_w_subsidence) ? d_qv_ref[level].data()+1 : nullptr,
+                     (use_level0_shared_large_scale_forcing() && solverChoice.custom_w_subsidence) ? d_qc_ref[level].data()+1 : nullptr,
+                     d_rayleigh_ptrs_at_lev, d_sinesq_at_lev,
                       (solverChoice.hindcast_surface_bcs? &surface_state_interp[level] : nullptr),
                      input_sounding_data, turbPert, true);
 
@@ -136,7 +140,10 @@
                          mapfac[level],
                          (solverChoice.have_geo_wind_profile) ? d_u_geos[level].data(): nullptr,
                          (solverChoice.have_geo_wind_profile) ? d_v_geos[level].data(): nullptr,
-                         dptr_wbar_sub, d_rayleigh_ptrs_at_lev, d_sinesq_at_lev, d_sinesq_stag_at_lev,
+                         dptr_wbar_sub,
+                         (use_level0_shared_large_scale_forcing() && solverChoice.custom_w_subsidence) ? d_u_ref[level].data()+1 : nullptr,
+                         (use_level0_shared_large_scale_forcing() && solverChoice.custom_w_subsidence) ? d_v_ref[level].data()+1 : nullptr,
+                         d_rayleigh_ptrs_at_lev, d_sinesq_at_lev, d_sinesq_stag_at_lev,
                          d_sponge_ptrs_at_lev,
                          (solverChoice.hindcast_lateral_forcing? &forecast_state_interp[level] : nullptr),
                          (solverChoice.hindcast_surface_bcs? &surface_state_interp[level] : nullptr),
@@ -152,6 +159,10 @@
         // *****************************************************************************
         // Define RHS for rho, rho_theta and momenta
         // *****************************************************************************
+        std::unique_ptr<SurfaceLayer> null_SurfaceLayer;
+        std::unique_ptr<SurfaceLayer>& SurfLayer_at_level =
+            (m_SurfaceLayer && has_surface_layer_at_level(level)) ? m_SurfaceLayer : null_SurfaceLayer;
+
         erf_slow_rhs_pre(level, finest_level, nrk, slow_dt, S_rhs, S_old, S_data,
                          S_prim, qt, avg_xmom[level], avg_ymom[level], avg_zmom[level],
                          xvel_new, yvel_new, zvel_new,
@@ -159,7 +170,7 @@
                          (level > 0) ? &zmom_crse_rhs[level] : nullptr,
                          Tau[level], Tau_corr[level],
                          SmnSmn, eddyDiffs, Hfx1, Hfx2, Hfx3, Q1fx1, Q1fx2, Q1fx3, Q2fx3, Diss,
-                         fine_geom, solverChoice, m_SurfaceLayer, domain_bcs_type_d, domain_bcs_type,
+                         fine_geom, solverChoice, SurfLayer_at_level, domain_bcs_type_d, domain_bcs_type,
                          *zpn_to_use, *zpc_to_use, *ax_to_use, *ay_to_use, *az_to_use, *dJ_to_use,
                          stretched_dz_d[level], gradp[level],
                          mapfac[level], get_eb(level),

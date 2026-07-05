@@ -217,10 +217,6 @@ void ERF::MakeNewLevelFromScratch (int lev, Real time, const BoxArray& ba_in,
     // fill in Nturb multifab - number of turbines in each mesh cell
     // write out the vtk files for wind turbine location and/or
     // actuator disks
-    #ifdef ERF_USE_WINDFARM
-        init_windfarm(lev);
-    #endif
-
     // ********************************************************************************************
     // Build the data structures for canopy model (depends upon z_phys)
     // ********************************************************************************************
@@ -261,6 +257,15 @@ void ERF::MakeNewLevelFromScratch (int lev, Real time, const BoxArray& ba_in,
         Construct_ERFFillPatchers(lev);
            Define_ERFFillPatchers(lev);
     }
+
+#ifdef ERF_USE_WINDFARM
+    // During startup and new-level creation, AMReX may call ErrorEst immediately
+    // after this routine returns. Refresh the wind-farm hierarchy now so turb_refine
+    // never enters tagging with stale or uninitialized owner-level data.
+    if (solverChoice.windfarm_type != WindFarmType::None && turb_refine_info.enabled) {
+        rebuild_windfarm_hierarchy();
+    }
+#endif
 
 #ifdef ERF_USE_PARTICLES
     if (restart_chkfile.empty()) {
@@ -509,7 +514,7 @@ ERF::MakeNewLevelFromCoarse (int lev, Real time, const BoxArray& ba,
     // ********************************************************************************************
     // Create the SurfaceLayer arrays at this (new) level
     // ********************************************************************************************
-    if (phys_bc_type[Orientation(Direction::z,Orientation::low)] == ERF_BC::surface_layer) {
+    if (m_SurfaceLayer && has_surface_layer_at_level(lev, ba)) {
         Vector<MultiFab*> mfv_old = {&vars_old[lev][Vars::cons], &vars_old[lev][Vars::xvel],
                                      &vars_old[lev][Vars::yvel], &vars_old[lev][Vars::zvel]};
         m_SurfaceLayer->make_SurfaceLayer_at_level(lev,lev+1,
@@ -786,7 +791,7 @@ ERF::RemakeLevel (int lev, Real time, const BoxArray& ba, const DistributionMapp
     // ********************************************************************************************
     // Update the SurfaceLayer arrays at this level
     // ********************************************************************************************
-    if (phys_bc_type[Orientation(Direction::z,Orientation::low)] == ERF_BC::surface_layer) {
+    if (m_SurfaceLayer && has_surface_layer_at_level(lev, ba)) {
         int nlevs = finest_level+1;
         Vector<MultiFab*> mfv_old = {&vars_old[lev][Vars::cons], &vars_old[lev][Vars::xvel],
                                      &vars_old[lev][Vars::yvel], &vars_old[lev][Vars::zvel]};

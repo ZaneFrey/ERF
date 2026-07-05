@@ -47,11 +47,15 @@
         MultiFab* new_detJ =
            (solverChoice.terrain_type == TerrainType::MovingFittedMesh) ? (detJ_cc_new[level].get()) : (detJ_cc[level].get());
 
+        std::unique_ptr<SurfaceLayer> null_SurfaceLayer;
+        std::unique_ptr<SurfaceLayer>& SurfLayer_at_level =
+            (m_SurfaceLayer && has_surface_layer_at_level(level)) ? m_SurfaceLayer : null_SurfaceLayer;
+
         erf_slow_rhs_post(level, finest_level, nrk, slow_dt, micro->Get_Qstate_Moist_Size(),
                           S_rhs, S_old, S_new, S_data, S_prim, avg_xmom[level], avg_ymom[level], avg_zmom[level],
                           xvel_new, yvel_new, zvel_new, cc_src, SmnSmn, eddyDiffs,
                           Hfx1, Hfx2, Hfx3, Q1fx1, Q1fx2, Q1fx3, Q2fx3, Diss,
-                          fine_geom, solverChoice, m_SurfaceLayer, domain_bcs_type_d, domain_bcs_type,
+                          fine_geom, solverChoice, SurfLayer_at_level, domain_bcs_type_d, domain_bcs_type,
                           z_phys_nd[level], z_phys_cc[level], ax[level], ay[level], az[level],
                           detJ_cc[level], new_detJ, stretched_dz_d[level], mapfac[level], EBFactory(level),
 #if defined(ERF_USE_NETCDF)

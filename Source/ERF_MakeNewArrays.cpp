@@ -255,7 +255,7 @@ ERF::init_stuff (int lev, const BoxArray& ba, const DistributionMapping& dm,
     // ********************************************************************************************
     // Define Theta_prim storage if using surface_layer BC
     // ********************************************************************************************
-    if (phys_bc_type[Orientation(Direction::z,Orientation::low)] == ERF_BC::surface_layer) {
+    if (has_surface_layer_at_level(lev, ba)) {
         Theta_prim[lev] = std::make_unique<MultiFab>(ba,dm,1,IntVect(ngrow_state,ngrow_state,1));
         if (solverChoice.moisture_type != MoistureType::None) {
             Qv_prim[lev]    = std::make_unique<MultiFab>(ba,dm,1,IntVect(ngrow_state,ngrow_state,1));
@@ -359,7 +359,7 @@ ERF::init_stuff (int lev, const BoxArray& ba, const DistributionMapping& dm,
         Nturb[lev].define(ba, dm, 1, ngrow_state); // Number of turbines in a cell
         SMark[lev].define(ba, dm, 2, 1); // Free stream velocity/source term
                                                    // sampling marker in a cell - 2 components
-        RMask[lev].define(ba, dm, 1, 1); // Effective radius for actuator-disk masked cells
+        RMask[lev].define(ba, dm, 2, 1); // Effective radius and normal distance for actuator-disk masked cells
 #endif
 
     if(solverChoice.init_type == InitType::HindCast and

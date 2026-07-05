@@ -1,0 +1,171 @@
+# ------------------  GOVERNING EQUATIONS  -------------------
+erf.anelastic = 1
+erf.use_fft   = true
+
+stop_time = 43200.0
+
+amrex.fpe_trap_invalid = 0
+fabarray.mfiter_tile_size = 1024 1024 1024
+
+# ------------------  PROBLEM SIZE & GEOMETRY  -------------------
+geometry.prob_extent = 100000.0      20000.0     1500.0
+amr.n_cell           = 2500         667         250
+amr.max_level        = 0
+
+geometry.is_periodic = 0 1 0
+
+# ------------------  BOUNDARY CONDITIONS  -------------------
+xlo.type = "Inflow"
+xhi.type = "Outflow"
+xlo.dirichlet_file = "inflow_file"
+xlo.density  = 1.0
+xlo.theta = 300.0
+
+zlo.type      = "surface_layer"
+erf.most.z0   = 0.002
+
+zhi.type = "SlipWall"
+zhi.theta_grad = 0.0
+
+## Outlet sponge band (last 3 km)
+#erf.use_xhi_sponge_damping = true
+#erf.xhi_sponge_start = 99400.0
+#erf.sponge_strength = 0.02
+
+#erf.sponge_x_velocity = 10.0
+#erf.sponge_y_velocity = -5.1
+#erf.sponge_z_velocity = 0.0
+#erf.sponge_density    = -1.0   # use base-state density
+
+# Rayleigh damping near top boundary
+erf.rayleigh_damp_W   = true
+#erf.rayleigh_damp_U  = true
+#erf.rayleigh_damp_V  = true
+#erf.rayleigh_damp_T  = true
+
+erf.rayleigh_dampcoef = 0.01        # [1/s]
+erf.rayleigh_zdamp    = 100.0       # [m] depth downward from domain top
+##erf.rayleigh_damping_type = "FastImplicit"   # optional
+
+
+# Cell Perturbation Method for inlet turbulence generation
+#erf.perturbation_type = "CPM"
+#erf.perturbation_direction = 1 0 0 0 0 0
+#erf.perturbation_box_dims = 8 8 18
+#erf.perturbation_layers = 3
+#erf.perturbation_offset = 5
+#erf.perturbation_Ug = 10.0
+
+erf.perturbation_type = "source"
+erf.perturbation_direction = 1 0 0 0 0 0
+erf.perturbation_box_dims = 8 8 18
+erf.perturbation_layers = 3
+erf.perturbation_offset = 5
+erf.perturbation_nondimensional = 0.042 # Ri
+erf.perturbation_T_infinity = 300.0
+
+
+# ------------------  TIME STEP CONTROL  -------------------
+erf.cfl = 0.3
+
+# ------------------  FORCING TERMS  -------------------
+erf.use_gravity  = true
+
+erf.use_coriolis = false
+erf.abl_driver_type = "PressureGradient"
+erf.abl_pressure_grad = -0.00027 0 0
+
+#erf.use_coriolis = true
+#erf.coriolis_3d  = false
+#erf.latitude     = 40.0
+#erf.rotational_time_period = 86400
+#erf.abl_driver_type = "GeostrophicWind"
+#erf.abl_geo_wind    = 10.0 -5.1 0.0
+
+# ------------------  NUMERICAL SCHEMES  -------------------
+#erf.les_type  = "Deardorff"
+#erf.Ck        = 0.1
+#erf.sigma_k   = 0.5 
+#erf.Ce        = 0.93
+#erf.Ce_wall   = 3.9
+#erf.theta_ref = 300.0
+
+erf.les_type  = "Smagorinsky"
+erf.Cs        = 0.15
+
+erf.molec_diff_type = "None"
+
+erf.dycore_horiz_adv_type  = "Blended_5th6th"
+erf.dycore_vert_adv_type   = "Blended_5th6th"
+erf.dryscal_horiz_adv_type = "Blended_5th6th"
+erf.dryscal_vert_adv_type  = "Blended_5th6th"
+erf.dycore_horiz_upw_frac  = 0.2
+erf.dycore_vert_upw_frac   = 0.2
+erf.dryscal_horiz_upw_frac = 0.2
+erf.dryscal_vert_upw_frac  = 0.2
+
+
+# ------------------  INITIAL CONDITIONS  -------------------
+erf.init_type = "input_sounding"
+erf.sounding_type = Ideal
+erf.input_sounding_file = "input_sounding"
+
+# Turbulence seeding: divergence-free sinusoidal velocity perturbations
+prob.pert_ref_height = 1500.0
+prob.pert_deltaU = 0.5
+prob.pert_deltaV = 0.5
+prob.pert_periods_U = 50.0
+prob.pert_periods_V = 250.0
+
+# Turbulence seeding: random theta perturbations (not rho*theta)
+prob.T_0_Pert_Mag = 1.0
+prob.pert_rhotheta = false
+
+
+# ------------------  WIND FARM (SAD)  -------------------
+erf.windfarm_type = "SimpleAD"
+erf.windfarm_loc_type = "x_y"
+erf.windfarm_loc_table = "turb_loc_xy_10mw.txt"
+erf.windfarm_spec_table = "dtu10mw_ideal_spec.tbl"
+erf.windfarm_start_time = 0
+erf.windfarm_ramp_tau   = 300
+
+# Inputs match trade wind direction
+erf.sampling_distance_by_D = 1.0
+erf.turb_disk_angle_from_x = 270.0
+
+erf.dynamic_yaw = true
+erf.yaw_period  = 60
+erf.yaw_file    = "turb_yaw.txt"
+
+erf.wake_rotation = false
+
+
+# ------------------  OUTPUTS  -------------------
+erf.sum_interval    = 50
+erf.v               = 1
+amr.v               = 1
+
+erf.check_file      = chk
+erf.check_int       = 1000
+
+erf.time_avg_vel    = true
+
+erf.plot_file_1     = plt
+erf.plot_per_1      = 600
+erf.plot_vars_1     = x_velocity y_velocity z_velocity magvel u_t_avg v_t_avg w_t_avg umag_t_avg 
+erf.data_log        = surf_hist.dat mean_profiles.dat flux_profiles.dat sfs_profiles.dat
+erf.profile_int     = 300
+
+# ------------------  2D SLICES  -------------------
+#erf.do_plane_sampling   = true
+#erf.plane_sampling_per  = 600   # coarse (level-0) timesteps
+
+# Each plane is defined by two opposite corners (lo/hi) in physical space (m),
+# plus a normal direction: 2=z-normal (xy plane), 1=y-normal (xz), 0=x-normal (yz).
+#
+# Domain here is       x:[0,7680],    y:[0,7200],     z:[0,1000]
+#erf.sample_plane_lo     = 0.0    0.0    150.0    0.0    3000.0  0.0     3000.0  0.0    0.0
+#erf.sample_plane_hi     = 7680.0 7200.0 150.0    7680.0 3000.0  1000.0  3000.0  7200.0 1000.0
+#erf.sample_plane_dir    = 2 1 0
+#erf.sample_plane_name   = plane_xy_z150m plane_xz_y3000m plane_yz_x3000m

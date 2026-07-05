@@ -747,9 +747,8 @@ ERF::ReadCheckpointFile ()
         }
 
 #if defined(ERF_USE_WINDFARM)
-        if(solverChoice.windfarm_type == WindFarmType::Fitch or
-           solverChoice.windfarm_type == WindFarmType::EWP or
-           solverChoice.windfarm_type == WindFarmType::SimpleAD){
+        if (solverChoice.windfarm_type == WindFarmType::Fitch ||
+            solverChoice.windfarm_type == WindFarmType::EWP) {
             IntVect ng = Nturb[lev].nGrowVect();
             MultiFab mf_Nturb(grids[lev],dmap[lev],1,ng);
             VisMF::Read(mf_Nturb, amrex::MultiFabFileFullPrefix(lev, restart_chkfile, "Level_", "NumTurb"));
@@ -968,25 +967,6 @@ ERF::ReadCheckpointFile ()
         }
 #endif
     } // for lev
-
-#if defined(ERF_USE_WINDFARM)
-        if (solverChoice.windfarm_type == WindFarmType::SimpleAD) {
-            windfarm->read_memory_state(restart_chkfile);
-        }
-        if (solverChoice.dynamic_yaw && solverChoice.windfarm_type == WindFarmType::SimpleAD) {
-            bool read_state = windfarm->read_dynamic_yaw_state(restart_chkfile);
-            if (read_state) {
-                amrex::Vector<amrex::Real> disk_face_angles_deg;
-                windfarm->get_disk_face_angles_deg(disk_face_angles_deg);
-                for (int lev = 0; lev <= finest_level; ++lev) {
-                    windfarm->fill_SMark_multifab_dynamic(Geom(lev), SMark[lev], RMask[lev],
-                                                          solverChoice.sampling_distance_by_D,
-                                                          disk_face_angles_deg, z_phys_cc[lev]);
-                }
-                windfarm->commit_yaw_geometry();
-            }
-        }
-#endif
 
 #ifdef ERF_USE_PARTICLES
     restartTracers((ParGDBBase*)GetParGDB(),restart_chkfile);

@@ -28,7 +28,7 @@
                 for (int ori = 0; ori < 2*AMREX_SPACEDIM; ori++) {
                     l_bc_neumann_vals_d[ori] = m_bc_neumann_vals[RhoTheta_comp][ori];
                 }
-                const bool l_use_SurfLayer = (m_SurfaceLayer != nullptr);
+                const bool l_use_SurfLayer = (m_SurfaceLayer != nullptr) && has_surface_layer_at_level(level);
 
                 const bool l_use_turb       = solverChoice.turbChoice[level].use_kturb;
 

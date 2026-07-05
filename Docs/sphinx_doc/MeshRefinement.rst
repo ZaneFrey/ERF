@@ -167,3 +167,47 @@ computed by dividing the variable named rhotheta by the variable named density.
           erf.advdiff.field_name = rhoadv_0
           erf.advdiff.start_time = 0.001
           erf.advdiff.end_time = 0.002
+
+Wind-Turbine Geometry Refinement
+--------------------------------
+
+ERF also supports turbine-centered mesh refinement for the actuator-disk wind-farm models through
+``erf.refinement_indicators = turb_refine``. This indicator is available for
+``erf.windfarm_type = SimpleAD`` and ``erf.windfarm_type = GeneralAD``.
+
+``turb_refine`` tags cells on the turbine owner level using a rotor-centered rectangular prism.
+The horizontal prism orientation follows the current rotor-normal direction, so the refinement
+region rotates with manual yaw offsets and with the dynamic yaw controller for ``SimpleAD``.
+Cells are tagged conservatively: a cell is refined whenever its Cartesian cell volume touches the
+requested turbine prism, even if the cell center lies outside the prism.
+
+The required inputs are the horizontal half-extents normalized by rotor diameter ``D``
+plus explicit physical vertical bounds:
+
+- ``erf.turb_refine.pad_streamwise_by_D``: upstream/downstream half-width along the rotor-normal direction
+- ``erf.turb_refine.pad_spanwise_by_D``: half-width along the horizontal rotor-tangent direction
+- ``erf.turb_refine.box_z_lo``: lower physical ``z`` bound of the refinement prism
+- ``erf.turb_refine.box_z_hi``: upper physical ``z`` bound of the refinement prism
+
+For example:
+
+::
+
+          amr.max_level = 1
+          amr.ref_ratio = 2
+          amr.regrid_int = 20
+
+          erf.refinement_indicators = turb_refine
+
+          erf.dynamic_yaw = true
+          erf.yaw_period = 10.0
+
+          erf.turb_refine.max_level = 1
+          erf.turb_refine.pad_streamwise_by_D = 1.0
+          erf.turb_refine.pad_spanwise_by_D = 0.75
+          erf.turb_refine.box_z_lo = 30.0
+          erf.turb_refine.box_z_hi = 208.0
+
+When ``erf.dynamic_yaw = true``, ERF requests a one-shot regrid when the yaw controller issues a new
+command at the ``erf.yaw_period`` cadence. The indicator is incompatible with active PBL models
+because those models require refinement regions to span the full vertical domain.

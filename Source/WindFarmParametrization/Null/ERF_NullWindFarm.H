@@ -106,6 +106,13 @@ public:
         m_turb_mem_time = turb_mem_time;
     }
 
+    virtual void set_force_spreading (const WindFarmSpreadingType spreading_type,
+                                      const amrex::Real spreading_nsigma)
+    {
+        m_force_spreading_type = spreading_type;
+        m_force_spreading_nsigma = spreading_nsigma;
+    }
+
     virtual void write_memory_state (const std::string& checkpointname) const
     {
         amrex::ignore_unused(checkpointname);
@@ -191,8 +198,15 @@ public:
         C_P_prime = m_C_P_prime;
     }
 
-static AMREX_GPU_DEVICE
-bool find_if_marked (amrex::Real x1, amrex::Real x2, amrex::Real y1, amrex::Real y2,
+    void get_force_spreading (WindFarmSpreadingType& spreading_type,
+                              amrex::Real& spreading_nsigma) const
+    {
+        spreading_type = m_force_spreading_type;
+        spreading_nsigma = m_force_spreading_nsigma;
+    }
+
+	static AMREX_GPU_DEVICE
+	bool find_if_marked (amrex::Real x1, amrex::Real x2, amrex::Real y1, amrex::Real y2,
                      amrex::Real x0, amrex::Real y0, amrex::Real nx, amrex::Real ny,
                      amrex::Real d_hub_height, amrex::Real d_rotor_rad,
                      amrex::Real z)
@@ -246,6 +260,8 @@ protected:
     amrex::Real m_tsr{9.0};
     amrex::Real m_C_P_prime{0.9};
     amrex::Real m_turb_mem_time{600.0};
+    WindFarmSpreadingType m_force_spreading_type{WindFarmSpreadingType::None};
+    amrex::Real m_force_spreading_nsigma{3.0};
 };
 
 

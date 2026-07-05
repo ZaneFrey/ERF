@@ -6,10 +6,12 @@
  * Main class in ERF code, instantiated from main.cpp
 */
 
+#include <algorithm>
 #include <memory>
 
 #include "ERF_EOS.H"
 #include "ERF.H"
+#include "ERF_PlaneAverage.H"
 #include "AMReX_buildInfo.H"
 #include "AMReX_Random.H"
 #include "AMReX_WriteEBSurface.H"
@@ -29,6 +31,138 @@
 #endif
 
 using namespace amrex;
+
+namespace {
+
+void
+copy_to_device (const Vector<Real>& host, Gpu::DeviceVector<Real>& device)
+{
+    device.resize(host.size(), 0.0_rt);
+    Gpu::copy(Gpu::hostToDevice, host.begin(), host.end(), device.begin());
+}
+
+Vector<Real>
+make_cell_center_heights (const Vector<Real>& zstag)
+{
+    const int nz = static_cast<int>(zstag.size()) - 1;
+    Vector<Real> zcc(nz, 0.0_rt);
+    for (int k = 0; k < nz; ++k) {
+        zcc[k] = 0.5_rt * (zstag[k] + zstag[k+1]);
+    }
+    return zcc;
+}
+
+Vector<Real>
+make_cell_center_heights_with_ghosts (const Vector<Real>& zstag)
+{
+    const int nz = static_cast<int>(zstag.size()) - 1;
+    Vector<Real> zcc = make_cell_center_heights(zstag);
+    Vector<Real> zcc_ext(nz + 2, 0.0_rt);
+
+    for (int k = 0; k < nz; ++k) {
+        zcc_ext[k+1] = zcc[k];
+    }
+
+    if (nz > 1) {
+        zcc_ext[0]      = zcc[0]      - (zcc[1]      - zcc[0]);
+        zcc_ext[nz + 1] = zcc[nz - 1] + (zcc[nz - 1] - zcc[nz - 2]);
+    } else if (nz == 1) {
+        const Real dz = zstag[1] - zstag[0];
+        zcc_ext[0] = zcc[0] - dz;
+        zcc_ext[2] = zcc[0] + dz;
+    }
+
+    return zcc_ext;
+}
+
+Real
+linear_interp_extrap (Real z, const Vector<Real>& zsrc, const Vector<Real>& vsrc)
+{
+    AMREX_ALWAYS_ASSERT(zsrc.size() == vsrc.size());
+    AMREX_ALWAYS_ASSERT(!zsrc.empty());
+
+    if (zsrc.size() == 1) {
+        return vsrc[0];
+    }
+
+    if (z <= zsrc.front()) {
+        const Real slope = (vsrc[1] - vsrc[0]) / (zsrc[1] - zsrc[0]);
+        return vsrc[0] + slope * (z - zsrc[0]);
+    }
+
+    if (z >= zsrc.back()) {
+        const int n = static_cast<int>(zsrc.size());
+        const Real slope = (vsrc[n-1] - vsrc[n-2]) / (zsrc[n-1] - zsrc[n-2]);
+        return vsrc[n-1] + slope * (z - zsrc[n-1]);
+    }
+
+    auto hi_it = std::upper_bound(zsrc.begin(), zsrc.end(), z);
+    const int hi = static_cast<int>(hi_it - zsrc.begin());
+    const int lo = hi - 1;
+    const Real weight = (z - zsrc[lo]) / (zsrc[hi] - zsrc[lo]);
+    return (1.0_rt - weight) * vsrc[lo] + weight * vsrc[hi];
+}
+
+void
+interpolate_profile_to_cell_centers (const Vector<Real>& src_zstag,
+                                     const Vector<Real>& src_vals,
+                                     const Vector<Real>& dst_zstag,
+                                     Vector<Real>& dst_vals)
+{
+    const Vector<Real> src_zcc = make_cell_center_heights(src_zstag);
+    const Vector<Real> dst_zcc = make_cell_center_heights(dst_zstag);
+
+    dst_vals.resize(dst_zcc.size(), 0.0_rt);
+    for (int k = 0; k < static_cast<int>(dst_zcc.size()); ++k) {
+        dst_vals[k] = linear_interp_extrap(dst_zcc[k], src_zcc, src_vals);
+    }
+}
+
+void
+interpolate_profile_to_cell_centers_with_ghosts (const Vector<Real>& src_zstag,
+                                                 const Vector<Real>& src_vals,
+                                                 const Vector<Real>& dst_zstag,
+                                                 Vector<Real>& dst_vals)
+{
+    const Vector<Real> src_zcc = make_cell_center_heights(src_zstag);
+    const Vector<Real> dst_zcc = make_cell_center_heights_with_ghosts(dst_zstag);
+
+    dst_vals.resize(dst_zcc.size(), 0.0_rt);
+    for (int k = 0; k < static_cast<int>(dst_zcc.size()); ++k) {
+        dst_vals[k] = linear_interp_extrap(dst_zcc[k], src_zcc, src_vals);
+    }
+}
+
+void
+interpolate_profile_to_nodes (const Vector<Real>& src_zstag,
+                              const Vector<Real>& src_vals,
+                              const Vector<Real>& dst_zstag,
+                              Vector<Real>& dst_vals)
+{
+    dst_vals.resize(dst_zstag.size(), 0.0_rt);
+    for (int k = 0; k < static_cast<int>(dst_zstag.size()); ++k) {
+        dst_vals[k] = linear_interp_extrap(dst_zstag[k], src_zstag, src_vals);
+    }
+}
+
+void
+fill_multifab_from_profile (MultiFab& mf, const Real* d_profile)
+{
+#ifdef _OPENMP
+#pragma omp parallel if (Gpu::notInLaunchRegion())
+#endif
+    for (MFIter mfi(mf); mfi.isValid(); ++mfi) {
+        const Box& bx = mfi.validbox();
+        auto arr = mf.array(mfi);
+        ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
+        {
+            arr(i,j,k) = d_profile[k];
+        });
+    }
+    Gpu::streamSynchronize();
+}
+
+} // namespace
 
 Real ERF::startCPUTime        = 0.0;
 Real ERF::previousCPUTimeUsed = 0.0;
@@ -599,6 +733,264 @@ ERF::ERF_shared ()
 
 ERF::~ERF () = default;
 
+bool
+ERF::level_touches_zlo (int lev, const BoxArray& ba) const
+{
+    const int dom_klo = geom[lev].Domain().smallEnd(2);
+    return ba.minimalBox().smallEnd(2) == dom_klo;
+}
+
+bool
+ERF::level_touches_zlo (int lev) const
+{
+    return level_touches_zlo(lev, grids[lev]);
+}
+
+bool
+ERF::has_surface_layer_at_level (int lev, const BoxArray& ba) const
+{
+    const Orientation zlo(Direction::z, Orientation::low);
+    return phys_bc_type[zlo] == ERF_BC::surface_layer && level_touches_zlo(lev, ba);
+}
+
+bool
+ERF::has_surface_layer_at_level (int lev) const
+{
+    return has_surface_layer_at_level(lev, grids[lev]);
+}
+
+int
+ERF::surface_flux_owner_level () const
+{
+    int owner = -1;
+    for (int lev = 0; lev <= finest_level; ++lev) {
+        if (has_surface_layer_at_level(lev)) {
+            owner = lev;
+        }
+    }
+    return owner;
+}
+
+void
+ERF::refresh_surface_flux_cache_from_current_state (Real time)
+{
+    if (!m_SurfaceLayer) { return; }
+
+    const int owner_lev = surface_flux_owner_level();
+    if (owner_lev < 0) { return; }
+
+#ifdef ERF_USE_NETCDF
+    Real elapsed_time_since_start_low = time + (start_time - start_low_time);
+#else
+    Real elapsed_time_since_start_low = time + start_time;
+#endif
+
+    for (int lev = 0; lev <= owner_lev; ++lev) {
+        if (!has_surface_layer_at_level(lev)) {
+            continue;
+        }
+
+        IntVect ng = Theta_prim[lev]->nGrowVect();
+
+        MultiFab::Copy(*Theta_prim[lev], vars_new[lev][Vars::cons], RhoTheta_comp, 0, 1, ng);
+        MultiFab::Divide(*Theta_prim[lev], vars_new[lev][Vars::cons], Rho_comp, 0, 1, ng);
+
+        if (solverChoice.moisture_type != MoistureType::None) {
+            ng = Qv_prim[lev]->nGrowVect();
+
+            MultiFab::Copy(*Qv_prim[lev], vars_new[lev][Vars::cons], RhoQ1_comp, 0, 1, ng);
+            MultiFab::Divide(*Qv_prim[lev], vars_new[lev][Vars::cons], Rho_comp, 0, 1, ng);
+
+            int rhoqr_comp = solverChoice.moisture_indices.qr;
+            if (rhoqr_comp > -1) {
+                MultiFab::Copy(*Qr_prim[lev], vars_new[lev][Vars::cons], rhoqr_comp, 0, 1, ng);
+                MultiFab::Divide(*Qr_prim[lev], vars_new[lev][Vars::cons], Rho_comp, 0, 1, ng);
+            } else {
+                Qr_prim[lev]->setVal(0.0);
+            }
+        }
+
+        m_SurfaceLayer->update_mac_ptrs(lev, vars_new, Theta_prim, Qv_prim, Qr_prim);
+        m_SurfaceLayer->update_pblh(lev, vars_new, z_phys_cc[lev].get(),
+                                    solverChoice.moisture_indices);
+        m_SurfaceLayer->update_fluxes(lev, elapsed_time_since_start_low,
+                                      vars_new[lev][Vars::cons],
+                                      z_phys_nd[lev],
+                                      walldist[lev]);
+
+        Vector<const MultiFab*> mfs = {&vars_new[lev][Vars::cons],
+                                       &vars_new[lev][Vars::xvel],
+                                       &vars_new[lev][Vars::yvel],
+                                       &vars_new[lev][Vars::zvel]};
+        m_SurfaceLayer->compute_surface_flux_cache(lev, mfs, z_phys_nd[lev].get());
+    }
+
+    for (int crse_lev = owner_lev-1; crse_lev >= 0; --crse_lev) {
+        if (!has_surface_layer_at_level(crse_lev)) {
+            continue;
+        }
+        AMREX_ALWAYS_ASSERT(has_surface_layer_at_level(crse_lev+1));
+        m_SurfaceLayer->average_down_to(crse_lev+1, crse_lev, refRatio(crse_lev));
+    }
+
+    if (owner_lev > 0 && has_surface_layer_at_level(0)) {
+        const Real max_u_star = m_SurfaceLayer->get_u_star(0)->max(0);
+        if (max_u_star > 1.0e30_rt) {
+            amrex::Abort("Surface-layer refresh left sentinel u_star values on level 0 during AMR surface-layer synchronization.");
+        }
+    }
+}
+
+bool
+ERF::use_level0_shared_large_scale_forcing () const
+{
+    return (finest_level > 0) &&
+           (solverChoice.custom_moisture_forcing || solverChoice.custom_w_subsidence);
+}
+
+void
+ERF::refresh_level0_shared_large_scale_forcing (Real time,
+                                                const Vector<MultiFab>& state_old)
+{
+    if (!use_level0_shared_large_scale_forcing()) { return; }
+
+    const int nz0 = geom[0].Domain().length(2);
+    const bool has_moisture = (solverChoice.moisture_type != MoistureType::None);
+
+    if (solverChoice.custom_moisture_forcing) {
+        prob->update_rhoqt_sources(time, rhoqt_src[0].get(), geom[0], z_phys_cc[0]);
+
+        const Box profile_domain = solverChoice.spatial_moisture_forcing
+            ? geom[0].Domain()
+            : rhoqt_src[0]->boxArray().minimalBox();
+
+        Gpu::HostVector<Real> h_rhoqt_master = sumToLine(*rhoqt_src[0], 0, 1, profile_domain, 2);
+        h_level0_rhoqt_master.assign(h_rhoqt_master.begin(), h_rhoqt_master.end());
+
+        if (solverChoice.spatial_moisture_forcing) {
+            const Real area = static_cast<Real>(geom[0].Domain().length(0) * geom[0].Domain().length(1));
+            for (auto& val : h_level0_rhoqt_master) {
+                val /= area;
+            }
+        }
+
+        copy_to_device(h_level0_rhoqt_master, d_level0_rhoqt_master);
+    }
+
+    if (!solverChoice.custom_w_subsidence) { return; }
+
+    prob->update_w_subsidence(time,
+                              h_w_subsid[0], d_w_subsid[0], base_state[0],
+                              geom[0], z_phys_nd[0]);
+    h_level0_wbar_master = h_w_subsid[0];
+    copy_to_device(h_level0_wbar_master, d_level0_wbar_master);
+
+    const int cons_ncomp = has_moisture ? RhoQ2_comp + 1 : RhoTheta_comp + 1;
+    MultiFab cons(state_old[IntVars::cons], make_alias, 0, cons_ncomp);
+    IntVect ng_c(cons.nGrowVect());
+    ng_c[2] = 0;
+    PlaneAverage cons_ave(&cons, geom[0], solverChoice.ave_plane, ng_c);
+    cons_ave.compute_averages(ZDir(), cons_ave.field());
+
+    Gpu::HostVector<Real> rho_plane_h(cons_ave.ncell_line(), 0.0_rt);
+    Gpu::HostVector<Real> theta_plane_h(cons_ave.ncell_line(), 0.0_rt);
+    cons_ave.line_average(Rho_comp, rho_plane_h);
+    cons_ave.line_average(RhoTheta_comp, theta_plane_h);
+
+    h_level0_theta_master.resize(nz0, 0.0_rt);
+    h_level0_qv_master.assign(nz0, 0.0_rt);
+    h_level0_qc_master.assign(nz0, 0.0_rt);
+
+    for (int k = 0; k < nz0; ++k) {
+        const Real rho = rho_plane_h[k];
+        h_level0_theta_master[k] = theta_plane_h[k] / rho;
+    }
+
+    if (has_moisture) {
+        Gpu::HostVector<Real> qv_plane_h(cons_ave.ncell_line(), 0.0_rt);
+        Gpu::HostVector<Real> qc_plane_h(cons_ave.ncell_line(), 0.0_rt);
+        cons_ave.line_average(RhoQ1_comp, qv_plane_h);
+        cons_ave.line_average(RhoQ2_comp, qc_plane_h);
+
+        for (int k = 0; k < nz0; ++k) {
+            const Real rho = rho_plane_h[k];
+            h_level0_qv_master[k] = qv_plane_h[k] / rho;
+            h_level0_qc_master[k] = qc_plane_h[k] / rho;
+        }
+    }
+
+    IntVect ng_u(state_old[IntVars::xmom].nGrowVect());
+    IntVect ng_v(state_old[IntVars::ymom].nGrowVect());
+    ng_u[2] = 0;
+    ng_v[2] = 0;
+
+    PlaneAverage u_ave(&(state_old[IntVars::xmom]), geom[0], solverChoice.ave_plane, ng_u);
+    PlaneAverage v_ave(&(state_old[IntVars::ymom]), geom[0], solverChoice.ave_plane, ng_v);
+    u_ave.compute_averages(ZDir(), u_ave.field());
+    v_ave.compute_averages(ZDir(), v_ave.field());
+
+    Gpu::HostVector<Real> u_plane_h(u_ave.ncell_line(), 0.0_rt);
+    Gpu::HostVector<Real> v_plane_h(v_ave.ncell_line(), 0.0_rt);
+    u_ave.line_average(0, u_plane_h);
+    v_ave.line_average(0, v_plane_h);
+
+    h_level0_u_master.resize(nz0, 0.0_rt);
+    h_level0_v_master.resize(nz0, 0.0_rt);
+    for (int k = 0; k < nz0; ++k) {
+        const Real rho = rho_plane_h[k];
+        h_level0_u_master[k] = u_plane_h[k] / rho;
+        h_level0_v_master[k] = v_plane_h[k] / rho;
+    }
+
+    copy_to_device(h_level0_theta_master, d_level0_theta_master);
+    copy_to_device(h_level0_qv_master, d_level0_qv_master);
+    copy_to_device(h_level0_qc_master, d_level0_qc_master);
+    copy_to_device(h_level0_u_master, d_level0_u_master);
+    copy_to_device(h_level0_v_master, d_level0_v_master);
+
+    if (d_theta_ref.size() < static_cast<std::size_t>(max_level + 1)) {
+        d_theta_ref.resize(max_level + 1);
+        d_qv_ref.resize(max_level + 1);
+        d_qc_ref.resize(max_level + 1);
+        d_u_ref.resize(max_level + 1);
+        d_v_ref.resize(max_level + 1);
+    }
+
+    for (int lev = 0; lev <= finest_level; ++lev) {
+        Vector<Real> theta_ref_h;
+        Vector<Real> qv_ref_h;
+        Vector<Real> qc_ref_h;
+        Vector<Real> u_ref_h;
+        Vector<Real> v_ref_h;
+        Vector<Real> wbar_ref_h;
+
+        interpolate_profile_to_nodes(zlevels_stag[0], h_level0_wbar_master, zlevels_stag[lev], wbar_ref_h);
+        h_w_subsid[lev] = wbar_ref_h;
+        copy_to_device(h_w_subsid[lev], d_w_subsid[lev]);
+
+        interpolate_profile_to_cell_centers_with_ghosts(zlevels_stag[0], h_level0_theta_master, zlevels_stag[lev], theta_ref_h);
+        interpolate_profile_to_cell_centers_with_ghosts(zlevels_stag[0], h_level0_qv_master,    zlevels_stag[lev], qv_ref_h);
+        interpolate_profile_to_cell_centers_with_ghosts(zlevels_stag[0], h_level0_qc_master,    zlevels_stag[lev], qc_ref_h);
+        interpolate_profile_to_cell_centers_with_ghosts(zlevels_stag[0], h_level0_u_master,     zlevels_stag[lev], u_ref_h);
+        interpolate_profile_to_cell_centers_with_ghosts(zlevels_stag[0], h_level0_v_master,     zlevels_stag[lev], v_ref_h);
+
+        copy_to_device(theta_ref_h, d_theta_ref[lev]);
+        copy_to_device(qv_ref_h,    d_qv_ref[lev]);
+        copy_to_device(qc_ref_h,    d_qc_ref[lev]);
+        copy_to_device(u_ref_h,     d_u_ref[lev]);
+        copy_to_device(v_ref_h,     d_v_ref[lev]);
+
+        if (solverChoice.custom_moisture_forcing) {
+            Vector<Real> rhoqt_ref_h;
+            interpolate_profile_to_cell_centers(zlevels_stag[0], h_level0_rhoqt_master, zlevels_stag[lev], rhoqt_ref_h);
+
+            Gpu::DeviceVector<Real> d_rhoqt_ref(rhoqt_ref_h.size(), 0.0_rt);
+            Gpu::copy(Gpu::hostToDevice, rhoqt_ref_h.begin(), rhoqt_ref_h.end(), d_rhoqt_ref.begin());
+            fill_multifab_from_profile(*rhoqt_src[lev], d_rhoqt_ref.data());
+        }
+    }
+}
+
 // advance solution to final time
 void
 ERF::Evolve ()
@@ -1066,6 +1458,13 @@ ERF::InitData_post ()
             AverageDown();
         }
     }
+
+#ifdef ERF_USE_WINDFARM
+    if (restart_chkfile.empty() &&
+        (solverChoice.windfarm_type != WindFarmType::None)) {
+        rebuild_windfarm_hierarchy();
+    }
+#endif
 
 #ifdef ERF_USE_PARTICLES
     if (restart_chkfile.empty()) {
@@ -1568,6 +1967,9 @@ ERF::InitData_post ()
         // to redefine the internal arrays in m_SurfaceLayer.
         for (int lev = 0; lev <= finest_level; lev++)
         {
+            if (!has_surface_layer_at_level(lev)) {
+                continue;
+            }
             Vector<MultiFab*> mfv_old = {&vars_old[lev][Vars::cons], &vars_old[lev][Vars::xvel],
                                          &vars_old[lev][Vars::yvel], &vars_old[lev][Vars::zvel]};
             m_SurfaceLayer->make_SurfaceLayer_at_level(lev,finest_level+1,
@@ -1584,6 +1986,9 @@ ERF::InitData_post ()
             const Real theta0 = input_sounding_data.theta_ref_inp_sound;
             const Real qv0    = input_sounding_data.qv_ref_inp_sound;
             for (int lev = 0; lev <= finest_level; lev++) {
+                if (!has_surface_layer_at_level(lev)) {
+                    continue;
+                }
                 m_SurfaceLayer->set_t_surf(lev, theta0);
                 m_SurfaceLayer->set_q_surf(lev, qv0);
             }
@@ -1594,59 +1999,25 @@ ERF::InitData_post ()
             ReadCheckpointFileSurfaceLayer();
         }
 
-        // We now configure ABLMost params here so that we can print the averages at t=0
-        // Note we don't fill ghost cells here because this is just for diagnostics
+        refresh_surface_flux_cache_from_current_state(t_new[surface_flux_owner_level()]);
+
         for (int lev = 0; lev <= finest_level; ++lev)
         {
-            IntVect ng = Theta_prim[lev]->nGrowVect();
-
-            MultiFab::Copy(  *Theta_prim[lev], vars_new[lev][Vars::cons], RhoTheta_comp, 0, 1, ng);
-            MultiFab::Divide(*Theta_prim[lev], vars_new[lev][Vars::cons],      Rho_comp, 0, 1, ng);
-
-            if (solverChoice.moisture_type != MoistureType::None) {
-                ng = Qv_prim[lev]->nGrowVect();
-
-                MultiFab::Copy(  *Qv_prim[lev], vars_new[lev][Vars::cons], RhoQ1_comp, 0, 1, ng);
-                MultiFab::Divide(*Qv_prim[lev], vars_new[lev][Vars::cons],   Rho_comp, 0, 1, ng);
-
-                int rhoqr_comp = solverChoice.moisture_indices.qr;
-                if (rhoqr_comp > -1) {
-                    MultiFab::Copy(  *Qr_prim[lev], vars_new[lev][Vars::cons], rhoqr_comp, 0, 1, ng);
-                    MultiFab::Divide(*Qr_prim[lev], vars_new[lev][Vars::cons],   Rho_comp, 0, 1, ng);
-                } else {
-                    Qr_prim[lev]->setVal(0.0);
-                }
+            if (!has_surface_layer_at_level(lev) || restart_chkfile != "") {
+                continue;
             }
-            m_SurfaceLayer->update_mac_ptrs(lev, vars_new, Theta_prim, Qv_prim, Qr_prim);
 
-            if (restart_chkfile == "") {
-                // Only do this if starting from scratch; if restarting, then
-                // we don't want to call update_fluxes multiple times because
-                // it will change u* and theta* from their previous values
-                m_SurfaceLayer->update_pblh(lev, vars_new, z_phys_cc[lev].get(),
-                                            solverChoice.moisture_indices);
-#ifdef ERF_USE_NETCDF
-                Real elapsed_time_since_start_low = t_new[lev] + (start_time - start_low_time);
-#else
-                Real elapsed_time_since_start_low = t_new[lev] + start_time;
-#endif
-                m_SurfaceLayer->update_fluxes(lev, elapsed_time_since_start_low,
-                                              vars_new[lev][Vars::cons],
-                                              z_phys_nd[lev],
-                                              walldist[lev]);
-
-                // Initialize tke(x,y,z) as a function of u*(x,y)
-                if (solverChoice.turbChoice[lev].init_tke_from_ustar) {
-                    Real qkefac = 1.0;
-                    if (solverChoice.turbChoice[lev].pbl_type == PBLType::MYNN25 ||
-                        solverChoice.turbChoice[lev].pbl_type == PBLType::MYNNEDMF)
-                    {
-                        // https://github.com/NCAR/MYNN-EDMF/blob/90f36c25259ec1960b24325f5b29ac7c5adeac73/module_bl_mynnedmf.F90#L1325-L1333
-                        const Real B1 = solverChoice.turbChoice[lev].pbl_mynn.B1;
-                        qkefac = 1.5 * std::pow(B1, 2.0/3.0);
-                    }
-                    m_SurfaceLayer->init_tke_from_ustar(lev, vars_new[lev][Vars::cons], z_phys_nd[lev], qkefac);
+            // Initialize tke(x,y,z) as a function of the restricted owner-level u*(x,y)
+            if (solverChoice.turbChoice[lev].init_tke_from_ustar) {
+                Real qkefac = 1.0;
+                if (solverChoice.turbChoice[lev].pbl_type == PBLType::MYNN25 ||
+                    solverChoice.turbChoice[lev].pbl_type == PBLType::MYNNEDMF)
+                {
+                    // https://github.com/NCAR/MYNN-EDMF/blob/90f36c25259ec1960b24325f5b29ac7c5adeac73/module_bl_mynnedmf.F90#L1325-L1333
+                    const Real B1 = solverChoice.turbChoice[lev].pbl_mynn.B1;
+                    qkefac = 1.5 * std::pow(B1, 2.0/3.0);
                 }
+                m_SurfaceLayer->init_tke_from_ustar(lev, vars_new[lev][Vars::cons], z_phys_nd[lev], qkefac);
             }
         }
     } // end if (phys_bc_type[Orientation(Direction::z,Orientation::low)] == ERF_BC::surface_layer)
@@ -2131,10 +2502,37 @@ ERF::restart ()
         }
     }
 
+#ifdef ERF_USE_WINDFARM
+    if (solverChoice.windfarm_type != WindFarmType::None) {
+        rebuild_windfarm_hierarchy();
+        if (solverChoice.windfarm_type == WindFarmType::SimpleAD) {
+            windfarm->read_memory_state(restart_chkfile);
+        }
+        if (solverChoice.dynamic_yaw && solverChoice.windfarm_type == WindFarmType::SimpleAD) {
+            bool read_state = windfarm->read_dynamic_yaw_state(restart_chkfile);
+            if (read_state) {
+                rebuild_windfarm_hierarchy();
+            }
+        }
+    }
+#endif
+
 #ifdef ERF_USE_PARTICLES
     // We call this here without knowing whether the particles have already been initialized or not
     initializeTracers((ParGDBBase*)GetParGDB(),z_phys_nd,t_new[0]);
 #endif
+
+    if (solverChoice.moisture_type != MoistureType::None) {
+        for (int lev = 0; lev <= finest_level; ++lev) {
+            // Rebuild restart-independent microphysics state from the checkpointed
+            // conserved variables, then write the normalized moisture fields back.
+            // This keeps restart behavior aligned with an uninterrupted run before
+            // any diagnostics, plotfile writes, or the first resumed advance.
+            micro->Set_RealWidth(lev, real_width);
+            micro->Update_Micro_Vars_Lev(lev, vars_new[lev][Vars::cons]);
+            micro->Update_State_Vars_Lev(lev, vars_new[lev][Vars::cons]);
+        }
+    }
 
     Real cur_time = t_new[0];
     if (m_check_per    > 0.) {last_check_file_time    = cur_time;}

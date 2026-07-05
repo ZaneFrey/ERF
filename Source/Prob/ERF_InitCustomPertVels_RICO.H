@@ -31,7 +31,9 @@
         const Real* prob_lo = geomdata.ProbLo();
         const Real* dx = geomdata.CellSize();
         const Real y = prob_lo[1] + (j + 0.5) * dx[1];
-        const Real z = prob_lo[2] + (k + 0.5) * dx[2];
+        const Real z = (z_nd) ? 0.25 * ( z_nd(i,j  ,k) + z_nd(i,j+1,k)
+                                       + z_nd(i,j  ,k+1) + z_nd(i,j+1,k+1) )
+                              : prob_lo[2] + (k + 0.5) * dx[2];
 
         // Set the x-velocity
         x_vel_pert(i, j, k) = U_0;
@@ -56,7 +58,9 @@
         const Real* prob_lo = geomdata.ProbLo();
         const Real* dx = geomdata.CellSize();
         const Real x = prob_lo[0] + (i + 0.5) * dx[0];
-        const Real z = prob_lo[2] + (k + 0.5) * dx[2];
+        const Real z = (z_nd) ? 0.25 * ( z_nd(i  ,j,k) + z_nd(i+1,j,k)
+                                       + z_nd(i  ,j,k+1) + z_nd(i+1,j,k+1) )
+                              : prob_lo[2] + (k + 0.5) * dx[2];
 
         // Set the y-velocity
         y_vel_pert(i, j, k) = V_0;

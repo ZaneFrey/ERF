@@ -125,24 +125,32 @@ ERF::timeStep (int lev, Real time, int /*iteration*/)
                            base_state[lev], base_state[lev]);
     }
 
-    if (regrid_int > 0)  // We may need to regrid
+    // We may need to regrid either on the normal cadence or because a turbine yaw update
+    // requested a one-shot refresh of the AMR hierarchy at this level.
     {
-        // help keep track of whether a level was already regridded
-        // from a coarser level call to regrid
         static Vector<int> last_regrid_step(max_level+1, 0);
 
-        // regrid changes level "lev+1" so we don't regrid on max_level
-        // also make sure we don't regrid fine levels again if
-        // it was taken care of during a coarser regrid
         if (lev < max_level)
         {
-            if ( (istep[lev] % regrid_int == 0) && (istep[lev] > last_regrid_step[lev]) )
+            const bool scheduled_regrid =
+                (regrid_int > 0) &&
+                ((istep[lev] % regrid_int == 0) && (istep[lev] > last_regrid_step[lev]));
+
+            const bool forced_regrid =
+                (lev < static_cast<int>(turb_refine_force_regrid.size())) &&
+                (turb_refine_force_regrid[lev] != 0);
+
+            if (scheduled_regrid || forced_regrid)
             {
-                // regrid could add newly refine levels (if finest_level < max_level)
-                // so we save the previous finest level index
                 int old_finest = finest_level;
 
                 regrid(lev, time);
+
+#ifdef ERF_USE_WINDFARM
+                if (solverChoice.windfarm_type != WindFarmType::None) {
+                    rebuild_windfarm_hierarchy();
+                }
+#endif
 
 #ifdef ERF_USE_PARTICLES
                 if (finest_level != old_finest) {
@@ -150,17 +158,27 @@ ERF::timeStep (int lev, Real time, int /*iteration*/)
                 }
 #endif
 
-                // mark that we have regridded this level already
                 for (int k = lev; k <= finest_level; ++k) {
                     last_regrid_step[k] = istep[k];
                 }
 
-                // if there are newly created levels, set the time step
                 for (int k = old_finest+1; k <= finest_level; ++k) {
                     dt[k] = dt[k-1] / static_cast<Real>(nsubsteps[k]);
                 }
-            } // if
-        } // lev
+
+                if (forced_regrid) {
+                    turb_refine_force_regrid[lev] = 0;
+                }
+            }
+        }
+        else if (lev < static_cast<int>(turb_refine_force_regrid.size()))
+        {
+            turb_refine_force_regrid[lev] = 0;
+        }
+    }
+
+    if (m_SurfaceLayer) {
+        refresh_surface_flux_cache_from_current_state(time);
     }
 
     // Update what we call "old" and "new" time
@@ -187,6 +205,10 @@ ERF::timeStep (int lev, Real time, int /*iteration*/)
     // Advance a single level for a single time step
     Advance(lev, time, dt[lev], istep[lev], nsubsteps[lev]);
 
+    if (m_SurfaceLayer && lev == surface_flux_owner_level()) {
+        refresh_surface_flux_cache_from_current_state(t_new[lev]);
+    }
+
     ++istep[lev];
 
     if (Verbose()) {
@@ -205,6 +227,11 @@ ERF::timeStep (int lev, Real time, int /*iteration*/)
     }
 
     if (verbose && lev == 0 && solverChoice.moisture_type != MoistureType::None) {
-        amrex::Print() << "Cloud fraction " << time << "  " << cloud_fraction(time) << std::endl;
+        amrex::Print() << "Cloud fraction " << time << "  " << cloud_fraction(0) << std::endl;
+
+        for (int lev_idx = 1; lev_idx <= finest_level; ++lev_idx) {
+            amrex::Print() << "Cloud fraction level " << lev_idx << " " << time << "  "
+                           << cloud_fraction(lev_idx) << std::endl;
+        }
     }
 }

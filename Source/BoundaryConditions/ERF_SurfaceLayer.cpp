@@ -1,6 +1,67 @@
 #include "ERF_SurfaceLayer.H"
 
+#include <AMReX_MultiFabUtil.H>
+
 using namespace amrex;
+
+namespace {
+
+#ifdef AMREX_USE_GPU
+constexpr RunOn fab_copy_run_on = RunOn::Device;
+#else
+constexpr RunOn fab_copy_run_on = RunOn::Host;
+#endif
+
+BoxArray
+make_subset_box_array (const BoxArray& ba,
+                       const Vector<int>& box_ids)
+{
+    BoxList bl;
+    for (int idx : box_ids) {
+        bl.push_back(ba[idx]);
+    }
+    return BoxArray(std::move(bl));
+}
+
+DistributionMapping
+make_subset_dm (const DistributionMapping& dm,
+                const Vector<int>& box_ids)
+{
+    Vector<int> pmap;
+    pmap.reserve(box_ids.size());
+    for (int idx : box_ids) {
+        pmap.push_back(dm[idx]);
+    }
+    return DistributionMapping(std::move(pmap));
+}
+
+void
+sync_collapsed_multifab_from_bottom_boxes (MultiFab& mf,
+                                           const Vector<int>& bottom_box_ids,
+                                           const Periodicity& period)
+{
+    if (bottom_box_ids.empty() ||
+        bottom_box_ids.size() == mf.boxArray().size()) {
+        return;
+    }
+
+    MultiFab bottom_only(make_subset_box_array(mf.boxArray(), bottom_box_ids),
+                         make_subset_dm(mf.DistributionMap(), bottom_box_ids),
+                         mf.nComp(), mf.nGrowVect(), MFInfo(), mf.Factory());
+
+    const int myproc = ParallelDescriptor::MyProc();
+    for (int ibox = 0; ibox < bottom_box_ids.size(); ++ibox) {
+        if (bottom_only.DistributionMap()[ibox] == myproc) {
+            const Box& bx = bottom_only[ibox].box();
+            bottom_only[ibox].template copy<fab_copy_run_on>(mf[bottom_box_ids[ibox]],
+                                                             bx, 0, bx, 0, mf.nComp());
+        }
+    }
+
+    mf.ParallelCopy(bottom_only, 0, 0, mf.nComp(), 0, 0, period);
+}
+
+} // namespace
 
 /**
  * Wrapper to update ustar and tstar for Monin Obukhov similarity theory.
@@ -216,6 +277,144 @@ SurfaceLayer::update_fluxes (const int& lev,
     }
 }
 
+void
+SurfaceLayer::compute_surface_flux_cache (const int& lev,
+                                          Vector<const MultiFab*> mfs,
+                                          const MultiFab* z_phys)
+{
+    if (flux_type == FluxCalcType::MOENG) {
+        moeng_flux flux_comp;
+        compute_SurfaceLayer_bcs(lev, mfs, m_cached_tau[lev],
+                                 m_cached_hfx1[lev].get(), m_cached_hfx2[lev].get(), m_cached_hfx3[lev].get(),
+                                 m_cached_qfx1[lev].get(), m_cached_qfx2[lev].get(), m_cached_qfx3[lev].get(),
+                                 z_phys, flux_comp);
+    } else if (flux_type == FluxCalcType::DONELAN) {
+        donelan_flux flux_comp;
+        compute_SurfaceLayer_bcs(lev, mfs, m_cached_tau[lev],
+                                 m_cached_hfx1[lev].get(), m_cached_hfx2[lev].get(), m_cached_hfx3[lev].get(),
+                                 m_cached_qfx1[lev].get(), m_cached_qfx2[lev].get(), m_cached_qfx3[lev].get(),
+                                 z_phys, flux_comp);
+    } else if (flux_type == FluxCalcType::ROTATE) {
+        rotate_flux flux_comp;
+        compute_SurfaceLayer_bcs(lev, mfs, m_cached_tau[lev],
+                                 m_cached_hfx1[lev].get(), m_cached_hfx2[lev].get(), m_cached_hfx3[lev].get(),
+                                 m_cached_qfx1[lev].get(), m_cached_qfx2[lev].get(), m_cached_qfx3[lev].get(),
+                                 z_phys, flux_comp);
+    } else if (flux_type == FluxCalcType::RICO) {
+        rico_flux flux_comp(rico_theta_z0, rico_qsat_z0);
+        compute_SurfaceLayer_bcs(lev, mfs, m_cached_tau[lev],
+                                 m_cached_hfx1[lev].get(), m_cached_hfx2[lev].get(), m_cached_hfx3[lev].get(),
+                                 m_cached_qfx1[lev].get(), m_cached_qfx2[lev].get(), m_cached_qfx3[lev].get(),
+                                 z_phys, flux_comp);
+    } else if (flux_type == FluxCalcType::BULK_COEFF) {
+        bulk_coeff_flux flux_comp(m_Cd, m_Ch, m_Cq);
+        compute_SurfaceLayer_bcs(lev, mfs, m_cached_tau[lev],
+                                 m_cached_hfx1[lev].get(), m_cached_hfx2[lev].get(), m_cached_hfx3[lev].get(),
+                                 m_cached_qfx1[lev].get(), m_cached_qfx2[lev].get(), m_cached_qfx3[lev].get(),
+                                 z_phys, flux_comp);
+    } else if (flux_type == FluxCalcType::CUSTOM) {
+        custom_flux flux_comp(specified_rho_surf);
+        compute_SurfaceLayer_bcs(lev, mfs, m_cached_tau[lev],
+                                 m_cached_hfx1[lev].get(), m_cached_hfx2[lev].get(), m_cached_hfx3[lev].get(),
+                                 m_cached_qfx1[lev].get(), m_cached_qfx2[lev].get(), m_cached_qfx3[lev].get(),
+                                 z_phys, flux_comp);
+    } else {
+        amrex::Abort("Unknown surface layer flux calculation type");
+    }
+}
+
+void
+SurfaceLayer::average_down_to (const int& fine_lev,
+                               const int& crse_lev,
+                               const IntVect& ref_ratio)
+{
+    IntVect ref_ratio_2d = ref_ratio;
+    ref_ratio_2d[2] = 1;
+
+    m_ma.average_down_to(fine_lev, crse_lev, ref_ratio);
+
+    auto sync_bottom_owned = [&] (auto& mf_ptr) {
+        if (mf_ptr) {
+            sync_collapsed_multifab_from_bottom_boxes(*mf_ptr, m_bottom_box_ids[fine_lev],
+                                                      m_geom[fine_lev].periodicity());
+        }
+    };
+
+    sync_collapsed_multifab_from_bottom_boxes(z_0[fine_lev], m_bottom_box_ids[fine_lev],
+                                              m_geom[fine_lev].periodicity());
+
+    average_down(z_0[fine_lev], z_0[crse_lev], 0, 1, ref_ratio_2d);
+
+    auto average_down_cell = [&] (auto& fine_ptr, auto& crse_ptr) {
+        if (fine_ptr && crse_ptr) {
+            average_down(*fine_ptr, *crse_ptr, 0, 1, ref_ratio_2d);
+        }
+    };
+
+    sync_bottom_owned(u_star[fine_lev]);
+    sync_bottom_owned(w_star[fine_lev]);
+    sync_bottom_owned(t_star[fine_lev]);
+    sync_bottom_owned(q_star[fine_lev]);
+    sync_bottom_owned(olen[fine_lev]);
+    sync_bottom_owned(pblh[fine_lev]);
+    sync_bottom_owned(t_surf[fine_lev]);
+    sync_bottom_owned(q_surf[fine_lev]);
+
+    average_down_cell(u_star[fine_lev], u_star[crse_lev]);
+    average_down_cell(w_star[fine_lev], w_star[crse_lev]);
+    average_down_cell(t_star[fine_lev], t_star[crse_lev]);
+    average_down_cell(q_star[fine_lev], q_star[crse_lev]);
+    average_down_cell(olen[fine_lev], olen[crse_lev]);
+    average_down_cell(pblh[fine_lev], pblh[crse_lev]);
+    average_down_cell(t_surf[fine_lev], t_surf[crse_lev]);
+    average_down_cell(q_surf[fine_lev], q_surf[crse_lev]);
+
+    auto average_down_face = [&] (auto& fine_ptr, auto& crse_ptr) {
+        if (fine_ptr && crse_ptr) {
+            average_down_faces(*fine_ptr, *crse_ptr, ref_ratio, m_geom[crse_lev]);
+        }
+    };
+
+    auto average_down_edge = [&] (auto& fine_ptr, auto& crse_ptr) {
+        if (fine_ptr && crse_ptr) {
+            average_down_edges(*fine_ptr, *crse_ptr, ref_ratio);
+        }
+    };
+
+    sync_bottom_owned(m_cached_tau[fine_lev][TauType::tau13]);
+    sync_bottom_owned(m_cached_tau[fine_lev][TauType::tau23]);
+    sync_bottom_owned(m_cached_tau[fine_lev][TauType::tau31]);
+    sync_bottom_owned(m_cached_tau[fine_lev][TauType::tau32]);
+    sync_bottom_owned(m_cached_hfx1[fine_lev]);
+    sync_bottom_owned(m_cached_hfx2[fine_lev]);
+    sync_bottom_owned(m_cached_hfx3[fine_lev]);
+    sync_bottom_owned(m_cached_qfx1[fine_lev]);
+    sync_bottom_owned(m_cached_qfx2[fine_lev]);
+    sync_bottom_owned(m_cached_qfx3[fine_lev]);
+    sync_bottom_owned(m_cached_tau[fine_lev][TauType::tau11]);
+    sync_bottom_owned(m_cached_tau[fine_lev][TauType::tau22]);
+    sync_bottom_owned(m_cached_tau[fine_lev][TauType::tau33]);
+    sync_bottom_owned(m_cached_tau[fine_lev][TauType::tau12]);
+    sync_bottom_owned(m_cached_tau[fine_lev][TauType::tau21]);
+
+    average_down_edge(m_cached_tau[fine_lev][TauType::tau13], m_cached_tau[crse_lev][TauType::tau13]);
+    average_down_edge(m_cached_tau[fine_lev][TauType::tau23], m_cached_tau[crse_lev][TauType::tau23]);
+    average_down_edge(m_cached_tau[fine_lev][TauType::tau31], m_cached_tau[crse_lev][TauType::tau31]);
+    average_down_edge(m_cached_tau[fine_lev][TauType::tau32], m_cached_tau[crse_lev][TauType::tau32]);
+    average_down_face(m_cached_hfx1[fine_lev], m_cached_hfx1[crse_lev]);
+    average_down_face(m_cached_hfx2[fine_lev], m_cached_hfx2[crse_lev]);
+    average_down_face(m_cached_hfx3[fine_lev], m_cached_hfx3[crse_lev]);
+    average_down_face(m_cached_qfx1[fine_lev], m_cached_qfx1[crse_lev]);
+    average_down_face(m_cached_qfx2[fine_lev], m_cached_qfx2[crse_lev]);
+    average_down_face(m_cached_qfx3[fine_lev], m_cached_qfx3[crse_lev]);
+
+    average_down_cell(m_cached_tau[fine_lev][TauType::tau11], m_cached_tau[crse_lev][TauType::tau11]);
+    average_down_cell(m_cached_tau[fine_lev][TauType::tau22], m_cached_tau[crse_lev][TauType::tau22]);
+    average_down_cell(m_cached_tau[fine_lev][TauType::tau33], m_cached_tau[crse_lev][TauType::tau33]);
+    average_down_edge(m_cached_tau[fine_lev][TauType::tau12], m_cached_tau[crse_lev][TauType::tau12]);
+    average_down_edge(m_cached_tau[fine_lev][TauType::tau21], m_cached_tau[crse_lev][TauType::tau21]);
+}
+
 /**
  * Function to compute the fluxes (u^star and t^star) for Monin Obukhov similarity theory
  *
@@ -318,44 +517,32 @@ SurfaceLayer::impose_SurfaceLayer_bcs (const int& lev,
                                        MultiFab* zqv_flux,
                                        const MultiFab* z_phys)
 {
-    if (flux_type == FluxCalcType::MOENG) {
-        moeng_flux flux_comp;
-        compute_SurfaceLayer_bcs(lev, mfs, Tau_lev,
-                                 xheat_flux, yheat_flux, zheat_flux,
-                                 xqv_flux, yqv_flux, zqv_flux,
-                                 z_phys, flux_comp);
-    } else if (flux_type == FluxCalcType::DONELAN) {
-        donelan_flux flux_comp;
-        compute_SurfaceLayer_bcs(lev, mfs, Tau_lev,
-                                 xheat_flux, yheat_flux, zheat_flux,
-                                 xqv_flux, yqv_flux, zqv_flux,
-                                 z_phys, flux_comp);
-    } else if (flux_type == FluxCalcType::ROTATE) {
-        rotate_flux flux_comp;
-        compute_SurfaceLayer_bcs(lev, mfs, Tau_lev,
-                                 xheat_flux, yheat_flux, zheat_flux,
-                                 xqv_flux, yqv_flux, zqv_flux,
-                                 z_phys, flux_comp);
-    } else if (flux_type == FluxCalcType::RICO) {
-        rico_flux flux_comp(rico_theta_z0, rico_qsat_z0);
-        compute_SurfaceLayer_bcs(lev, mfs, Tau_lev,
-                                 xheat_flux, yheat_flux, zheat_flux,
-                                 xqv_flux, yqv_flux, zqv_flux,
-                                 z_phys, flux_comp);
-    } else if (flux_type == FluxCalcType::BULK_COEFF) {
-        bulk_coeff_flux flux_comp(m_Cd, m_Ch, m_Cq);
-        compute_SurfaceLayer_bcs(lev, mfs, Tau_lev,
-                                 xheat_flux, yheat_flux, zheat_flux,
-                                 xqv_flux, yqv_flux, zqv_flux,
-                                 z_phys, flux_comp);
-    } else if (flux_type == FluxCalcType::CUSTOM) {
-        custom_flux flux_comp(specified_rho_surf);
-        compute_SurfaceLayer_bcs(lev, mfs, Tau_lev,
-                                 xheat_flux, yheat_flux, zheat_flux,
-                                 xqv_flux, yqv_flux, zqv_flux,
-                                 z_phys, flux_comp);
-    } else {
-        amrex::Abort("Unknown surface layer flux calculation type");
+    amrex::ignore_unused(mfs, z_phys);
+
+    auto copy_cached = [] (MultiFab* dst, const std::unique_ptr<MultiFab>& src) {
+        if (dst && src) {
+            MultiFab::Copy(*dst, *src, 0, 0, 1, dst->nGrowVect());
+        }
+    };
+
+    copy_cached(Tau_lev[TauType::tau13].get(), m_cached_tau[lev][TauType::tau13]);
+    copy_cached(Tau_lev[TauType::tau23].get(), m_cached_tau[lev][TauType::tau23]);
+    copy_cached(Tau_lev[TauType::tau31].get(), m_cached_tau[lev][TauType::tau31]);
+    copy_cached(Tau_lev[TauType::tau32].get(), m_cached_tau[lev][TauType::tau32]);
+    copy_cached(Tau_lev[TauType::tau11].get(), m_cached_tau[lev][TauType::tau11]);
+    copy_cached(Tau_lev[TauType::tau22].get(), m_cached_tau[lev][TauType::tau22]);
+    copy_cached(Tau_lev[TauType::tau33].get(), m_cached_tau[lev][TauType::tau33]);
+    copy_cached(Tau_lev[TauType::tau12].get(), m_cached_tau[lev][TauType::tau12]);
+    copy_cached(Tau_lev[TauType::tau21].get(), m_cached_tau[lev][TauType::tau21]);
+    copy_cached(xheat_flux, m_cached_hfx1[lev]);
+    copy_cached(yheat_flux, m_cached_hfx2[lev]);
+    copy_cached(zheat_flux, m_cached_hfx3[lev]);
+    copy_cached(xqv_flux, m_cached_qfx1[lev]);
+    copy_cached(yqv_flux, m_cached_qfx2[lev]);
+    copy_cached(zqv_flux, m_cached_qfx3[lev]);
+
+    if (!use_moisture && zqv_flux) {
+        zqv_flux->setVal(0.0);
     }
 }
 

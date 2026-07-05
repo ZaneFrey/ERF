@@ -5,6 +5,10 @@ amrex.fpe_trap_invalid = 0
 
 fabarray.mfiter_tile_size = 1024 1024 1024
 
+erf.poisson_reltol = 1.e-12
+erf.poisson_abstol = 1.e-12
+erf.mg_v           = 1
+
 
 # ------------------  GOVERNING EQUATIONS  -------------------
 erf.anelastic = 1
@@ -12,8 +16,8 @@ erf.use_fft   = true
 
 # ------------------  PROBLEM SIZE & GEOMETRY  -------------------
 # Domain / base resolution
-geometry.prob_extent =  36000     36000   5000
-amr.n_cell           =   900      900     125
+geometry.prob_extent =  12800     12800   5000
+amr.n_cell           =   320      320     125
 
 geometry.is_periodic = 1 1 0
 
@@ -51,11 +55,11 @@ erf.rayleigh_zdamp    = 500.0         # [m] depth downward from domain top
 #stop_time = 3600    #  1 hour
 #stop_time = 4800    #  1.5 hours
 #stop_time = 7200    #  2 hours
-#stop_time = 21600   #   6 hours
+stop_time = 21600   #   6 hours
 #stop_time = 36000   #   10 hours
 #stop_time = 43200   #  12 hours
 #stop_time = 86400   #  24 hours
-stop_time = 129600
+#stop_time = 129600
 
 erf.cfl = 0.3
 
@@ -92,39 +96,9 @@ prob.custom_TKE      = true
 
 # ------------------  MOISTURE / MICROPHYSICS  -------------------
 
-# Saturation Adjustment
-#erf.moisture_model  = "SatAdj"
-#erf.buoyancy_type   = 4
-
 # SAM
 erf.moisture_model  = "SAM"
 erf.buoyancy_type   = 1
-
-# Kessler
-#erf.moisture_model  = "Kessler"
-#erf.buoyancy_type   = 1
-
-# SDM 
-#erf.moisture_model  = "SuperDroplets"
-#erf.buoyancy_type   = 1
-#super_droplets_moisture.initial_distribution_type = "uniform"
-#super_droplets_moisture.diagnostics_interval = 100
-#super_droplets_moisture.coalescence_kernel = "Halls"
-#super_droplets_moisture.aerosols = NH4HSO4
-#super_droplets_moisture.num_initializations = 2
-#super_droplets_moisture.density_scaling = true
-#super_droplets_moisture.0.initial_aerosol_distribution_type_NH4HSO4 = "radius_log_normal"
-#super_droplets_moisture.0.initial_aerosol_mean_radius_NH4HSO4 = 30.0e-9 #kg (0.03 mu-m)
-##super_droplets_moisture.0.initial_aerosol_mean_radius_NH4HSO4 = 1.5440783508342682e-07 #kg (0.03 mu-m)
-#super_droplets_moisture.0.initial_aerosol_std_radius_NH4HSO4 = 0.2468600779315258
-#super_droplets_moisture.0.initial_number_density = 9.0e7 #m^{-3}
-#super_droplets_moisture.0.initial_particles_per_cell = 64
-#super_droplets_moisture.1.initial_aerosol_distribution_type_NH4HSO4 = "radius_log_normal"
-#super_droplets_moisture.1.initial_aerosol_mean_radius_NH4HSO4 = 140.0e-9 #kg (0.14 mu-m)
-##super_droplets_moisture.1.initial_aerosol_mean_radius_NH4HSO4 = 2.993331986277269e-06
-#super_droplets_moisture.1.initial_aerosol_std_radius_NH4HSO4 = 0.5596157879354227
-#super_droplets_moisture.1.initial_number_density = 1.5e7 #m^{-3}
-#super_droplets_moisture.1.initial_particles_per_cell = 64
 
 
 # ------------------  NUMERICAL SCHEMES  -------------------
@@ -139,15 +113,15 @@ erf.dryscal_vert_upw_frac  = 0.2
 
 erf.molec_diff_type = "None"
 
-#erf.les_type        = "Smagorinsky"
-#erf.Cs              = 0.17
+erf.les_type        = "Smagorinsky"
+erf.Cs              = 0.17
 
-erf.les_type  = "Deardorff"
-erf.Ck        = 0.1
-erf.sigma_k   = 0.5 
-erf.Ce        = 0.93
-erf.Ce_wall   = 3.9
-erf.theta_ref = 300.0
+#erf.les_type  = "Deardorff"
+#erf.Ck        = 0.1
+#erf.sigma_k   = 0.5 
+#erf.Ce        = 0.93
+#erf.Ce_wall   = 3.9
+#erf.theta_ref = 300.0
 
 erf.Pr_t      = 0.33333333333333
 erf.Sc_t      = 0.33333333333333
@@ -171,7 +145,7 @@ erf.windfarm_type = "SimpleAD"
 erf.windfarm_loc_type = "x_y"
 erf.windfarm_loc_table = "turb_loc_xy_10mw.txt"
 erf.windfarm_spec_table = "dtu10mw_spec.tbl"
-erf.windfarm_start_time = 129600
+erf.windfarm_start_time = 84600
 erf.windfarm_ramp_tau   = 60
 
 # Inputs match trade wind direction
@@ -198,11 +172,11 @@ erf.check_per       = 1800
 
 # PLOTFILES
 erf.plot_file_1     = plt  
-erf.plot_per_1      = 900
+erf.plot_per_1      = 300
 #erf.plot_vars_1     = x_velocity y_velocity z_velocity theta qt qc qsat
 
 #   SAM
-erf.plot_vars_1     = density rhotheta x_velocity y_velocity z_velocity pressure temp theta qt qp qv qc qsat qrain rain_accum
+erf.plot_vars_1     = density rhotheta x_velocity y_velocity z_velocity magvel pressure temp theta qt qp qv qc qsat qrain rain_accum
 
 #   Kessler
 #erf.plot_vars_1     = density rhotheta x_velocity y_velocity z_velocity pressure temp theta qt qp qv qc qsat qrain rain_accum

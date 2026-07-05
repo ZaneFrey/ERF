@@ -79,6 +79,11 @@ public:
     // Driver for the different average policies
     void compute_averages (const int& lev);
 
+    // Restrict the owner-level MOST state to the next coarser surface level.
+    void average_down_to (const int& fine_lev,
+                          const int& crse_lev,
+                          const amrex::IntVect& ref_ratio);
+
     // Fill averages for policy::plane
     void compute_plane_averages (const int& lev);
 
@@ -207,6 +212,7 @@ protected:
     amrex::Vector<std::unique_ptr<amrex::iMultiFab>> m_i_indx;       // Ptr to 2D imf to hold i indices (maxlev)
     amrex::Vector<std::unique_ptr<amrex::iMultiFab>> m_j_indx;       // Ptr to 2D imf to hold j indices (maxlev)
     amrex::Vector<std::unique_ptr<amrex::iMultiFab>> m_k_indx;       // Ptr to 2D imf to hold k indices (maxlev)
+    amrex::Vector<amrex::Vector<int>> m_bottom_box_ids;              // 3D boxes that touch the lower boundary
     amrex::Vector<amrex::Vector<std::unique_ptr<amrex::MultiFab>>> m_averages; // Ptr to 2D mf to hold averages (maxlev,navg)
     amrex::Vector<amrex::Vector<std::unique_ptr<amrex::MultiFab>>> m_rot_fields; // Rotated field data
 

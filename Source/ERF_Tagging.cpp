@@ -1,5 +1,12 @@
 #include <ERF.H>
 #include <ERF_Derive.H>
+#include <AMReX_BoxList.H>
+#include <AMReX_Gpu.H>
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <limits>
 
 using namespace amrex;
 
@@ -12,6 +19,322 @@ Box read_subdomain_from_metgrid (int lev, const std::string& fname, int& ratio, 
 void
 tag_on_distance_from_eye(const Geometry& cgeom, TagBoxArray* tags,
                          const Real eye_x, const Real eye_y, const Real rad_tag);
+
+namespace {
+
+bool
+using_pbl_model (const SolverChoice& solver_choice, int lev)
+{
+    return (solver_choice.turbChoice[lev].pbl_type == PBLType::MYJ      ||
+            solver_choice.turbChoice[lev].pbl_type == PBLType::MYNN25   ||
+            solver_choice.turbChoice[lev].pbl_type == PBLType::MYNNEDMF ||
+            solver_choice.turbChoice[lev].pbl_type == PBLType::YSU      ||
+            solver_choice.turbChoice[lev].pbl_type == PBLType::MRF);
+}
+
+bool
+any_pbl_models_active (const SolverChoice& solver_choice, int finest_level)
+{
+    for (int lev = 0; lev <= finest_level; ++lev) {
+        if (using_pbl_model(solver_choice, lev)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+amrex::BoxArray
+build_uncovered_valid_boxes (const amrex::Box& domain,
+                             const amrex::BoxArray& level_grids,
+                             const amrex::BoxArray* finer_grids,
+                             const amrex::IntVect* ref_ratio)
+{
+    amrex::BoxList uncovered(level_grids);
+
+    if (finer_grids != nullptr && ref_ratio != nullptr) {
+        amrex::BoxArray covered_by_fine(*finer_grids);
+        covered_by_fine.coarsen(*ref_ratio);
+
+        amrex::BoxList complement;
+        complement.complementIn(domain, covered_by_fine);
+        uncovered.intersect(complement);
+        uncovered.removeEmpty();
+        uncovered.simplify();
+    }
+
+    return amrex::BoxArray(std::move(uncovered));
+}
+
+AMREX_FORCE_INLINE
+amrex::Real missing_z_value ()
+{
+    return -std::numeric_limits<amrex::Real>::max() / 4.0;
+}
+
+AMREX_FORCE_INLINE
+bool is_missing_z_value (amrex::Real value)
+{
+    return value <= missing_z_value() / 2.0;
+}
+
+amrex::Vector<amrex::Vector<amrex::Real>>
+gather_z_columns_to_host (const amrex::Geometry& geom,
+                          const amrex::MultiFab* z_phys_nd,
+                          const amrex::Vector<int>& i_cols,
+                          const amrex::Vector<int>& j_cols)
+{
+    const int ncol = static_cast<int>(i_cols.size());
+    const int klo = geom.Domain().smallEnd(2);
+    const int khi = geom.Domain().bigEnd(2) + 1;
+    const int nnode = khi - klo + 1;
+    const amrex::Real missing = missing_z_value();
+
+    amrex::Vector<amrex::Vector<amrex::Real>> z_columns(ncol,
+        amrex::Vector<amrex::Real>(nnode, missing));
+
+    if (ncol == 0) {
+        return z_columns;
+    }
+
+    if (z_phys_nd == nullptr) {
+        const auto prob_lo = geom.ProbLoArray();
+        const auto dx = geom.CellSizeArray();
+        for (int idx = 0; idx < ncol; ++idx) {
+            for (int k = klo; k <= khi; ++k) {
+                z_columns[idx][k-klo] = prob_lo[2] + (k-klo) * dx[2];
+            }
+        }
+        return z_columns;
+    }
+
+    for (amrex::MFIter mfi(*z_phys_nd, false); mfi.isValid(); ++mfi) {
+        const amrex::Box& vb = mfi.validbox();
+        const amrex::FArrayBox& fab = (*z_phys_nd)[mfi];
+        amrex::Array4<const amrex::Real> z_arr = fab.const_array();
+
+#ifdef AMREX_USE_GPU
+        std::unique_ptr<amrex::FArrayBox> hostfab;
+        if (fab.arena()->isManaged() || fab.arena()->isDevice()) {
+            hostfab = std::make_unique<amrex::FArrayBox>(fab.box(), fab.nComp(), amrex::The_Pinned_Arena());
+            amrex::Gpu::dtoh_memcpy_async(hostfab->dataPtr(), fab.dataPtr(),
+                                          fab.size()*sizeof(amrex::Real));
+            amrex::Gpu::streamSynchronize();
+            z_arr = hostfab->const_array();
+        }
+#endif
+
+        const int kbeg = std::max(vb.smallEnd(2), klo);
+        const int kend = std::min(vb.bigEnd(2), khi);
+        for (int idx = 0; idx < ncol; ++idx) {
+            const int i = i_cols[idx];
+            const int j = j_cols[idx];
+            if (i < vb.smallEnd(0) || i > vb.bigEnd(0) ||
+                j < vb.smallEnd(1) || j > vb.bigEnd(1)) {
+                continue;
+            }
+
+            for (int k = kbeg; k <= kend; ++k) {
+                z_columns[idx][k-klo] = z_arr(i, j, k);
+            }
+        }
+    }
+
+    return z_columns;
+}
+
+AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+bool intervals_overlap_inclusive (amrex::Real alo, amrex::Real ahi,
+                                  amrex::Real blo, amrex::Real bhi)
+{
+    return !(ahi < blo || bhi < alo);
+}
+
+AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+bool oriented_rect_overlaps_cell_2d (amrex::Real cx, amrex::Real cy,
+                                     amrex::Real nx, amrex::Real ny,
+                                     amrex::Real tx, amrex::Real ty,
+                                     amrex::Real half_streamwise,
+                                     amrex::Real half_spanwise,
+                                     amrex::Real xlo, amrex::Real xhi,
+                                     amrex::Real ylo, amrex::Real yhi)
+{
+    const amrex::Real cell_cx = amrex::Real(0.5) * (xlo + xhi);
+    const amrex::Real cell_cy = amrex::Real(0.5) * (ylo + yhi);
+    const amrex::Real hx = amrex::Real(0.5) * (xhi - xlo);
+    const amrex::Real hy = amrex::Real(0.5) * (yhi - ylo);
+
+    const amrex::Real rect_rx = amrex::Math::abs(nx) * half_streamwise +
+                                amrex::Math::abs(tx) * half_spanwise;
+    const amrex::Real rect_ry = amrex::Math::abs(ny) * half_streamwise +
+                                amrex::Math::abs(ty) * half_spanwise;
+
+    if (!intervals_overlap_inclusive(cx - rect_rx, cx + rect_rx, xlo, xhi)) {
+        return false;
+    }
+
+    if (!intervals_overlap_inclusive(cy - rect_ry, cy + rect_ry, ylo, yhi)) {
+        return false;
+    }
+
+    const amrex::Real rect_cn = cx * nx + cy * ny;
+    const amrex::Real cell_cn = cell_cx * nx + cell_cy * ny;
+    const amrex::Real cell_rn = amrex::Math::abs(nx) * hx + amrex::Math::abs(ny) * hy;
+    if (!intervals_overlap_inclusive(rect_cn - half_streamwise, rect_cn + half_streamwise,
+                                     cell_cn - cell_rn, cell_cn + cell_rn)) {
+        return false;
+    }
+
+    const amrex::Real rect_ct = cx * tx + cy * ty;
+    const amrex::Real cell_ct = cell_cx * tx + cell_cy * ty;
+    const amrex::Real cell_rt = amrex::Math::abs(tx) * hx + amrex::Math::abs(ty) * hy;
+    return intervals_overlap_inclusive(rect_ct - half_spanwise, rect_ct + half_spanwise,
+                                       cell_ct - cell_rt, cell_ct + cell_rt);
+}
+
+#ifdef ERF_USE_WINDFARM
+bool
+validate_turb_refine_region (const amrex::Geometry& geom,
+                             const amrex::BoxArray& grids,
+                             const amrex::BoxArray* finer_grids,
+                             const amrex::IntVect* ref_ratio,
+                             const amrex::MultiFab* z_phys_nd,
+                             WindFarm* windfarm,
+                             const amrex::Vector<int>& turbine_ids,
+                             amrex::Real pad_streamwise_by_D,
+                             amrex::Real pad_spanwise_by_D,
+                             amrex::Real box_z_lo,
+                             amrex::Real box_z_hi)
+{
+    if (turbine_ids.empty()) {
+        return true;
+    }
+
+    const amrex::Box& domain = geom.Domain();
+    const auto dx = geom.CellSizeArray();
+    const auto prob_lo = geom.ProbLoArray();
+    const int k_domain_lo = domain.smallEnd(2);
+    const int k_domain_hi = domain.bigEnd(2);
+
+    amrex::BoxArray uncovered_valid_boxes =
+        build_uncovered_valid_boxes(domain, grids, finer_grids, ref_ratio);
+
+    amrex::Vector<int> i_cols;
+    amrex::Vector<int> j_cols;
+    i_cols.reserve(turbine_ids.size());
+    j_cols.reserve(turbine_ids.size());
+
+    for (int turbine_id : turbine_ids) {
+        amrex::Real x, y, zhub, diameter, nx, ny, tx, ty;
+        windfarm->get_turbine_refinement_geometry(turbine_id, x, y, zhub, diameter, nx, ny, tx, ty);
+        amrex::ignore_unused(zhub, diameter, nx, ny, tx, ty);
+
+        const int i_center = static_cast<int>(std::floor((x - prob_lo[0]) / dx[0]));
+        const int j_center = static_cast<int>(std::floor((y - prob_lo[1]) / dx[1]));
+        if (i_center < domain.smallEnd(0) || i_center > domain.bigEnd(0) ||
+            j_center < domain.smallEnd(1) || j_center > domain.bigEnd(1)) {
+            return false;
+        }
+
+        i_cols.push_back(i_center);
+        j_cols.push_back(j_center);
+    }
+
+    const auto z_columns = gather_z_columns_to_host(geom, z_phys_nd, i_cols, j_cols);
+
+    for (int idx = 0; idx < static_cast<int>(turbine_ids.size()); ++idx) {
+        const int turbine_id = turbine_ids[idx];
+        amrex::Real x, y, zhub, diameter, nx, ny, tx, ty;
+        windfarm->get_turbine_refinement_geometry(turbine_id, x, y, zhub, diameter, nx, ny, tx, ty);
+        if (diameter <= 0.0) {
+            return false;
+        }
+
+        const amrex::Real half_streamwise = pad_streamwise_by_D * diameter;
+        const amrex::Real half_spanwise   = pad_spanwise_by_D  * diameter;
+        amrex::ignore_unused(zhub);
+
+        std::array<amrex::Real,4> xcorners{
+            x + half_streamwise * nx + half_spanwise * tx,
+            x + half_streamwise * nx - half_spanwise * tx,
+            x - half_streamwise * nx + half_spanwise * tx,
+            x - half_streamwise * nx - half_spanwise * tx
+        };
+        std::array<amrex::Real,4> ycorners{
+            y + half_streamwise * ny + half_spanwise * ty,
+            y + half_streamwise * ny - half_spanwise * ty,
+            y - half_streamwise * ny + half_spanwise * ty,
+            y - half_streamwise * ny - half_spanwise * ty
+        };
+
+        const amrex::Real x_min = *std::min_element(xcorners.begin(), xcorners.end());
+        const amrex::Real x_max = *std::max_element(xcorners.begin(), xcorners.end());
+        const amrex::Real y_min = *std::min_element(ycorners.begin(), ycorners.end());
+        const amrex::Real y_max = *std::max_element(ycorners.begin(), ycorners.end());
+
+        const amrex::Real x_min_in = std::nextafter(x_min, std::numeric_limits<amrex::Real>::infinity());
+        const amrex::Real x_max_in = std::nextafter(x_max, -std::numeric_limits<amrex::Real>::infinity());
+        const amrex::Real y_min_in = std::nextafter(y_min, std::numeric_limits<amrex::Real>::infinity());
+        const amrex::Real y_max_in = std::nextafter(y_max, -std::numeric_limits<amrex::Real>::infinity());
+
+        const int ilo = static_cast<int>(std::floor((x_min_in - prob_lo[0]) / dx[0]));
+        const int ihi = static_cast<int>(std::floor((x_max_in - prob_lo[0]) / dx[0]));
+        const int jlo = static_cast<int>(std::floor((y_min_in - prob_lo[1]) / dx[1]));
+        const int jhi = static_cast<int>(std::floor((y_max_in - prob_lo[1]) / dx[1]));
+
+        if (ilo < domain.smallEnd(0) || ihi > domain.bigEnd(0) ||
+            jlo < domain.smallEnd(1) || jhi > domain.bigEnd(1)) {
+            return false;
+        }
+
+        const amrex::Vector<amrex::Real>& z_nodes = z_columns[idx];
+        int klo = -1;
+        int khi = -1;
+        bool has_gap_in_extent = false;
+
+        for (int k = k_domain_lo; k <= k_domain_hi; ++k) {
+            const int lo_idx = k - k_domain_lo;
+            const int hi_idx = lo_idx + 1;
+            if (lo_idx < 0 || hi_idx >= static_cast<int>(z_nodes.size())) {
+                continue;
+            }
+
+            const amrex::Real cell_lo = z_nodes[lo_idx];
+            const amrex::Real cell_hi = z_nodes[hi_idx];
+
+            if (!is_missing_z_value(cell_lo) && klo >= 0 && cell_lo > box_z_hi) {
+                break;
+            }
+
+            if (is_missing_z_value(cell_lo) || is_missing_z_value(cell_hi)) {
+                if (klo >= 0 && khi >= 0) {
+                    has_gap_in_extent = true;
+                    break;
+                }
+                continue;
+            }
+
+            if (cell_hi >= box_z_lo && cell_lo <= box_z_hi) {
+                if (klo < 0) { klo = k; }
+                khi = k;
+            }
+        }
+
+        if (klo < 0 || has_gap_in_extent) {
+            return false;
+        }
+
+        amrex::Box footprint_box(amrex::IntVect(AMREX_D_DECL(ilo, jlo, klo)),
+                                 amrex::IntVect(AMREX_D_DECL(ihi, jhi, khi)));
+        if (!uncovered_valid_boxes.contains(footprint_box)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+#endif
+
+} // namespace
 
 
 /**
@@ -353,6 +676,118 @@ ERF::ErrorEst (int levc, TagBoxArray& tags, Real time, int /*ngrow*/)
             }
         }
     }
+
+#ifdef ERF_USE_WINDFARM
+    if (turb_refine_info.enabled && windfarm &&
+        time >= turb_refine_info.start_time &&
+        time <= turb_refine_info.end_time)
+    {
+        if (!m_windfarm_hierarchy_initialized) {
+            amrex::Abort("erf.refinement_indicators=turb_refine requires the wind-farm hierarchy to be initialized before tagging, but it was not ready when ErrorEst was called.");
+        }
+
+        int owner_level = -1;
+        int owner_level_count = 0;
+        for (int lev = 0; lev <= finest_level; ++lev) {
+            if (!windfarm->turbines_on_level(lev).empty()) {
+                owner_level = lev;
+                ++owner_level_count;
+            }
+        }
+
+        if (owner_level_count > 1) {
+            amrex::Abort("erf.refinement_indicators=turb_refine requires all turbines to be contained within a single AMR level, but turbines were found on multiple levels.");
+        }
+
+        const int max_indicator_level = (turb_refine_info.max_level > 0)
+            ? turb_refine_info.max_level
+            : max_level;
+
+        if (owner_level >= 0 &&
+            levc == owner_level &&
+            (levc + 1) <= max_indicator_level)
+        {
+            const amrex::BoxArray* finer_grids = (levc < finest_level) ? &grids[levc+1] : nullptr;
+            const amrex::IntVect* ratio = (levc < finest_level) ? &ref_ratio[levc] : nullptr;
+            const amrex::MultiFab* z_nd_for_validation =
+                (SolverChoice::mesh_type == MeshType::ConstantDz) ? nullptr : z_phys_nd[levc].get();
+
+            if (!validate_turb_refine_region(geom[levc], grids[levc], finer_grids, ratio,
+                                             z_nd_for_validation, windfarm.get(),
+                                             windfarm->turbines_on_level(levc),
+                                             turb_refine_info.pad_streamwise_by_D,
+                                             turb_refine_info.pad_spanwise_by_D,
+                                             turb_refine_info.box_z_lo,
+                                             turb_refine_info.box_z_hi)) {
+                amrex::Abort("erf.refinement_indicators=turb_refine requested a turbine refinement region that extends outside the immediate parent AMR level. Increase the parent-level refined region or reduce erf.turb_refine horizontal padding or z bounds.");
+            }
+
+            const auto dx = geom[levc].CellSizeArray();
+            const auto prob_lo = geom[levc].ProbLoArray();
+            const bool use_physical_z_bounds =
+                (SolverChoice::mesh_type != MeshType::ConstantDz) && static_cast<bool>(z_phys_nd[levc]);
+
+            for (int turbine_id : windfarm->turbines_on_level(levc)) {
+                amrex::Real x, y, zhub, diameter, nx, ny, tx, ty;
+                windfarm->get_turbine_refinement_geometry(turbine_id, x, y, zhub, diameter, nx, ny, tx, ty);
+                if (diameter <= 0.0) {
+                    amrex::Abort("erf.refinement_indicators=turb_refine could not obtain valid turbine geometry for refinement tagging.");
+                }
+
+                const amrex::Real half_streamwise = turb_refine_info.pad_streamwise_by_D * diameter;
+                const amrex::Real half_spanwise   = turb_refine_info.pad_spanwise_by_D  * diameter;
+                const amrex::Real z_lo = turb_refine_info.box_z_lo;
+                const amrex::Real z_hi = turb_refine_info.box_z_hi;
+                amrex::ignore_unused(zhub);
+
+                for (MFIter mfi(tags, TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+                    auto tag_arr = tags.array(mfi);
+                    const Box& bx = mfi.tilebox();
+                    const Array4<const Real> z_nd_arr = use_physical_z_bounds
+                        ? z_phys_nd[levc]->const_array(mfi)
+                        : Array4<const Real>{};
+
+                    ParallelFor(bx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+                        const amrex::Real cell_xlo = prob_lo[0] + static_cast<amrex::Real>( i    ) * dx[0];
+                        const amrex::Real cell_xhi = prob_lo[0] + static_cast<amrex::Real>( i + 1) * dx[0];
+                        const amrex::Real cell_ylo = prob_lo[1] + static_cast<amrex::Real>( j    ) * dx[1];
+                        const amrex::Real cell_yhi = prob_lo[1] + static_cast<amrex::Real>( j + 1) * dx[1];
+
+                        if (!oriented_rect_overlaps_cell_2d(x, y, nx, ny, tx, ty,
+                                                            half_streamwise, half_spanwise,
+                                                            cell_xlo, cell_xhi,
+                                                            cell_ylo, cell_yhi)) {
+                            return;
+                        }
+
+                        amrex::Real cell_zlo;
+                        amrex::Real cell_zhi;
+                        if (use_physical_z_bounds) {
+                            cell_zlo = z_nd_arr(i, j, k);
+                            cell_zhi = cell_zlo;
+                            for (int kk = 0; kk <= 1; ++kk) {
+                                for (int jj = 0; jj <= 1; ++jj) {
+                                    for (int ii = 0; ii <= 1; ++ii) {
+                                        const amrex::Real z_node = z_nd_arr(i + ii, j + jj, k + kk);
+                                        cell_zlo = amrex::min(cell_zlo, z_node);
+                                        cell_zhi = amrex::max(cell_zhi, z_node);
+                                    }
+                                }
+                            }
+                        } else {
+                            cell_zlo = prob_lo[2] + static_cast<amrex::Real>( k    ) * dx[2];
+                            cell_zhi = prob_lo[2] + static_cast<amrex::Real>( k + 1) * dx[2];
+                        }
+
+                        if (intervals_overlap_inclusive(cell_zlo, cell_zhi, z_lo, z_hi)) {
+                            tag_arr(i, j, k) = TagBox::SET;
+                        }
+                    });
+                }
+            }
+        }
+    }
+#endif
 }
 
 /**
@@ -367,6 +802,8 @@ ERF::refinement_criteria_setup ()
         ParmParse pp(pp_prefix);
         Vector<std::string> refinement_indicators;
         pp.queryarr("refinement_indicators",refinement_indicators,0,pp.countval("refinement_indicators"));
+        turb_refine_info = TurbRefineInfo{};
+        turb_refine_force_regrid.assign(max_level+1, 0);
 
         for (int i=0; i<refinement_indicators.size(); ++i)
         {
@@ -374,7 +811,52 @@ ERF::refinement_criteria_setup ()
 
             ParmParse ppr(ref_prefix);
             RealBox realbox;
-            int lev_for_box;
+            int lev_for_box = -1;
+
+            if (refinement_indicators[i] == "turb_refine") {
+#ifdef ERF_USE_WINDFARM
+                if (!(solverChoice.windfarm_type == WindFarmType::SimpleAD ||
+                      solverChoice.windfarm_type == WindFarmType::GeneralAD)) {
+                    amrex::Abort("erf.refinement_indicators=turb_refine requires windfarm_type = SimpleAD or GeneralAD.");
+                }
+
+                if (any_pbl_models_active(solverChoice, max_level)) {
+                    amrex::Abort("erf.refinement_indicators=turb_refine is incompatible with active PBL models because PBL refinement must span the full vertical domain.");
+                }
+
+                const bool has_streamwise = (ppr.countval("pad_streamwise_by_D") > 0);
+                const bool has_spanwise = (ppr.countval("pad_spanwise_by_D") > 0);
+                const bool has_box_z_lo = (ppr.countval("box_z_lo") > 0);
+                const bool has_box_z_hi = (ppr.countval("box_z_hi") > 0);
+                if (!(has_streamwise && has_spanwise && has_box_z_lo && has_box_z_hi)) {
+                    amrex::Abort("erf.refinement_indicators=turb_refine requires erf.turb_refine.pad_streamwise_by_D, erf.turb_refine.pad_spanwise_by_D, erf.turb_refine.box_z_lo, and erf.turb_refine.box_z_hi.");
+                }
+
+                turb_refine_info.enabled = true;
+                ppr.get("pad_streamwise_by_D", turb_refine_info.pad_streamwise_by_D);
+                ppr.get("pad_spanwise_by_D", turb_refine_info.pad_spanwise_by_D);
+                ppr.get("box_z_lo", turb_refine_info.box_z_lo);
+                ppr.get("box_z_hi", turb_refine_info.box_z_hi);
+                ppr.query("start_time", turb_refine_info.start_time);
+                ppr.query("end_time", turb_refine_info.end_time);
+                turb_refine_info.max_level = max_level;
+                ppr.query("max_level", turb_refine_info.max_level);
+
+                if (turb_refine_info.pad_streamwise_by_D < 0.0 ||
+                    turb_refine_info.pad_spanwise_by_D < 0.0 ||
+                    turb_refine_info.box_z_lo < 0.0 ||
+                    turb_refine_info.box_z_hi < turb_refine_info.box_z_lo) {
+                    amrex::Abort("erf.turb_refine.pad_streamwise_by_D and erf.turb_refine.pad_spanwise_by_D must be nonnegative, erf.turb_refine.box_z_lo must be nonnegative, and erf.turb_refine.box_z_hi must be greater than or equal to erf.turb_refine.box_z_lo.");
+                }
+
+                if (turb_refine_info.max_level < 1 || turb_refine_info.max_level > max_level) {
+                    amrex::Abort("erf.turb_refine.max_level must be between 1 and amr.max_level.");
+                }
+#else
+                amrex::Abort("erf.refinement_indicators=turb_refine requires ERF to be built with windfarm support.");
+#endif
+                continue;
+            }
 
             int num_real_lo      = ppr.countval("in_box_lo");
             int num_indx_lo      = ppr.countval("in_box_lo_indices");

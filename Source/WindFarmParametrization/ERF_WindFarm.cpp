@@ -6,10 +6,15 @@
 #include <filesystem>
 #include <dirent.h>   // For POSIX directory handling
 #include <algorithm> // For std::sort
+#include <limits>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
 #include <cmath>
+
+#include <AMReX_BoxList.H>
+#include <AMReX_Gpu.H>
+#include <AMReX_iMultiFab.H>
 
 using namespace amrex;
 
@@ -79,6 +84,145 @@ void append_to_series (const std::string& series_name,
     std::ofstream out(series_name, std::ios::out | std::ios::trunc);
     out << content;
 }
+
+amrex::Vector<int>
+all_turbine_ids (int nturb)
+{
+    amrex::Vector<int> ids(nturb);
+    for (int it = 0; it < nturb; ++it) {
+        ids[it] = it;
+    }
+    return ids;
+}
+
+AMREX_FORCE_INLINE
+amrex::Real projected_gaussian_sigma (const amrex::GpuArray<amrex::Real, AMREX_SPACEDIM>& dx,
+                                      const amrex::Real nx,
+                                      const amrex::Real ny)
+{
+    return std::abs(dx[0] * nx) + std::abs(dx[1] * ny);
+}
+
+AMREX_FORCE_INLINE
+void disk_frame_from_face_angle_deg (const amrex::Real disk_face_angle_deg,
+                                     amrex::Real& nx,
+                                     amrex::Real& ny,
+                                     amrex::Real& tx,
+                                     amrex::Real& ty)
+{
+    const amrex::Real theta = disk_face_angle_deg * M_PI / 180.0 - 0.5 * M_PI;
+    nx = -std::cos(theta);
+    ny = -std::sin(theta);
+    tx = -ny;
+    ty =  nx;
+}
+
+amrex::BoxArray
+build_uncovered_valid_boxes (const amrex::Box& domain,
+                             const amrex::BoxArray& level_grids,
+                             const amrex::BoxArray* finer_grids,
+                             const amrex::IntVect* ref_ratio)
+{
+    amrex::BoxList uncovered(level_grids);
+
+    if (finer_grids != nullptr && ref_ratio != nullptr) {
+        amrex::BoxArray covered_by_fine(*finer_grids);
+        covered_by_fine.coarsen(*ref_ratio);
+
+        amrex::BoxList complement;
+        complement.complementIn(domain, covered_by_fine);
+        uncovered.intersect(complement);
+        uncovered.removeEmpty();
+        uncovered.simplify();
+    }
+
+    return amrex::BoxArray(std::move(uncovered));
+}
+
+AMREX_FORCE_INLINE
+amrex::Real missing_z_value ()
+{
+    return -std::numeric_limits<amrex::Real>::max() / 4.0;
+}
+
+AMREX_FORCE_INLINE
+bool is_missing_z_value (amrex::Real value)
+{
+    return value <= missing_z_value() / 2.0;
+}
+
+amrex::Vector<amrex::Vector<amrex::Real>>
+gather_z_columns_to_host (const amrex::Geometry& geom,
+                          const amrex::MultiFab* z_phys_nd,
+                          const amrex::Vector<int>& i_cols,
+                          const amrex::Vector<int>& j_cols)
+{
+    const int ncol = static_cast<int>(i_cols.size());
+    const int klo = geom.Domain().smallEnd(2);
+    const int khi = geom.Domain().bigEnd(2) + 1;
+    const int nnode = khi - klo + 1;
+    const amrex::Real missing = missing_z_value();
+
+    amrex::Vector<amrex::Vector<amrex::Real>> z_columns(ncol,
+        amrex::Vector<amrex::Real>(nnode, missing));
+
+    if (ncol == 0) {
+        return z_columns;
+    }
+
+    if (z_phys_nd == nullptr) {
+        const auto prob_lo = geom.ProbLoArray();
+        const auto dx = geom.CellSizeArray();
+        for (int idx = 0; idx < ncol; ++idx) {
+            for (int k = klo; k <= khi; ++k) {
+                z_columns[idx][k-klo] = prob_lo[2] + (k-klo) * dx[2];
+            }
+        }
+        return z_columns;
+    }
+
+    // Host code must never dereference MultiFab arrays directly in GPU builds.
+    // Use a pinned host mirror for the fab data before walking requested columns.
+    for (amrex::MFIter mfi(*z_phys_nd, false); mfi.isValid(); ++mfi) {
+        const amrex::Box& vb = mfi.validbox();
+        const amrex::FArrayBox& fab = (*z_phys_nd)[mfi];
+        amrex::Array4<const amrex::Real> z_arr = fab.const_array();
+
+#ifdef AMREX_USE_GPU
+        std::unique_ptr<amrex::FArrayBox> hostfab;
+        if (fab.arena()->isManaged() || fab.arena()->isDevice()) {
+            hostfab = std::make_unique<amrex::FArrayBox>(fab.box(), fab.nComp(), amrex::The_Pinned_Arena());
+            amrex::Gpu::dtoh_memcpy_async(hostfab->dataPtr(), fab.dataPtr(),
+                                          fab.size()*sizeof(amrex::Real));
+            amrex::Gpu::streamSynchronize();
+            z_arr = hostfab->const_array();
+        }
+#endif
+
+        const int kbeg = std::max(vb.smallEnd(2), klo);
+        const int kend = std::min(vb.bigEnd(2), khi);
+        for (int idx = 0; idx < ncol; ++idx) {
+            const int i = i_cols[idx];
+            const int j = j_cols[idx];
+            if (i < vb.smallEnd(0) || i > vb.bigEnd(0) ||
+                j < vb.smallEnd(1) || j > vb.bigEnd(1)) {
+                continue;
+            }
+
+            for (int k = kbeg; k <= kend; ++k) {
+                z_columns[idx][k-klo] = z_arr(i,j,k);
+            }
+        }
+    }
+
+    for (int idx = 0; idx < ncol; ++idx) {
+        amrex::ParallelAllReduce::Max(z_columns[idx].data(),
+                                      z_columns[idx].size(),
+                                      amrex::ParallelContext::CommunicatorAll());
+    }
+
+    return z_columns;
+}
 } // namespace
 
 /**
@@ -109,6 +253,13 @@ WindFarm::read_windfarm_locations_table (const std::string windfarm_loc_table,
                                          const Real windfarm_x_shift,
                                          const Real windfarm_y_shift)
 {
+    xloc.clear();
+    yloc.clear();
+    zloc.clear();
+    ground_z.clear();
+    m_owner_level.clear();
+    m_turbines_on_level.clear();
+
     if(x_y) {
         init_windfarm_x_y(windfarm_loc_table);
     }
@@ -154,6 +305,302 @@ WindFarm::read_windfarm_yaw_file (const std::string& yaw_file)
     }
 
     m_yaw_offset_deg = std::move(offsets);
+}
+
+void
+WindFarm::define_owner_levels (const amrex::Vector<amrex::Geometry>& geom,
+                               const amrex::Vector<amrex::BoxArray>& grids,
+                               const amrex::Vector<amrex::DistributionMapping>& dmap,
+                               const amrex::Vector<amrex::IntVect>& ref_ratio,
+                               const amrex::Vector<std::unique_ptr<amrex::MultiFab>>& z_phys_nd)
+{
+    const int nturb = static_cast<int>(xloc.size());
+    const int nlev = static_cast<int>(geom.size());
+    amrex::ignore_unused(dmap);
+
+    m_owner_level.assign(nturb, -1);
+    m_turbines_on_level.resize(nlev);
+    for (int lev = 0; lev < nlev; ++lev) {
+        m_turbines_on_level[lev].clear();
+    }
+    ground_z.assign(nturb, 0.0);
+    zloc.assign(nturb, 0.0);
+
+    if (nturb == 0) {
+        set_turb_zloc(zloc);
+        return;
+    }
+
+    amrex::Vector<amrex::Real> disk_face_angles_deg;
+    get_disk_face_angles_deg(disk_face_angles_deg);
+    const bool use_gaussian_spreading =
+        (m_force_spreading_type == WindFarmSpreadingType::Gaussian);
+
+    amrex::Vector<amrex::BoxArray> uncovered_valid_boxes(nlev);
+    amrex::Vector<amrex::Vector<amrex::Vector<amrex::Real>>> z_columns_by_level(nlev);
+    amrex::Vector<amrex::Vector<int>> has_column_by_level(nlev);
+    amrex::Vector<int> has_ground_column(nturb, 0);
+
+    for (int lev = 0; lev < nlev; ++lev) {
+        const amrex::BoxArray* finer_grids = (lev < nlev - 1) ? &grids[lev+1] : nullptr;
+        const amrex::IntVect* ratio = (lev < nlev - 1) ? &ref_ratio[lev] : nullptr;
+        uncovered_valid_boxes[lev] =
+            build_uncovered_valid_boxes(geom[lev].Domain(), grids[lev], finer_grids, ratio);
+
+        const auto dx = geom[lev].CellSizeArray();
+        const auto prob_lo = geom[lev].ProbLoArray();
+        const amrex::Box& domain = geom[lev].Domain();
+        amrex::Vector<int> active_turbines;
+        amrex::Vector<int> i_cols;
+        amrex::Vector<int> j_cols;
+
+        for (int it = 0; it < nturb; ++it) {
+            const int i_center = static_cast<int>(std::floor((xloc[it] - prob_lo[0]) / dx[0]));
+            const int j_center = static_cast<int>(std::floor((yloc[it] - prob_lo[1]) / dx[1]));
+            if (i_center < domain.smallEnd(0) || i_center > domain.bigEnd(0) ||
+                j_center < domain.smallEnd(1) || j_center > domain.bigEnd(1)) {
+                continue;
+            }
+
+            active_turbines.push_back(it);
+            i_cols.push_back(i_center);
+            j_cols.push_back(j_center);
+        }
+
+        has_column_by_level[lev].assign(nturb, 0);
+        z_columns_by_level[lev].resize(nturb);
+        const auto gathered_columns =
+            gather_z_columns_to_host(geom[lev], z_phys_nd[lev].get(), i_cols, j_cols);
+
+        for (int idx = 0; idx < static_cast<int>(active_turbines.size()); ++idx) {
+            const int it = active_turbines[idx];
+            has_column_by_level[lev][it] = 1;
+            z_columns_by_level[lev][it] = gathered_columns[idx];
+
+            if (lev == 0 && !gathered_columns[idx].empty() &&
+                !is_missing_z_value(gathered_columns[idx].front())) {
+                has_ground_column[it] = 1;
+                ground_z[it] = gathered_columns[idx].front();
+                zloc[it] = ground_z[it];
+            }
+        }
+    }
+
+    for (int it = 0; it < nturb; ++it) {
+        if (!has_ground_column[it]) {
+            std::ostringstream oss;
+            oss << "Failed to extract the ground elevation for wind turbine " << it
+                << " from the level-0 z_phys_nd column. Turbine center is at (x,y)=("
+                << xloc[it] << ", " << yloc[it] << ").";
+            amrex::Abort(oss.str());
+        }
+
+        bool assigned = false;
+        const amrex::Real z_lo = ground_z[it] + hub_height - rotor_rad;
+        const amrex::Real z_hi = ground_z[it] + hub_height + rotor_rad;
+
+        for (int lev = nlev - 1; lev >= 0; --lev) {
+            const auto dx = geom[lev].CellSizeArray();
+            const auto prob_lo = geom[lev].ProbLoArray();
+            const amrex::Box& domain = geom[lev].Domain();
+
+            const int i_center = static_cast<int>(std::floor((xloc[it] - prob_lo[0]) / dx[0]));
+            const int j_center = static_cast<int>(std::floor((yloc[it] - prob_lo[1]) / dx[1]));
+            if (i_center < domain.smallEnd(0) || i_center > domain.bigEnd(0) ||
+                j_center < domain.smallEnd(1) || j_center > domain.bigEnd(1)) {
+                amrex::Print() << "WindFarm owner skip: turbine " << it
+                               << " level " << lev
+                               << " center index (" << i_center << ", " << j_center
+                               << ") lies outside domain " << domain
+                               << "\n";
+                continue;
+            }
+
+            if (!has_column_by_level[lev][it]) {
+                amrex::Print() << "WindFarm owner skip: turbine " << it
+                               << " level " << lev
+                               << " has no gathered z column at center index ("
+                               << i_center << ", " << j_center << ")"
+                               << "\n";
+                continue;
+            }
+
+            const amrex::Vector<amrex::Real>& z_nodes = z_columns_by_level[lev][it];
+
+            amrex::Real x_extent = rotor_rad;
+            amrex::Real y_extent = rotor_rad;
+            if (use_gaussian_spreading) {
+                amrex::Real nx = 0.0, ny = 0.0, tx = 0.0, ty = 0.0;
+                disk_frame_from_face_angle_deg(disk_face_angles_deg[it], nx, ny, tx, ty);
+                const amrex::Real sigma = projected_gaussian_sigma(dx, nx, ny);
+                const amrex::Real support = m_force_spreading_nsigma * sigma;
+                x_extent = std::abs(tx) * rotor_rad + std::abs(nx) * support;
+                y_extent = std::abs(ty) * rotor_rad + std::abs(ny) * support;
+            }
+
+            const int ilo = static_cast<int>(std::floor((xloc[it] - x_extent - prob_lo[0]) / dx[0]));
+            const int ihi = static_cast<int>(std::floor((xloc[it] + x_extent - prob_lo[0]) / dx[0]));
+            const int jlo = static_cast<int>(std::floor((yloc[it] - y_extent - prob_lo[1]) / dx[1]));
+            const int jhi = static_cast<int>(std::floor((yloc[it] + y_extent - prob_lo[1]) / dx[1]));
+
+            if (ilo < domain.smallEnd(0) || ihi > domain.bigEnd(0) ||
+                jlo < domain.smallEnd(1) || jhi > domain.bigEnd(1)) {
+                amrex::Print() << "WindFarm owner skip: turbine " << it
+                               << " level " << lev
+                               << " horizontal rotor box [(" << ilo << ", " << jlo
+                               << "), (" << ihi << ", " << jhi
+                               << ")] exceeds domain " << domain
+                               << "\n";
+                continue;
+            }
+
+            int first_valid_node = -1;
+            int last_valid_node = -1;
+            for (int n = 0; n < static_cast<int>(z_nodes.size()); ++n) {
+                if (!is_missing_z_value(z_nodes[n])) {
+                    if (first_valid_node < 0) { first_valid_node = n; }
+                    last_valid_node = n;
+                }
+            }
+
+            if (first_valid_node < 0 || last_valid_node <= first_valid_node) {
+                amrex::Print() << "WindFarm owner skip: turbine " << it
+                               << " level " << lev
+                               << " gathered z column has insufficient valid nodes"
+                               << " first_valid_node=" << first_valid_node
+                               << " last_valid_node=" << last_valid_node
+                               << "\n";
+                continue;
+            }
+
+            const amrex::Real z_avail_lo = z_nodes[first_valid_node];
+            const amrex::Real z_avail_hi = z_nodes[last_valid_node];
+            if (z_lo < z_avail_lo || z_hi > z_avail_hi) {
+                amrex::Print() << "WindFarm owner skip: turbine " << it
+                               << " level " << lev
+                               << " rotor vertical range [" << z_lo << ", " << z_hi
+                               << "] is not contained in available z column range ["
+                               << z_avail_lo << ", " << z_avail_hi << "]"
+                               << "\n";
+                continue;
+            }
+
+            int klo = -1;
+            int khi = -1;
+            bool has_gap_in_rotor_extent = false;
+            for (int k = domain.smallEnd(2); k <= domain.bigEnd(2); ++k) {
+                const int lo_idx = k - domain.smallEnd(2);
+                const int hi_idx = lo_idx + 1;
+                if (lo_idx < 0 || hi_idx >= static_cast<int>(z_nodes.size())) {
+                    continue;
+                }
+
+                const amrex::Real cell_lo = z_nodes[lo_idx];
+                const amrex::Real cell_hi = z_nodes[hi_idx];
+
+                // Once we have already found the rotor interval and the next valid cell
+                // starts above rotor top, there is nothing else to learn from higher k.
+                if (!is_missing_z_value(cell_lo) && klo >= 0 && cell_lo > z_hi) {
+                    break;
+                }
+
+                if (is_missing_z_value(cell_lo) || is_missing_z_value(cell_hi)) {
+                    // A missing node matters only if it interrupts the rotor interval
+                    // before we have passed the rotor top on this level.
+                    if (klo >= 0 && khi >= 0) {
+                        has_gap_in_rotor_extent = true;
+                        break;
+                    }
+                    continue;
+                }
+
+                if (cell_hi >= z_lo && cell_lo <= z_hi) {
+                    if (klo < 0) { klo = k; }
+                    khi = k;
+                }
+            }
+
+            if (klo < 0 || has_gap_in_rotor_extent) {
+                amrex::Print() << "WindFarm owner skip: turbine " << it
+                               << " level " << lev
+                               << " could not form a contiguous rotor k-range"
+                               << " klo=" << klo
+                               << " khi=" << khi
+                               << " has_gap_in_rotor_extent=" << has_gap_in_rotor_extent
+                               << "\n";
+                continue;
+            }
+
+            const amrex::Box footprint_box(amrex::IntVect(AMREX_D_DECL(ilo, jlo, klo)),
+                                           amrex::IntVect(AMREX_D_DECL(ihi, jhi, khi)));
+            amrex::Print() << "WindFarm owner check: turbine " << it
+                           << " level " << lev
+                           << " footprint_box=" << footprint_box
+                           << " uncovered_valid_boxes=" << uncovered_valid_boxes[lev]
+                           << " z_avail=[" << z_avail_lo << ", " << z_avail_hi << "]"
+                           << " rotor_z=[" << z_lo << ", " << z_hi << "]"
+                           << "\n";
+            if (uncovered_valid_boxes[lev].contains(footprint_box)) {
+                m_owner_level[it] = lev;
+                m_turbines_on_level[lev].push_back(it);
+                assigned = true;
+                break;
+            }
+        }
+
+        if (!assigned) {
+            std::ostringstream oss;
+            oss << "Wind turbine " << it
+                << " could not be assigned to an AMR owner level. "
+	                << "Rotor footprint bounds are x=[" << xloc[it] - rotor_rad << ", " << xloc[it] + rotor_rad
+	                << "], y=[" << yloc[it] - rotor_rad << ", " << yloc[it] + rotor_rad
+	                << "], z=[ground_z + " << hub_height - rotor_rad
+	                << ", ground_z + " << hub_height + rotor_rad
+	                << "]. The rotor"
+	                << (use_gaussian_spreading ? " plus Gaussian force-support" : "")
+	                << " extent is not fully contained within any uncovered valid AMR region."
+	                << " windfarm_force_spreading="
+	                << (use_gaussian_spreading ? "Gaussian" : "None")
+	                << " windfarm_spreading_nsigma=" << m_force_spreading_nsigma;
+	            amrex::Abort(oss.str());
+	        }
+    }
+
+    set_turb_zloc(zloc);
+}
+
+void
+WindFarm::get_turbine_refinement_geometry (int turbine_id,
+                                           amrex::Real& x,
+                                           amrex::Real& y,
+                                           amrex::Real& zhub,
+                                           amrex::Real& diameter,
+                                           amrex::Real& nx,
+                                           amrex::Real& ny,
+                                           amrex::Real& tx,
+                                           amrex::Real& ty)
+{
+    AMREX_ALWAYS_ASSERT(turbine_id >= 0);
+    AMREX_ALWAYS_ASSERT(turbine_id < static_cast<int>(xloc.size()));
+
+    amrex::Vector<amrex::Real> disk_face_angles_deg;
+    get_disk_face_angles_deg(disk_face_angles_deg);
+
+    AMREX_ALWAYS_ASSERT(turbine_id < static_cast<int>(disk_face_angles_deg.size()));
+    AMREX_ALWAYS_ASSERT(turbine_id < static_cast<int>(ground_z.size()));
+
+    const amrex::Real theta_rad = disk_face_angles_deg[turbine_id] * M_PI / 180.0 - 0.5 * M_PI;
+
+    x = xloc[turbine_id];
+    y = yloc[turbine_id];
+    zhub = ground_z[turbine_id] + hub_height;
+    diameter = 2.0 * rotor_rad;
+
+    nx = -std::cos(theta_rad);
+    ny = -std::sin(theta_rad);
+
+    tx = -ny;
+    ty =  nx;
 }
 
 void
@@ -369,6 +816,10 @@ WindFarm::read_windfarm_spec_table (const std::string windfarm_spec_table)
 void
 WindFarm::read_windfarm_blade_table (const std::string windfarm_blade_table)
 {
+    bld_rad_loc.clear();
+    bld_twist.clear();
+    bld_chord.clear();
+
     std::ifstream filename(windfarm_blade_table);
     std::string line;
     Real temp, var1, var2, var3;
@@ -402,6 +853,12 @@ WindFarm::read_windfarm_blade_table (const std::string windfarm_blade_table)
 void
 WindFarm::read_windfarm_spec_table_extra (const std::string windfarm_spec_table_extra)
 {
+    velocity.clear();
+    C_P.clear();
+    C_T.clear();
+    rotor_RPM.clear();
+    blade_pitch.clear();
+
     // Open the file
     std::ifstream file(windfarm_spec_table_extra);
 
@@ -442,6 +899,10 @@ void
 WindFarm::read_windfarm_airfoil_tables (const std::string windfarm_airfoil_tables,
                                         const std::string windfarm_blade_table)
 {
+    bld_airfoil_aoa.clear();
+    bld_airfoil_Cl.clear();
+    bld_airfoil_Cd.clear();
+
     DIR* dir;
     struct dirent* entry;
     std::vector<std::string> files;
@@ -521,28 +982,24 @@ WindFarm::read_windfarm_airfoil_tables (const std::string windfarm_airfoil_table
 void
 WindFarm::fill_Nturb_multifab (const Geometry& geom,
                                MultiFab& mf_Nturb,
-                               std::unique_ptr<MultiFab>& z_phys_nd)
+                               std::unique_ptr<MultiFab>& /*z_phys_nd*/,
+                               const amrex::Vector<int>& turbine_ids)
 {
-
-    zloc.resize(xloc.size(),0.0);
-    Vector<int> is_counted;
-    is_counted.resize(xloc.size(),0);
-
     amrex::Gpu::DeviceVector<Real> d_xloc(xloc.size());
     amrex::Gpu::DeviceVector<Real> d_yloc(yloc.size());
-    amrex::Gpu::DeviceVector<Real> d_zloc(xloc.size());
-    amrex::Gpu::DeviceVector<int> d_is_counted(xloc.size());
+    amrex::Gpu::DeviceVector<int> d_turbine_ids(turbine_ids.size());
     amrex::Gpu::copyAsync(amrex::Gpu::hostToDevice, xloc.begin(), xloc.end(), d_xloc.begin());
     amrex::Gpu::copyAsync(amrex::Gpu::hostToDevice, yloc.begin(), yloc.end(), d_yloc.begin());
-    amrex::Gpu::copyAsync(amrex::Gpu::hostToDevice, zloc.begin(), zloc.end(), d_zloc.begin());
-    amrex::Gpu::copyAsync(amrex::Gpu::hostToDevice, is_counted.begin(), is_counted.end(), d_is_counted.begin());
+    amrex::Gpu::copyAsync(amrex::Gpu::hostToDevice, turbine_ids.begin(), turbine_ids.end(), d_turbine_ids.begin());
 
     Real* d_xloc_ptr       = d_xloc.data();
     Real* d_yloc_ptr       = d_yloc.data();
-    Real* d_zloc_ptr       = d_zloc.data();
-    int* d_is_counted_ptr = d_is_counted.data();
+    int* d_turbine_ids_ptr = d_turbine_ids.data();
 
     mf_Nturb.setVal(0);
+    if (turbine_ids.empty()) {
+        return;
+    }
 
     int i_lo = geom.Domain().smallEnd(0); int i_hi = geom.Domain().bigEnd(0);
     int j_lo = geom.Domain().smallEnd(1); int j_hi = geom.Domain().bigEnd(1);
@@ -552,17 +1009,12 @@ WindFarm::fill_Nturb_multifab (const Geometry& geom,
               "It should be usually of order 1 m");
     }
     auto ProbLoArr = geom.ProbLoArray();
-    auto ProbHiArr = geom.ProbHiArray();
-    int num_turb = xloc.size();
-
-    bool is_terrain = z_phys_nd ? true: false;
+    int num_turb = turbine_ids.size();
 
      // Initialize wind farm
     for ( MFIter mfi(mf_Nturb,TilingIfNotGPU()); mfi.isValid(); ++mfi) {
         const Box& bx     = mfi.tilebox();
         auto  Nturb_array = mf_Nturb.array(mfi);
-        const Array4<const Real>& z_nd_arr = (z_phys_nd) ? z_phys_nd->const_array(mfi) : Array4<Real>{};
-        int k0 = bx.smallEnd()[2];
         ParallelFor(bx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
             int li = amrex::min(amrex::max(i, i_lo), i_hi);
             int lj = amrex::min(amrex::max(j, j_lo), j_hi);
@@ -572,57 +1024,15 @@ WindFarm::fill_Nturb_multifab (const Geometry& geom,
             Real y1 = ProbLoArr[1] + lj*dx[1];
             Real y2 = ProbLoArr[1] + (lj+1)*dx[1];
 
-            for(int it=0; it<num_turb; it++){
+            for(int idx = 0; idx < num_turb; ++idx){
+                const int it = d_turbine_ids_ptr[idx];
                 if( d_xloc_ptr[it]+1e-3 > x1 and d_xloc_ptr[it]+1e-3 < x2 and
                     d_yloc_ptr[it]+1e-3 > y1 and d_yloc_ptr[it]+1e-3 < y2){
                     Nturb_array(i,j,k,0) = Nturb_array(i,j,k,0) + 1;
-                    // Perform atomic operations to ensure "increment only once"
-                    if (is_terrain) {
-                        int expected = 0;
-                        int desired = 1;
-                        // Atomic Compare-And-Swap: Increment only if d_is_counted_ptr[it] was 0
-                        if (Gpu::Atomic::CAS(&d_is_counted_ptr[it], expected, desired) == expected) {
-                            // The current thread successfully set d_is_counted_ptr[it] from 0 to 1
-                            Gpu::Atomic::Add(&d_zloc_ptr[it], z_nd_arr(i, j, k0));
-                        }
-                    }
                 }
             }
         });
     }
-
-    Gpu::copy(Gpu::deviceToHost, d_zloc.begin(), d_zloc.end(), zloc.begin());
-    Gpu::copy(Gpu::deviceToHost, d_is_counted.begin(), d_is_counted.end(), is_counted.begin());
-
-    amrex::ParallelAllReduce::Sum(zloc.data(),
-                                  zloc.size(),
-                                  amrex::ParallelContext::CommunicatorAll());
-
-    amrex::ParallelAllReduce::Sum(is_counted.data(),
-                                  is_counted.size(),
-                                  amrex::ParallelContext::CommunicatorAll());
-
-    for(int it=0;it<num_turb;it++) {
-        if(is_terrain and
-           xloc[it] > ProbLoArr[0] and
-           xloc[it] < ProbHiArr[0] and
-           yloc[it] > ProbLoArr[1] and
-           yloc[it] < ProbHiArr[1]    ) {
-            if(is_counted[it] != 1) {
-                Abort("Wind turbine " + std::to_string(it) + "has been counted " + std::to_string(is_counted[it]) + " times" +
-                      " It should have been counted only once. Aborting....");
-            }
-        }
-    }
-
-    // Debugging
-    /*int my_rank = amrex::ParallelDescriptor::MyProc();
-
-    for(int it=0;it<num_turb;it++) {
-        std::cout << "The value of zloc is " << my_rank << " " << zloc[it] << " " << is_counted[it] << "\n";
-    }*/
-
-    set_turb_zloc(zloc);
 }
 
 void
@@ -687,14 +1097,17 @@ WindFarm::fill_SMark_multifab (const Geometry& geom,
                                MultiFab& mf_RMask,
                                const Real& sampling_distance_by_D,
                                const Real& turb_disk_angle,
-                               std::unique_ptr<MultiFab>& z_phys_cc)
+                               std::unique_ptr<MultiFab>& z_phys_cc,
+                               const amrex::Vector<int>& turbine_ids)
 {
     amrex::Gpu::DeviceVector<Real> d_xloc(xloc.size());
     amrex::Gpu::DeviceVector<Real> d_yloc(yloc.size());
     amrex::Gpu::DeviceVector<Real> d_zloc(xloc.size());
+    amrex::Gpu::DeviceVector<int> d_turbine_ids(turbine_ids.size());
     amrex::Gpu::copyAsync(amrex::Gpu::hostToDevice, xloc.begin(), xloc.end(), d_xloc.begin());
     amrex::Gpu::copyAsync(amrex::Gpu::hostToDevice, yloc.begin(), yloc.end(), d_yloc.begin());
     amrex::Gpu::copyAsync(amrex::Gpu::hostToDevice, zloc.begin(), zloc.end(), d_zloc.begin());
+    amrex::Gpu::copyAsync(amrex::Gpu::hostToDevice, turbine_ids.begin(), turbine_ids.end(), d_turbine_ids.begin());
 
     Real d_rotor_rad = rotor_rad;
     Real d_hub_height = hub_height;
@@ -703,16 +1116,20 @@ WindFarm::fill_SMark_multifab (const Geometry& geom,
     Real* d_xloc_ptr     = d_xloc.data();
     Real* d_yloc_ptr     = d_yloc.data();
     Real* d_zloc_ptr     = d_zloc.data();
+    int* d_turbine_ids_ptr = d_turbine_ids.data();
 
     mf_SMark.setVal(-1.0);
     mf_RMask.setVal(-1.0);
+    if (turbine_ids.empty()) {
+        return;
+    }
 
     int i_lo = geom.Domain().smallEnd(0); int i_hi = geom.Domain().bigEnd(0);
     int j_lo = geom.Domain().smallEnd(1); int j_hi = geom.Domain().bigEnd(1);
     int k_lo = geom.Domain().smallEnd(2); int k_hi = geom.Domain().bigEnd(2);
     auto dx = geom.CellSizeArray();
     auto ProbLoArr = geom.ProbLoArray();
-    int num_turb = xloc.size();
+    int num_turb = turbine_ids.size();
 
     Real theta = turb_disk_angle*M_PI/180.0-0.5*M_PI;
 
@@ -725,6 +1142,12 @@ WindFarm::fill_SMark_multifab (const Geometry& geom,
 
     Real nx = -std::cos(theta);
     Real ny = -std::sin(theta);
+    Real tx = -ny;
+    Real ty =  nx;
+    const bool use_gaussian_spreading =
+        (m_force_spreading_type == WindFarmSpreadingType::Gaussian);
+    const Real spread_sigma = projected_gaussian_sigma(dx, nx, ny);
+    const Real spread_support = m_force_spreading_nsigma * spread_sigma;
 
      // Initialize wind farm
     for ( MFIter mfi(mf_SMark,TilingIfNotGPU()); mfi.isValid(); ++mfi) {
@@ -752,7 +1175,8 @@ WindFarm::fill_SMark_multifab (const Geometry& geom,
 
             int turb_indices_overlap[2];
             int check_int = 0;
-            for(int it=0; it<num_turb; it++){
+            for(int idx = 0; idx < num_turb; ++idx){
+                const int it = d_turbine_ids_ptr[idx];
                 Real x0 = d_xloc_ptr[it] + d_sampling_distance*nx;
                 Real y0 = d_yloc_ptr[it] + d_sampling_distance*ny;
 
@@ -771,18 +1195,37 @@ WindFarm::fill_SMark_multifab (const Geometry& geom,
 
                 is_cell_marked = find_if_marked(x1, x2, y1, y2, x0, y0,
                                                 nx, ny, d_hub_height+z0, d_rotor_rad, z);
-                if(is_cell_marked) {
-                    SMark_array(i,j,k,1) = it;
+                Real normal_dist = 0.0;
+                Real radial_dist = -1.0;
+                if (use_gaussian_spreading) {
                     Real xc = ProbLoArr[0] + (ii+0.5_rt)*dx[0];
                     Real yc = ProbLoArr[1] + (jj+0.5_rt)*dx[1];
                     Real zhub = d_hub_height + z0;
                     Real dxp = xc - x0;
                     Real dyp = yc - y0;
                     Real dzp = z - zhub;
-                    Real a = dxp*nx + dyp*ny;
-                    Real rx = dxp - a*nx;
-                    Real ry = dyp - a*ny;
-                    RMask_array(i,j,k,0) = std::sqrt(rx*rx + ry*ry + dzp*dzp);
+                    normal_dist = dxp*nx + dyp*ny;
+                    Real tangential_dist = dxp*tx + dyp*ty;
+                    radial_dist = std::sqrt(tangential_dist*tangential_dist + dzp*dzp);
+                    is_cell_marked = (radial_dist <= d_rotor_rad &&
+                                      std::abs(normal_dist) <= spread_support);
+                }
+                if(is_cell_marked) {
+                    SMark_array(i,j,k,1) = it;
+                    if (!use_gaussian_spreading) {
+                        Real xc = ProbLoArr[0] + (ii+0.5_rt)*dx[0];
+                        Real yc = ProbLoArr[1] + (jj+0.5_rt)*dx[1];
+                        Real zhub = d_hub_height + z0;
+                        Real dxp = xc - x0;
+                        Real dyp = yc - y0;
+                        Real dzp = z - zhub;
+                        normal_dist = dxp*nx + dyp*ny;
+                        Real rx = dxp - normal_dist*nx;
+                        Real ry = dyp - normal_dist*ny;
+                        radial_dist = std::sqrt(rx*rx + ry*ry + dzp*dzp);
+                    }
+                    RMask_array(i,j,k,0) = radial_dist;
+                    RMask_array(i,j,k,1) = normal_dist;
                     turb_indices_overlap[check_int] = it;
                     check_int++;
                     if(check_int > 1){
@@ -1034,18 +1477,25 @@ bool
 WindFarm::update_yaw_controller (const amrex::Real time,
                                  const amrex::Real dt)
 {
+    return update_yaw_controller(all_turbine_ids(static_cast<int>(xloc.size())), time, dt);
+}
+
+bool
+WindFarm::update_yaw_controller (const amrex::Vector<int>& turbine_ids,
+                                 const amrex::Real time,
+                                 const amrex::Real dt)
+{
     if (!m_dynamic_yaw_enabled) {
         return false;
     }
 
     const amrex::Real step_end = time + dt;
     const amrex::Real eps = 1e-12;
-    const int nturb = static_cast<int>(xloc.size());
-
     bool did_cmd_update = false;
 
     // Command update (boxcar over yaw_period)
-    for (int it = 0; it < nturb; ++it) {
+    for (int idx = 0; idx < turbine_ids.size(); ++idx) {
+        const int it = turbine_ids[idx];
         if (step_end + eps >= m_next_update_time[it]) {
             if (m_sum_t[it] > 0.0) {
                 const amrex::Real u_bar = m_sum_u[it] / m_sum_t[it];
@@ -1067,7 +1517,8 @@ WindFarm::update_yaw_controller (const amrex::Real time,
     }
 
     // Smooth yaw actuator (first-order) every timestep
-    for (int it = 0; it < nturb; ++it) {
+    for (int idx = 0; idx < turbine_ids.size(); ++idx) {
+        const int it = turbine_ids[idx];
         const amrex::Real e = wrap_180(m_yaw_cmd_deg[it] - m_yaw_angle_deg[it]);
         m_yaw_angle_deg[it] = wrap_180(m_yaw_angle_deg[it] + (dt / m_tau_yaw) * e);
     }
@@ -1075,6 +1526,7 @@ WindFarm::update_yaw_controller (const amrex::Real time,
     // Push per-turbine disk angles down into the actuator model each timestep.
     amrex::Vector<amrex::Real> disk_face_angles_deg;
     get_disk_face_angles_deg(disk_face_angles_deg);
+    const int nturb = static_cast<int>(xloc.size());
     amrex::Vector<amrex::Real> theta_rad(nturb, 0.0);
     for (int it = 0; it < nturb; ++it) {
         theta_rad[it] = disk_face_angles_deg[it] * M_PI/180.0 - 0.5*M_PI;
@@ -1092,12 +1544,19 @@ WindFarm::update_yaw_controller (const amrex::Real time,
 bool
 WindFarm::should_rebuild_SMark (const amrex::Real dx_eff) const
 {
+    return should_rebuild_SMark(all_turbine_ids(static_cast<int>(xloc.size())), dx_eff);
+}
+
+bool
+WindFarm::should_rebuild_SMark (const amrex::Vector<int>& turbine_ids,
+                                const amrex::Real dx_eff) const
+{
     if (!m_dynamic_yaw_enabled) {
         return false;
     }
-    const int nturb = static_cast<int>(xloc.size());
     const amrex::Real alpha_dx = m_yaw_alpha * dx_eff;
-    for (int it = 0; it < nturb; ++it) {
+    for (int idx = 0; idx < turbine_ids.size(); ++idx) {
+        const int it = turbine_ids[idx];
         const amrex::Real dpsi_deg = wrap_180(m_yaw_angle_deg[it] - m_yaw_angle_geom_deg[it]);
         const amrex::Real rim_disp = rotor_rad * std::abs(dpsi_deg) * M_PI/180.0;
         if (rim_disp > alpha_dx) {
@@ -1110,7 +1569,16 @@ WindFarm::should_rebuild_SMark (const amrex::Real dx_eff) const
 void
 WindFarm::commit_yaw_geometry ()
 {
-    m_yaw_angle_geom_deg = m_yaw_angle_deg;
+    commit_yaw_geometry(all_turbine_ids(static_cast<int>(xloc.size())));
+}
+
+void
+WindFarm::commit_yaw_geometry (const amrex::Vector<int>& turbine_ids)
+{
+    for (int idx = 0; idx < turbine_ids.size(); ++idx) {
+        const int it = turbine_ids[idx];
+        m_yaw_angle_geom_deg[it] = m_yaw_angle_deg[it];
+    }
 }
 
 void
@@ -1133,37 +1601,52 @@ WindFarm::fill_SMark_multifab_dynamic (const amrex::Geometry& geom,
                                        amrex::MultiFab& mf_RMask,
                                        const amrex::Real& sampling_distance_by_D,
                                        const amrex::Vector<amrex::Real>& disk_face_angles_deg,
-                                       std::unique_ptr<amrex::MultiFab>& z_phys_cc)
+                                       std::unique_ptr<amrex::MultiFab>& z_phys_cc,
+                                       const amrex::Vector<int>& turbine_ids)
 {
     amrex::Gpu::DeviceVector<Real> d_xloc(xloc.size());
     amrex::Gpu::DeviceVector<Real> d_yloc(yloc.size());
     amrex::Gpu::DeviceVector<Real> d_zloc(yloc.size());
+    amrex::Gpu::DeviceVector<int> d_turbine_ids(turbine_ids.size());
     amrex::Gpu::copyAsync(amrex::Gpu::hostToDevice, xloc.begin(), xloc.end(), d_xloc.begin());
     amrex::Gpu::copyAsync(amrex::Gpu::hostToDevice, yloc.begin(), yloc.end(), d_yloc.begin());
     amrex::Gpu::copyAsync(amrex::Gpu::hostToDevice, zloc.begin(), zloc.end(), d_zloc.begin());
+    amrex::Gpu::copyAsync(amrex::Gpu::hostToDevice, turbine_ids.begin(), turbine_ids.end(), d_turbine_ids.begin());
 
-    const int num_turb = static_cast<int>(xloc.size());
+    const int num_turb = static_cast<int>(turbine_ids.size());
+    const int nturb_global = static_cast<int>(xloc.size());
 
-    amrex::Vector<amrex::Real> theta_rad(num_turb, 0.0);
-    amrex::Vector<amrex::Real> nx_h(num_turb, 0.0);
-    amrex::Vector<amrex::Real> ny_h(num_turb, 0.0);
-    for (int it = 0; it < num_turb; ++it) {
+    amrex::Vector<amrex::Real> theta_rad(nturb_global, 0.0);
+    amrex::Vector<amrex::Real> nx_h(nturb_global, 0.0);
+    amrex::Vector<amrex::Real> ny_h(nturb_global, 0.0);
+    amrex::Vector<amrex::Real> tx_h(nturb_global, 0.0);
+    amrex::Vector<amrex::Real> ty_h(nturb_global, 0.0);
+    for (int it = 0; it < nturb_global; ++it) {
         theta_rad[it] = disk_face_angles_deg[it] * M_PI/180.0 - 0.5*M_PI;
         nx_h[it] = -std::cos(theta_rad[it]);
         ny_h[it] = -std::sin(theta_rad[it]);
+        tx_h[it] = -ny_h[it];
+        ty_h[it] =  nx_h[it];
     }
     set_turb_disk_angles(theta_rad);
 
-    amrex::Gpu::DeviceVector<Real> d_nx(num_turb);
-    amrex::Gpu::DeviceVector<Real> d_ny(num_turb);
+    amrex::Gpu::DeviceVector<Real> d_nx(nturb_global);
+    amrex::Gpu::DeviceVector<Real> d_ny(nturb_global);
+    amrex::Gpu::DeviceVector<Real> d_tx(nturb_global);
+    amrex::Gpu::DeviceVector<Real> d_ty(nturb_global);
     amrex::Gpu::copyAsync(amrex::Gpu::hostToDevice, nx_h.begin(), nx_h.end(), d_nx.begin());
     amrex::Gpu::copyAsync(amrex::Gpu::hostToDevice, ny_h.begin(), ny_h.end(), d_ny.begin());
+    amrex::Gpu::copyAsync(amrex::Gpu::hostToDevice, tx_h.begin(), tx_h.end(), d_tx.begin());
+    amrex::Gpu::copyAsync(amrex::Gpu::hostToDevice, ty_h.begin(), ty_h.end(), d_ty.begin());
 
     Real* d_xloc_ptr     = d_xloc.data();
     Real* d_yloc_ptr     = d_yloc.data();
     Real* d_zloc_ptr     = d_zloc.data();
     Real* d_nx_ptr       = d_nx.data();
     Real* d_ny_ptr       = d_ny.data();
+    Real* d_tx_ptr       = d_tx.data();
+    Real* d_ty_ptr       = d_ty.data();
+    int* d_turbine_ids_ptr = d_turbine_ids.data();
 
     Real d_rotor_rad = rotor_rad;
     Real d_hub_height = hub_height;
@@ -1171,12 +1654,18 @@ WindFarm::fill_SMark_multifab_dynamic (const amrex::Geometry& geom,
 
     mf_SMark.setVal(-1.0);
     mf_RMask.setVal(-1.0);
+    if (turbine_ids.empty()) {
+        return;
+    }
 
     int i_lo = geom.Domain().smallEnd(0); int i_hi = geom.Domain().bigEnd(0);
     int j_lo = geom.Domain().smallEnd(1); int j_hi = geom.Domain().bigEnd(1);
     int k_lo = geom.Domain().smallEnd(2); int k_hi = geom.Domain().bigEnd(2);
     auto dx = geom.CellSizeArray();
     auto ProbLoArr = geom.ProbLoArray();
+    const bool use_gaussian_spreading =
+        (m_force_spreading_type == WindFarmSpreadingType::Gaussian);
+    const Real spreading_nsigma = m_force_spreading_nsigma;
 
     for (MFIter mfi(mf_SMark, TilingIfNotGPU()); mfi.isValid(); ++mfi) {
         const Box& gbx = mfi.growntilebox(1);
@@ -1199,9 +1688,12 @@ WindFarm::fill_SMark_multifab_dynamic (const amrex::Geometry& geom,
             int turb_indices_overlap[2];
             int check_int = 0;
 
-            for (int it = 0; it < num_turb; ++it) {
-                Real nx = d_nx_ptr[it];
-                Real ny = d_ny_ptr[it];
+            for (int idx = 0; idx < num_turb; ++idx) {
+                const int it = d_turbine_ids_ptr[idx];
+	                Real nx = d_nx_ptr[it];
+	                Real ny = d_ny_ptr[it];
+	                Real tx = d_tx_ptr[it];
+	                Real ty = d_ty_ptr[it];
 
                 Real x0 = d_xloc_ptr[it] + d_sampling_distance*nx;
                 Real y0 = d_yloc_ptr[it] + d_sampling_distance*ny;
@@ -1220,21 +1712,41 @@ WindFarm::fill_SMark_multifab_dynamic (const amrex::Geometry& geom,
                 x0 = d_xloc_ptr[it];
                 y0 = d_yloc_ptr[it];
 
-                is_cell_marked = find_if_marked(x1, x2, y1, y2, x0, y0,
-                                                nx, ny, d_hub_height+z0, d_rotor_rad, z);
-                if (is_cell_marked) {
-                    SMark_array(i,j,k,1) = it;
-                    Real xc = ProbLoArr[0] + (ii+0.5_rt)*dx[0];
-                    Real yc = ProbLoArr[1] + (jj+0.5_rt)*dx[1];
-                    Real zhub = d_hub_height + z0;
-                    Real dxp = xc - x0;
-                    Real dyp = yc - y0;
-                    Real dzp = z - zhub;
-                    Real a = dxp*nx + dyp*ny;
-                    Real rx = dxp - a*nx;
-                    Real ry = dyp - a*ny;
-                    RMask_array(i,j,k,0) = std::sqrt(rx*rx + ry*ry + dzp*dzp);
-                    turb_indices_overlap[check_int] = it;
+	                is_cell_marked = find_if_marked(x1, x2, y1, y2, x0, y0,
+	                                                nx, ny, d_hub_height+z0, d_rotor_rad, z);
+	                Real normal_dist = 0.0;
+	                Real radial_dist = -1.0;
+	                if (use_gaussian_spreading) {
+	                    Real xc = ProbLoArr[0] + (ii+0.5_rt)*dx[0];
+	                    Real yc = ProbLoArr[1] + (jj+0.5_rt)*dx[1];
+	                    Real zhub = d_hub_height + z0;
+	                    Real dxp = xc - x0;
+	                    Real dyp = yc - y0;
+	                    Real dzp = z - zhub;
+	                    normal_dist = dxp*nx + dyp*ny;
+	                    Real tangential_dist = dxp*tx + dyp*ty;
+	                    radial_dist = std::sqrt(tangential_dist*tangential_dist + dzp*dzp);
+	                    Real sigma = std::abs(dx[0]*nx) + std::abs(dx[1]*ny);
+	                    is_cell_marked = (radial_dist <= d_rotor_rad &&
+	                                      std::abs(normal_dist) <= spreading_nsigma*sigma);
+	                }
+	                if (is_cell_marked) {
+	                    SMark_array(i,j,k,1) = it;
+	                    if (!use_gaussian_spreading) {
+	                        Real xc = ProbLoArr[0] + (ii+0.5_rt)*dx[0];
+	                        Real yc = ProbLoArr[1] + (jj+0.5_rt)*dx[1];
+	                        Real zhub = d_hub_height + z0;
+	                        Real dxp = xc - x0;
+	                        Real dyp = yc - y0;
+	                        Real dzp = z - zhub;
+	                        normal_dist = dxp*nx + dyp*ny;
+	                        Real rx = dxp - normal_dist*nx;
+	                        Real ry = dyp - normal_dist*ny;
+	                        radial_dist = std::sqrt(rx*rx + ry*ry + dzp*dzp);
+	                    }
+	                    RMask_array(i,j,k,0) = radial_dist;
+	                    RMask_array(i,j,k,1) = normal_dist;
+	                    turb_indices_overlap[check_int] = it;
                     check_int++;
                     if (check_int > 1) {
                         printf("Actuator disks with indices %d and %d are overlapping\n",

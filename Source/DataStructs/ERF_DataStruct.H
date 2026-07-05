@@ -81,6 +81,10 @@ AMREX_ENUM(WindFarmLocType,
     lat_lon, x_y, None
 );
 
+AMREX_ENUM(WindFarmSpreadingType,
+    None, Gaussian
+);
+
 AMREX_ENUM(LandSurfaceType,
     SLM, MM5, None, NOAHMP
 );
@@ -698,6 +702,8 @@ struct SolverChoice {
         pp.query("windfarm_ramp_tau", windfarm_ramp_tau);
         pp.query("wake_rotation", wake_rotation);
         pp.query("turb_mem_time", turb_mem_time);
+        pp.query_enum_case_insensitive("windfarm_force_spreading", windfarm_force_spreading);
+        pp.query("windfarm_spreading_nsigma", windfarm_spreading_nsigma);
 
         pp.query("windfarm_x_shift",windfarm_x_shift);
         pp.query("windfarm_y_shift",windfarm_y_shift);
@@ -817,6 +823,14 @@ struct SolverChoice {
         }
         if (windfarm_type == WindFarmType::SimpleAD && turb_mem_time < 0.0) {
             amrex::Error("erf.turb_mem_time must be >= 0.0 for windfarm_type = SimpleAD");
+        }
+        if (windfarm_force_spreading != WindFarmSpreadingType::None) {
+            if (!(windfarm_type == WindFarmType::SimpleAD || windfarm_type == WindFarmType::GeneralAD)) {
+                amrex::Error("erf.windfarm_force_spreading is only supported for windfarm_type = SimpleAD or GeneralAD");
+            }
+            if (windfarm_spreading_nsigma <= 0.0) {
+                amrex::Error("erf.windfarm_spreading_nsigma must be > 0.0 when force spreading is enabled");
+            }
         }
         if (!yaw_file.empty()) {
             if (!(windfarm_type == WindFarmType::SimpleAD || windfarm_type == WindFarmType::GeneralAD)) {
@@ -1265,11 +1279,13 @@ struct SolverChoice {
     amrex::Real turb_disk_angle = -1.0;
     bool dynamic_yaw = false;
     bool wake_rotation = false;
+    WindFarmSpreadingType windfarm_force_spreading = WindFarmSpreadingType::None;
     amrex::Real yaw_period = -1.0;
     std::string yaw_file;
     amrex::Real windfarm_start_time = 0.0;
     amrex::Real windfarm_ramp_tau = -1.0;
     amrex::Real turb_mem_time = 600.0;
+    amrex::Real windfarm_spreading_nsigma = 3.0;
     amrex::Real windfarm_x_shift = -1.0;
     amrex::Real windfarm_y_shift = -1.0;
 

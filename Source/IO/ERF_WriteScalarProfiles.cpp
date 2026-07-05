@@ -70,7 +70,7 @@ ERF::sum_integrated_quantities (Real time)
     Gpu::HostVector<Real> h_avg_ustar; h_avg_ustar.resize(1);
     Gpu::HostVector<Real> h_avg_tstar; h_avg_tstar.resize(1);
     Gpu::HostVector<Real> h_avg_olen; h_avg_olen.resize(1);
-    if ((m_SurfaceLayer != nullptr) && (NumDataLogs() > 0)) {
+    if ((m_SurfaceLayer != nullptr) && has_surface_layer_at_level(0) && (NumDataLogs() > 0)) {
         Box domain = geom[0].Domain();
         int zdir = 2;
         h_avg_ustar = sumToLine(*m_SurfaceLayer->get_u_star(0),0,1,domain,zdir);
@@ -448,11 +448,10 @@ ERF::sum_energy_quantities (Real time)
 }
 
 Real
-ERF::cloud_fraction (Real /*time*/)
+ERF::cloud_fraction (int lev)
 {
     BL_PROFILE("ERF::cloud_fraction()");
 
-    int lev = 0;
     // This holds all of qc
     MultiFab qc(vars_new[lev][Vars::cons],make_alias,RhoQ2_comp,1);
 

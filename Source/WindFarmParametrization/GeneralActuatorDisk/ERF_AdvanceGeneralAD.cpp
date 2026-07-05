@@ -18,13 +18,12 @@ GeneralAD::advance (const Geometry& geom,
                     const MultiFab& mf_SMark,
                     const Real& time)
 {
-    (void) mf_RMask;
     AMREX_ALWAYS_ASSERT(W_old.nComp() > 0);
     AMREX_ALWAYS_ASSERT(mf_Nturb.nComp() > 0);
     AMREX_ALWAYS_ASSERT(mf_vars_generalAD.nComp() > 0);
     AMREX_ALWAYS_ASSERT(time > -1.0);
     compute_freestream_velocity(cons_in, U_old, V_old, mf_SMark);
-    source_terms_cellcentered(geom, cons_in, mf_SMark, mf_vars_generalAD);
+    source_terms_cellcentered(geom, cons_in, mf_SMark, mf_RMask, mf_vars_generalAD);
     update(dt_advance, cons_in, U_old, V_old, W_old, mf_vars_generalAD);
     compute_power_output(time);
 }
@@ -324,6 +323,7 @@ void
 GeneralAD::source_terms_cellcentered (const Geometry& geom,
                                       const MultiFab& cons_in,
                                       const MultiFab& mf_SMark,
+                                      const MultiFab& mf_RMask,
                                       MultiFab& mf_vars_generalAD)
 {
 
@@ -387,6 +387,56 @@ GeneralAD::source_terms_cellcentered (const Geometry& geom,
     Real* d_yloc_ptr = d_yloc.data();
     Real* d_freestream_velocity_ptr = d_freestream_velocity.data();
     Real* d_disk_cell_count_ptr     = d_disk_cell_count.data();
+
+    WindFarmSpreadingType spreading_type;
+    Real spreading_nsigma;
+    get_force_spreading(spreading_type, spreading_nsigma);
+    const bool use_gaussian_spreading = (spreading_type == WindFarmSpreadingType::Gaussian);
+
+    Gpu::DeviceVector<Real> d_spread_weight_sum(nturbs, 0.0);
+    Real* d_spread_weight_sum_ptr = d_spread_weight_sum.data();
+
+    if (use_gaussian_spreading) {
+        const Real eps = 1.0e-12;
+        for ( MFIter mfi(cons_in,TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+            const Box& gbx      = mfi.growntilebox(1);
+            auto SMark_array    = mf_SMark.const_array(mfi);
+            auto RMask_array    = mf_RMask.const_array(mfi);
+
+            ParallelFor(gbx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+                int ii = amrex::min(amrex::max(i, domlo_x), domhi_x);
+                int jj = amrex::min(amrex::max(j, domlo_y), domhi_y);
+                int kk = amrex::min(amrex::max(k, domlo_z), domhi_z);
+                int it = static_cast<int>(SMark_array(ii,jj,kk,1));
+                if (it != -1) {
+                    Real phi = d_turb_disk_angles_ptr[it];
+                    Real nx = -std::cos(phi);
+                    Real ny = -std::sin(phi);
+                    Real sigma = std::abs(dx[0]*nx) + std::abs(dx[1]*ny);
+                    Real normal_dist = RMask_array(ii,jj,kk,1);
+                    if (sigma > eps && std::abs(normal_dist) <= spreading_nsigma*sigma) {
+                        Real kernel = std::exp(-0.5*normal_dist*normal_dist/(sigma*sigma)) /
+                                      (std::sqrt(2.0*PI)*sigma);
+                        Gpu::Atomic::Add(&d_spread_weight_sum_ptr[it], kernel*dx[0]*dx[1]*dx[2]);
+                    }
+                }
+            });
+        }
+        Vector<Real> spread_weight_sum(nturbs, 0.0);
+        Gpu::copy(Gpu::deviceToHost, d_spread_weight_sum.begin(), d_spread_weight_sum.end(),
+                  spread_weight_sum.begin());
+        amrex::ParallelAllReduce::Sum(spread_weight_sum.data(),
+                                      spread_weight_sum.size(),
+                                      amrex::ParallelContext::CommunicatorAll());
+        for (int it = 0; it < static_cast<int>(nturbs); ++it) {
+            if (disk_cell_count[it] > 0.0 && spread_weight_sum[it] <= eps) {
+                amrex::Abort("GeneralAD Gaussian force spreading produced zero normalization weight for turbine " +
+                             std::to_string(it));
+            }
+        }
+        Gpu::copy(Gpu::hostToDevice, spread_weight_sum.begin(), spread_weight_sum.end(),
+                  d_spread_weight_sum.begin());
+    }
 
     int n_bld_sections = bld_rad_loc.size();
 
@@ -454,6 +504,7 @@ GeneralAD::source_terms_cellcentered (const Geometry& geom,
 
         const Box& gbx      = mfi.growntilebox(1);
         auto SMark_array    = mf_SMark.array(mfi);
+        auto RMask_array    = mf_RMask.const_array(mfi);
         auto generalAD_array = mf_vars_generalAD.array(mfi);
 
         ParallelFor(gbx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
@@ -480,7 +531,9 @@ GeneralAD::source_terms_cellcentered (const Geometry& geom,
                     check_int++;
 
                     // Find radial distance of the point and the zeta angle
-                    Real rad = std::pow( (x-d_xloc_ptr[it])*(x-d_xloc_ptr[it]) +
+                    Real rad = use_gaussian_spreading
+                             ? RMask_array(ii,jj,kk,0)
+                             : std::pow( (x-d_xloc_ptr[it])*(x-d_xloc_ptr[it]) +
                                          (y-d_yloc_ptr[it])*(y-d_yloc_ptr[it]) +
                                          (z-d_hub_height)*(z-d_hub_height), 0.5 );
 
@@ -525,9 +578,26 @@ GeneralAD::source_terms_cellcentered (const Geometry& geom,
 
                         //Real dn = (
 
-                        source_x = -Fx/(2.0*PI*rad*dx[0])*1.0/std::pow(2.0*PI,0.5);
-                        source_y = -Fy/(2.0*PI*rad*dx[0])*1.0/std::pow(2.0*PI,0.5);
-                        source_z = -Fz/(2.0*PI*rad*dx[0])*1.0/std::pow(2.0*PI,0.5);
+	                        if (use_gaussian_spreading) {
+	                            Real nx = -std::cos(phi);
+	                            Real ny = -std::sin(phi);
+	                            Real sigma = std::abs(dx[0]*nx) + std::abs(dx[1]*ny);
+	                            Real normal_dist = RMask_array(ii,jj,kk,1);
+	                            Real spread_factor = 0.0;
+	                            if (sigma > 1.0e-12 && d_spread_weight_sum_ptr[it] > 1.0e-12) {
+	                                Real kernel = std::exp(-0.5*normal_dist*normal_dist/(sigma*sigma)) /
+	                                              (std::sqrt(2.0*PI)*sigma);
+	                                spread_factor = PI*d_rotor_rad*d_rotor_rad*kernel /
+	                                                d_spread_weight_sum_ptr[it];
+	                            }
+	                            source_x = -Fx/(2.0*PI*rad)*spread_factor;
+	                            source_y = -Fy/(2.0*PI*rad)*spread_factor;
+	                            source_z = -Fz/(2.0*PI*rad)*spread_factor;
+	                        } else {
+	                            source_x = -Fx/(2.0*PI*rad*dx[0])*1.0/std::pow(2.0*PI,0.5);
+	                            source_y = -Fy/(2.0*PI*rad*dx[0])*1.0/std::pow(2.0*PI,0.5);
+	                            source_z = -Fz/(2.0*PI*rad*dx[0])*1.0/std::pow(2.0*PI,0.5);
+	                        }
 
 
                         //printf("Val source_x, is %0.15g, %0.15g, %0.15g %0.15g %0.15g %0.15g\n", rad, Fn, Ft, source_x, source_y, source_z);

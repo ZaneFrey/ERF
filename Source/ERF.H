@@ -250,7 +250,7 @@ public:
     void write_1D_profiles (amrex::Real time);
     void write_1D_profiles_stag (amrex::Real time);
 
-    amrex::Real cloud_fraction (amrex::Real time);
+    amrex::Real cloud_fraction (int lev);
 
     // Fill the physical boundary conditions for cell-centered velocity (diagnostic only)
     void FillBdyCCVels (amrex::Vector<amrex::MultiFab>& mf_cc_vel, int levc=0);
@@ -418,6 +418,9 @@ public:
 
     void MakeHorizontalAverages ();
     void MakeDiagnosticAverage (amrex::Vector<amrex::Real>& h_havg, amrex::MultiFab& S, int n);
+    bool use_level0_shared_large_scale_forcing () const;
+    void refresh_level0_shared_large_scale_forcing (amrex::Real time,
+                                                    const amrex::Vector<amrex::MultiFab>& state_old);
     void derive_upwp (amrex::Vector<amrex::Real>& h_havg);
 
     // Write plotfile to disk
@@ -559,7 +562,8 @@ public:
 #endif // ERF_USE_NETCDF
 
 #ifdef ERF_USE_WINDFARM
-    void init_windfarm(int lev);
+    void initialize_windfarm_catalog();
+    void rebuild_windfarm_hierarchy();
     void advance_windfarm (const amrex::Geometry& a_geom,
                            const amrex::Real& dt_advance,
                            amrex::MultiFab& cons_in,
@@ -618,6 +622,13 @@ private:
     void init1DArrays ();
 
     void init_bcs ();
+
+    bool level_touches_zlo (int lev) const;
+    bool level_touches_zlo (int lev, const amrex::BoxArray& ba) const;
+    bool has_surface_layer_at_level (int lev) const;
+    bool has_surface_layer_at_level (int lev, const amrex::BoxArray& ba) const;
+    int surface_flux_owner_level () const;
+    void refresh_surface_flux_cache_from_current_state (amrex::Real time);
     void init_phys_bcs (bool& rho_read, bool& read_prim_theta);
 
     void init_custom (int lev);
@@ -868,6 +879,9 @@ private:
 
 #ifdef ERF_USE_WINDFARM
     std::unique_ptr<WindFarm> windfarm;
+    bool m_windfarm_catalog_initialized{false};
+    bool m_windfarm_hierarchy_initialized{false};
+    bool m_windfarm_outputs_written{false};
     amrex::Vector<amrex::MultiFab> Nturb;
     amrex::Vector<amrex::MultiFab> vars_windfarm; // Fitch: Vabs, Vabsdt, dudt, dvdt, dTKEdt
                                                   // EWP:                 dudt, dvdt, dTKEdt
@@ -1292,6 +1306,28 @@ private:
     amrex::Vector<           amrex::Vector<amrex::Real> > h_w_subsid;
     amrex::Vector<amrex::Gpu::DeviceVector<amrex::Real> > d_w_subsid;
 
+    amrex::Vector<amrex::Real> h_level0_rhoqt_master;
+    amrex::Vector<amrex::Real> h_level0_wbar_master;
+    amrex::Vector<amrex::Real> h_level0_theta_master;
+    amrex::Vector<amrex::Real> h_level0_qv_master;
+    amrex::Vector<amrex::Real> h_level0_qc_master;
+    amrex::Vector<amrex::Real> h_level0_u_master;
+    amrex::Vector<amrex::Real> h_level0_v_master;
+
+    amrex::Gpu::DeviceVector<amrex::Real> d_level0_rhoqt_master;
+    amrex::Gpu::DeviceVector<amrex::Real> d_level0_wbar_master;
+    amrex::Gpu::DeviceVector<amrex::Real> d_level0_theta_master;
+    amrex::Gpu::DeviceVector<amrex::Real> d_level0_qv_master;
+    amrex::Gpu::DeviceVector<amrex::Real> d_level0_qc_master;
+    amrex::Gpu::DeviceVector<amrex::Real> d_level0_u_master;
+    amrex::Gpu::DeviceVector<amrex::Real> d_level0_v_master;
+
+    amrex::Vector<amrex::Gpu::DeviceVector<amrex::Real> > d_theta_ref;
+    amrex::Vector<amrex::Gpu::DeviceVector<amrex::Real> > d_qv_ref;
+    amrex::Vector<amrex::Gpu::DeviceVector<amrex::Real> > d_qc_ref;
+    amrex::Vector<amrex::Gpu::DeviceVector<amrex::Real> > d_u_ref;
+    amrex::Vector<amrex::Gpu::DeviceVector<amrex::Real> > d_v_ref;
+
     amrex::Vector<           amrex::Vector<amrex::Real> > h_u_geos;
     amrex::Vector<amrex::Gpu::DeviceVector<amrex::Real> > d_u_geos;
 
@@ -1337,6 +1373,17 @@ private:
 
     void refinement_criteria_setup ();
 
+    struct TurbRefineInfo {
+        bool enabled = false;
+        amrex::Real pad_streamwise_by_D = -1.0;
+        amrex::Real pad_spanwise_by_D   = -1.0;
+        amrex::Real box_z_lo            = -1.0;
+        amrex::Real box_z_hi            = -1.0;
+        amrex::Real start_time = -1.0e100;
+        amrex::Real end_time   =  1.0e100;
+        int max_level = -1;
+    };
+
     std::unique_ptr<WriteBndryPlanes> m_w2d  = nullptr;
     std::unique_ptr<ReadBndryPlanes>  m_r2d  = nullptr;
     std::unique_ptr<SurfaceLayer>     m_SurfaceLayer = nullptr;
@@ -1346,6 +1393,8 @@ private:
     // Holds info for dynamically generated tagging criteria
     //
     static amrex::Vector<amrex::AMRErrorTag> ref_tags;
+    TurbRefineInfo turb_refine_info;
+    amrex::Vector<int> turb_refine_force_regrid;
 
     amrex::Vector<amrex::Vector<amrex::BoxArray>> subdomains;
 

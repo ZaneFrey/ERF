@@ -57,6 +57,8 @@ void make_mom_sources (Real time,
                        const Real* dptr_u_geos,
                        const Real* dptr_v_geos,
                        const Real* dptr_wbar_sub,
+                       const Real* dptr_u_ref,
+                       const Real* dptr_v_ref,
                        const Vector<Real*> d_rayleigh_ptrs_at_lev,
                        const amrex::Real* d_sinesq_at_lev,
                        const amrex::Real* d_sinesq_stag_at_lev,
@@ -157,9 +159,14 @@ void make_mom_sources (Real time,
     // *****************************************************************************
     Table1D<Real>     dptr_r_plane, dptr_u_plane, dptr_v_plane;
     TableData<Real, 1> r_plane_tab,  u_plane_tab,  v_plane_tab;
+    const bool use_shared_subsidence_refs = is_slow_step &&
+                                            (dptr_wbar_sub != nullptr) &&
+                                            (dptr_u_ref != nullptr) &&
+                                            (dptr_v_ref != nullptr);
 
-    if (is_slow_step && (dptr_wbar_sub || solverChoice.nudging_from_input_sounding ||
-                         enforce_massflux_x || enforce_massflux_y))
+    if (is_slow_step && (solverChoice.nudging_from_input_sounding ||
+                         enforce_massflux_x || enforce_massflux_y ||
+                         (dptr_wbar_sub && !use_shared_subsidence_refs)))
     {
         const int offset = 1;
         const int u_offset = 1;
@@ -481,8 +488,8 @@ void make_mom_sources (Real time,
                         dzInv = 1.0 / (z_xf_hi - z_xf_lo);
                     }
                     Real rho_on_u_face = 0.5 * ( cell_data(i,j,k,nr) + cell_data(i-1,j,k,nr) );
-                    Real U_hi = dptr_u_plane(k+1) / dptr_r_plane(k+1);
-                    Real U_lo = dptr_u_plane(k-1) / dptr_r_plane(k-1);
+                    Real U_hi = use_shared_subsidence_refs ? dptr_u_ref[k+1] : dptr_u_plane(k+1) / dptr_r_plane(k+1);
+                    Real U_lo = use_shared_subsidence_refs ? dptr_u_ref[k-1] : dptr_u_plane(k-1) / dptr_r_plane(k-1);
                     Real wbar_xf = 0.5 * (dptr_wbar_sub[k] + dptr_wbar_sub[k+1]);
                     xmom_src_arr(i, j, k) -= rho_on_u_face * wbar_xf * (U_hi - U_lo) * dzInv;
                 },
@@ -497,8 +504,8 @@ void make_mom_sources (Real time,
                         dzInv = 1.0 / (z_yf_hi - z_yf_lo);
                     }
                     Real rho_on_v_face = 0.5 * ( cell_data(i,j,k,nr) + cell_data(i,j-1,k,nr) );
-                    Real V_hi = dptr_v_plane(k+1) / dptr_r_plane(k+1);
-                    Real V_lo = dptr_v_plane(k-1) / dptr_r_plane(k-1);
+                    Real V_hi = use_shared_subsidence_refs ? dptr_v_ref[k+1] : dptr_v_plane(k+1) / dptr_r_plane(k+1);
+                    Real V_lo = use_shared_subsidence_refs ? dptr_v_ref[k-1] : dptr_v_plane(k-1) / dptr_r_plane(k-1);
                     Real wbar_yf = 0.5 * (dptr_wbar_sub[k] + dptr_wbar_sub[k+1]);
                     ymom_src_arr(i, j, k) -= rho_on_v_face * wbar_yf * (V_hi - V_lo) * dzInv;
                 });
@@ -514,8 +521,8 @@ void make_mom_sources (Real time,
                                               + z_nd_arr(i,j,k+2) + z_nd_arr(i,j+1,k+2) );
                         dzInv = 1.0 / (z_xf_hi - z_xf_lo);
                     }
-                    Real U_hi = dptr_u_plane(k+1) / dptr_r_plane(k+1);
-                    Real U_lo = dptr_u_plane(k-1) / dptr_r_plane(k-1);
+                    Real U_hi = use_shared_subsidence_refs ? dptr_u_ref[k+1] : dptr_u_plane(k+1) / dptr_r_plane(k+1);
+                    Real U_lo = use_shared_subsidence_refs ? dptr_u_ref[k-1] : dptr_u_plane(k-1) / dptr_r_plane(k-1);
                     Real wbar_xf = 0.5 * (dptr_wbar_sub[k] + dptr_wbar_sub[k+1]);
                     xmom_src_arr(i, j, k) -= wbar_xf * (U_hi - U_lo) * dzInv;
                 },
@@ -529,8 +536,8 @@ void make_mom_sources (Real time,
                                               + z_nd_arr(i,j,k+2) + z_nd_arr(i+1,j,k+2) );
                         dzInv = 1.0 / (z_yf_hi - z_yf_lo);
                     }
-                    Real V_hi = dptr_v_plane(k+1) / dptr_r_plane(k+1);
-                    Real V_lo = dptr_v_plane(k-1) / dptr_r_plane(k-1);
+                    Real V_hi = use_shared_subsidence_refs ? dptr_v_ref[k+1] : dptr_v_plane(k+1) / dptr_r_plane(k+1);
+                    Real V_lo = use_shared_subsidence_refs ? dptr_v_ref[k-1] : dptr_v_plane(k-1) / dptr_r_plane(k-1);
                     Real wbar_yf = 0.5 * (dptr_wbar_sub[k] + dptr_wbar_sub[k+1]);
                     ymom_src_arr(i, j, k) -= wbar_yf * (V_hi - V_lo) * dzInv;
                 });
