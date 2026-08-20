@@ -70,3 +70,12 @@ build_*.log
 *~
 \#*\#
 .#*
+
+# Case files
+cases/
+
+# Launch files
+launch/
+
+# Build files
+Build/cmake_*
