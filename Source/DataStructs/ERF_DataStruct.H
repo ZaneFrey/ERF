@@ -74,7 +74,7 @@ AMREX_ENUM(MoistureType,
 );
 
 AMREX_ENUM(WindFarmType,
-    Fitch, EWP, SimpleAD, GeneralAD, None
+    Fitch, EWP, SimpleAD, GeneralAD, ClassicAD, None
 );
 
 AMREX_ENUM(WindFarmLocType,
@@ -707,6 +707,18 @@ struct SolverChoice {
 
         pp.query("windfarm_x_shift",windfarm_x_shift);
         pp.query("windfarm_y_shift",windfarm_y_shift);
+
+        amrex::ParmParse pp_classic("erf.classic_ad");
+        pp_classic.query("ctprime", classic_ad_ctprime);
+        pp_classic.query("cpprime", classic_ad_cpprime);
+        pp_classic.query("wake_rotation", classic_ad_wake_rotation);
+        pp_classic.query("turb_mem_time", classic_ad_turb_mem_time);
+        pp_classic.query("tsr", classic_ad_tsr);
+        pp_classic.query("diameter", classic_ad_diameter);
+        pp_classic.query("hub_height", classic_ad_hub_height);
+        amrex::ParmParse pp_classic_actuator("erf.classic_ad.actuator");
+        classic_ad_spacing_was_supplied =
+            pp_classic_actuator.query("spacing", classic_ad_actuator_spacing);
         // Test if time averaged data is to be output
         pp.query("time_avg_vel",time_avg_vel);
 
@@ -818,6 +830,39 @@ struct SolverChoice {
                 amrex::Error("To use dynamic yaw, you must provide a positive value for erf.yaw_period (seconds).");
             }
         }
+        if (windfarm_type == WindFarmType::ClassicAD) {
+#ifndef ERF_USE_PARTICLES
+            amrex::Error("erf.windfarm_type = ClassicAD requires ERF particle support "
+                         "(CMake: ERF_ENABLE_PARTICLES=ON; GNU Make: USE_PARTICLES=TRUE)");
+#endif
+            if (terrain_type != TerrainType::None) {
+                amrex::Error("ClassicAD V1 supports flat terrain only (erf.terrain_type = None)");
+            }
+            if (dynamic_yaw) {
+                amrex::Error("Dynamic yaw is not supported by ClassicAD V1");
+            }
+            if (classic_ad_diameter <= 0.0) {
+                amrex::Error("erf.classic_ad.diameter is required and must be > 0");
+            }
+            if (classic_ad_hub_height <= 0.0) {
+                amrex::Error("erf.classic_ad.hub_height is required and must be > 0");
+            }
+            if (classic_ad_ctprime < 0.0) {
+                amrex::Error("erf.classic_ad.ctprime must be >= 0");
+            }
+            if (classic_ad_cpprime < 0.0) {
+                amrex::Error("erf.classic_ad.cpprime must be >= 0");
+            }
+            if (classic_ad_turb_mem_time < 0.0) {
+                amrex::Error("erf.classic_ad.turb_mem_time must be >= 0");
+            }
+            if (classic_ad_wake_rotation && classic_ad_tsr <= 0.0) {
+                amrex::Error("erf.classic_ad.tsr must be > 0 when wake rotation is enabled");
+            }
+            if (classic_ad_spacing_was_supplied && classic_ad_actuator_spacing <= 0.0) {
+                amrex::Error("erf.classic_ad.actuator.spacing must be > 0 when supplied");
+            }
+        }
         if (wake_rotation && windfarm_type != WindFarmType::SimpleAD) {
             amrex::Error("Wake rotation is only supported for windfarm_type = SimpleAD");
         }
@@ -833,20 +878,23 @@ struct SolverChoice {
             }
         }
         if (!yaw_file.empty()) {
-            if (!(windfarm_type == WindFarmType::SimpleAD || windfarm_type == WindFarmType::GeneralAD)) {
-                amrex::Error("Manual yaw offsets via erf.yaw_file are only supported for windfarm_type = SimpleAD or GeneralAD");
+            if (!(windfarm_type == WindFarmType::SimpleAD || windfarm_type == WindFarmType::GeneralAD ||
+                  windfarm_type == WindFarmType::ClassicAD)) {
+                amrex::Error("Manual yaw offsets via erf.yaw_file are only supported for actuator-disk windfarm models");
             }
         }
         if (windfarm_start_time < 0.0) {
             amrex::Error("erf.windfarm_start_time must be >= 0.0");
         }
         if (windfarm_start_time > 0.0 &&
-            !(windfarm_type == WindFarmType::SimpleAD || windfarm_type == WindFarmType::GeneralAD)) {
-            amrex::Error("erf.windfarm_start_time is only supported for windfarm_type = SimpleAD or GeneralAD");
+            !(windfarm_type == WindFarmType::SimpleAD || windfarm_type == WindFarmType::GeneralAD ||
+              windfarm_type == WindFarmType::ClassicAD)) {
+            amrex::Error("erf.windfarm_start_time is only supported for actuator-disk windfarm models");
         }
         if (windfarm_ramp_tau > 0.0 &&
-            !(windfarm_type == WindFarmType::SimpleAD || windfarm_type == WindFarmType::GeneralAD)) {
-            amrex::Error("erf.windfarm_ramp_tau is only supported for windfarm_type = SimpleAD or GeneralAD");
+            !(windfarm_type == WindFarmType::SimpleAD || windfarm_type == WindFarmType::GeneralAD ||
+              windfarm_type == WindFarmType::ClassicAD)) {
+            amrex::Error("erf.windfarm_ramp_tau is only supported for actuator-disk windfarm models");
         }
         if (windfarm_type == WindFarmType::SimpleAD || windfarm_type == WindFarmType::GeneralAD) {
             if (windfarm_ramp_tau <= 0.0) {
@@ -858,7 +906,8 @@ struct SolverChoice {
             }
         }
         if ( (windfarm_type==WindFarmType::SimpleAD ||
-              windfarm_type==WindFarmType::GeneralAD ) && turb_disk_angle < 0.0) {
+              windfarm_type==WindFarmType::GeneralAD ||
+              windfarm_type==WindFarmType::ClassicAD ) && turb_disk_angle < 0.0) {
             amrex::Error("To use simplified actuator disks, you need to provide a variable"
                           " erf.turb_disk_angle_from_x in the inputs which is the angle of the face of the"
                           " turbine disk from the x-axis. A turbine facing an oncoming flow in the x-direction"
@@ -1288,6 +1337,15 @@ struct SolverChoice {
     amrex::Real windfarm_spreading_nsigma = 3.0;
     amrex::Real windfarm_x_shift = -1.0;
     amrex::Real windfarm_y_shift = -1.0;
+    amrex::Real classic_ad_ctprime = 4.0/3.0;
+    amrex::Real classic_ad_cpprime = 0.8;
+    amrex::Real classic_ad_tsr = 8.0;
+    amrex::Real classic_ad_turb_mem_time = 600.0;
+    amrex::Real classic_ad_diameter = -1.0;
+    amrex::Real classic_ad_hub_height = -1.0;
+    amrex::Real classic_ad_actuator_spacing = -1.0;
+    bool classic_ad_wake_rotation = false;
+    bool classic_ad_spacing_was_supplied = false;
 
     // Nudging factor for bdy sponging : F1 = 1/(nudge_factor * dt)
     amrex::Real bdy_nudge_factor = 10.0;

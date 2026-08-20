@@ -703,18 +703,29 @@ ERF::ErrorEst (int levc, TagBoxArray& tags, Real time, int /*ngrow*/)
             ? turb_refine_info.max_level
             : max_level;
 
+        // Keep every parent in the refinement chain tagged after the turbine
+        // moves to a finer owner level.  Restricting tags to levc ==
+        // owner_level makes the parent stop requesting its child; the next
+        // regrid then removes that child and ownership oscillates between
+        // levels.
         if (owner_level >= 0 &&
-            levc == owner_level &&
+            levc <= owner_level &&
             (levc + 1) <= max_indicator_level)
         {
+            const auto& turbine_ids = windfarm->turbines_on_level(owner_level);
             const amrex::BoxArray* finer_grids = (levc < finest_level) ? &grids[levc+1] : nullptr;
             const amrex::IntVect* ratio = (levc < finest_level) ? &ref_ratio[levc] : nullptr;
             const amrex::MultiFab* z_nd_for_validation =
                 (SolverChoice::mesh_type == MeshType::ConstantDz) ? nullptr : z_phys_nd[levc].get();
 
-            if (!validate_turb_refine_region(geom[levc], grids[levc], finer_grids, ratio,
+            // The single-level footprint guard applies on the current owner
+            // level.  Ancestor levels are tagged only to preserve the parent
+            // chain, and their footprint is intentionally covered by the
+            // child that owns the turbine.
+            if (levc == owner_level &&
+                !validate_turb_refine_region(geom[levc], grids[levc], finer_grids, ratio,
                                              z_nd_for_validation, windfarm.get(),
-                                             windfarm->turbines_on_level(levc),
+                                             turbine_ids,
                                              turb_refine_info.pad_streamwise_by_D,
                                              turb_refine_info.pad_spanwise_by_D,
                                              turb_refine_info.box_z_lo,
@@ -727,7 +738,7 @@ ERF::ErrorEst (int levc, TagBoxArray& tags, Real time, int /*ngrow*/)
             const bool use_physical_z_bounds =
                 (SolverChoice::mesh_type != MeshType::ConstantDz) && static_cast<bool>(z_phys_nd[levc]);
 
-            for (int turbine_id : windfarm->turbines_on_level(levc)) {
+            for (int turbine_id : turbine_ids) {
                 amrex::Real x, y, zhub, diameter, nx, ny, tx, ty;
                 windfarm->get_turbine_refinement_geometry(turbine_id, x, y, zhub, diameter, nx, ny, tx, ty);
                 if (diameter <= 0.0) {
@@ -816,8 +827,9 @@ ERF::refinement_criteria_setup ()
             if (refinement_indicators[i] == "turb_refine") {
 #ifdef ERF_USE_WINDFARM
                 if (!(solverChoice.windfarm_type == WindFarmType::SimpleAD ||
-                      solverChoice.windfarm_type == WindFarmType::GeneralAD)) {
-                    amrex::Abort("erf.refinement_indicators=turb_refine requires windfarm_type = SimpleAD or GeneralAD.");
+                      solverChoice.windfarm_type == WindFarmType::GeneralAD ||
+                      solverChoice.windfarm_type == WindFarmType::ClassicAD)) {
+                    amrex::Abort("erf.refinement_indicators=turb_refine requires an actuator-disk windfarm model.");
                 }
 
                 if (any_pbl_models_active(solverChoice, max_level)) {

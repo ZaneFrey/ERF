@@ -61,6 +61,9 @@
 
 #ifdef ERF_USE_WINDFARM
 #include "ERF_WindFarm.H"
+#ifdef ERF_USE_PARTICLES
+#include "ERF_ClassicADPC.H"
+#endif
 #endif
 
 #include <ERF_RadiationModels.H>
@@ -890,6 +893,12 @@ private:
                                                    // to the number of the wind turbine to sample
                                                    // velocity upstream of the turbine
     amrex::Vector<amrex::MultiFab> RMask; // Effective radius for actuator-disk masked cells
+#ifdef ERF_USE_PARTICLES
+    std::unique_ptr<ClassicADPC> classic_ad_pc;
+    amrex::Vector<amrex::MultiFab> classic_ad_xmom_src;
+    amrex::Vector<amrex::MultiFab> classic_ad_ymom_src;
+    amrex::Vector<amrex::MultiFab> classic_ad_zmom_src;
+#endif
 #endif
 
     LandSurface lsm;

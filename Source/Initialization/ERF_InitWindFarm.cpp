@@ -21,27 +21,56 @@ ERF::initialize_windfarm_catalog ()
         return;
     }
 
-    const bool is_ad_model = (solverChoice.windfarm_type == WindFarmType::SimpleAD ||
-                              solverChoice.windfarm_type == WindFarmType::GeneralAD);
+    const bool is_legacy_ad = (solverChoice.windfarm_type == WindFarmType::SimpleAD ||
+                               solverChoice.windfarm_type == WindFarmType::GeneralAD);
+    const bool is_classic_ad = (solverChoice.windfarm_type == WindFarmType::ClassicAD);
 
     windfarm->set_wake_rotation_params(solverChoice.wake_rotation, 9.0, 0.9);
     windfarm->set_turb_mem_time(solverChoice.turb_mem_time);
     windfarm->set_force_spreading(solverChoice.windfarm_force_spreading,
                                   solverChoice.windfarm_spreading_nsigma);
 
+#ifdef ERF_USE_PARTICLES
+    if (is_classic_ad) {
+        windfarm->configure_classic_ad(solverChoice.classic_ad_ctprime,
+                                       solverChoice.classic_ad_cpprime,
+                                       solverChoice.classic_ad_tsr,
+                                       solverChoice.classic_ad_wake_rotation,
+                                       solverChoice.classic_ad_turb_mem_time,
+                                       solverChoice.classic_ad_diameter,
+                                       solverChoice.classic_ad_hub_height,
+                                       solverChoice.classic_ad_actuator_spacing,
+                                       solverChoice.classic_ad_spacing_was_supplied);
+    }
+#endif
+
     if (solverChoice.windfarm_loc_type == WindFarmLocType::lat_lon) {
-        windfarm->read_tables(solverChoice.windfarm_loc_table,
-                              solverChoice.windfarm_spec_table,
-                              false, true,
-                              solverChoice.windfarm_x_shift,
-                              solverChoice.windfarm_y_shift);
+        if (is_classic_ad) {
+            windfarm->read_windfarm_locations_table(solverChoice.windfarm_loc_table,
+                                                    false, true,
+                                                    solverChoice.windfarm_x_shift,
+                                                    solverChoice.windfarm_y_shift);
+        } else {
+            windfarm->read_tables(solverChoice.windfarm_loc_table,
+                                  solverChoice.windfarm_spec_table,
+                                  false, true,
+                                  solverChoice.windfarm_x_shift,
+                                  solverChoice.windfarm_y_shift);
+        }
     } else if (solverChoice.windfarm_loc_type == WindFarmLocType::x_y) {
-        windfarm->read_tables(solverChoice.windfarm_loc_table,
-                              solverChoice.windfarm_spec_table,
-                              true, false);
+        const Real xshift = (solverChoice.windfarm_x_shift == -1.0) ? 0.0 : solverChoice.windfarm_x_shift;
+        const Real yshift = (solverChoice.windfarm_y_shift == -1.0) ? 0.0 : solverChoice.windfarm_y_shift;
+        if (is_classic_ad) {
+            windfarm->read_windfarm_locations_table(solverChoice.windfarm_loc_table,
+                                                    true, false, xshift, yshift);
+        } else {
+            windfarm->read_tables(solverChoice.windfarm_loc_table,
+                                  solverChoice.windfarm_spec_table,
+                                  true, false);
+        }
     }
 
-    if (is_ad_model) {
+    if (is_legacy_ad || is_classic_ad) {
         windfarm->set_disk_angle0_deg(solverChoice.turb_disk_angle);
         windfarm->read_windfarm_yaw_file(solverChoice.yaw_file);
     }
@@ -68,19 +97,33 @@ ERF::rebuild_windfarm_hierarchy ()
     initialize_windfarm_catalog();
     m_windfarm_hierarchy_initialized = false;
 
-    const bool is_ad_model = (solverChoice.windfarm_type == WindFarmType::SimpleAD ||
-                              solverChoice.windfarm_type == WindFarmType::GeneralAD);
+    const bool is_legacy_ad = (solverChoice.windfarm_type == WindFarmType::SimpleAD ||
+                               solverChoice.windfarm_type == WindFarmType::GeneralAD);
+    const bool is_classic_ad = (solverChoice.windfarm_type == WindFarmType::ClassicAD);
     const bool use_per_turbine_angles =
         ((solverChoice.dynamic_yaw && solverChoice.windfarm_type == WindFarmType::SimpleAD) ||
          !solverChoice.yaw_file.empty());
-    const bool defer_ad_outputs = is_ad_model && (solverChoice.windfarm_start_time > 0.0);
+    const bool defer_ad_outputs = is_legacy_ad && (solverChoice.windfarm_start_time > 0.0);
 
     amrex::Vector<int> all_turbines(windfarm->num_turbines());
     for (int it = 0; it < windfarm->num_turbines(); ++it) {
         all_turbines[it] = it;
     }
 
-    if (is_ad_model) {
+    if (is_classic_ad) {
+        windfarm->define_classic_ad_owner_levels(finest_level, geom, grids, ref_ratio);
+#ifdef ERF_USE_PARTICLES
+        if (!classic_ad_pc) {
+            classic_ad_pc = std::make_unique<ClassicADPC>(
+                static_cast<ParGDBBase*>(GetParGDB()), windfarm->classic_ad_model());
+        }
+        Vector<int> owners(windfarm->num_turbines());
+        for (int it = 0; it < windfarm->num_turbines(); ++it) {
+            owners[it] = windfarm->owner_level(it);
+        }
+        classic_ad_pc->rebuild(owners);
+#endif
+    } else if (is_legacy_ad) {
         windfarm->define_owner_levels(geom, grids, dmap, ref_ratio, z_phys_nd);
     }
 
@@ -91,9 +134,11 @@ ERF::rebuild_windfarm_hierarchy ()
 
     for (int lev = 0; lev <= finest_level; ++lev) {
         const amrex::Vector<int>& turbine_ids =
-            is_ad_model ? windfarm->turbines_on_level(lev) : all_turbines;
+            (is_legacy_ad || is_classic_ad) ? windfarm->turbines_on_level(lev) : all_turbines;
 
-        windfarm->fill_Nturb_multifab(geom[lev], Nturb[lev], z_phys_nd[lev], turbine_ids);
+        if (!is_classic_ad) {
+            windfarm->fill_Nturb_multifab(geom[lev], Nturb[lev], z_phys_nd[lev], turbine_ids);
+        }
 
         if (solverChoice.windfarm_type == WindFarmType::Fitch ||
             solverChoice.windfarm_type == WindFarmType::EWP) {
@@ -101,7 +146,7 @@ ERF::rebuild_windfarm_hierarchy ()
                                                            SMark[lev],
                                                            Nturb[lev],
                                                            z_phys_nd[lev]);
-        } else if (is_ad_model) {
+        } else if (is_legacy_ad) {
             if (use_per_turbine_angles) {
                 windfarm->fill_SMark_multifab_dynamic(geom[lev], SMark[lev], RMask[lev],
                                                       solverChoice.sampling_distance_by_D,
@@ -124,7 +169,7 @@ ERF::rebuild_windfarm_hierarchy ()
         }
     }
 
-    if (is_ad_model && !solverChoice.dynamic_yaw &&
+    if (is_legacy_ad && !solverChoice.dynamic_yaw &&
         !defer_ad_outputs && !m_windfarm_outputs_written) {
         windfarm->write_turbine_locations_vtk();
         windfarm->write_actuator_disks_vtk(Geom(0), solverChoice.sampling_distance_by_D);

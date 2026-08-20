@@ -317,6 +317,11 @@ ERF::ERF_shared ()
     vars_windfarm.resize(nlevs_max);
     SMark.resize(nlevs_max);
     RMask.resize(nlevs_max);
+#ifdef ERF_USE_PARTICLES
+    classic_ad_xmom_src.resize(nlevs_max);
+    classic_ad_ymom_src.resize(nlevs_max);
+    classic_ad_zmom_src.resize(nlevs_max);
+#endif
 #endif
 
     qheating_rates.resize(nlevs_max);
@@ -2505,7 +2510,8 @@ ERF::restart ()
 #ifdef ERF_USE_WINDFARM
     if (solverChoice.windfarm_type != WindFarmType::None) {
         rebuild_windfarm_hierarchy();
-        if (solverChoice.windfarm_type == WindFarmType::SimpleAD) {
+        if (solverChoice.windfarm_type == WindFarmType::SimpleAD ||
+            solverChoice.windfarm_type == WindFarmType::ClassicAD) {
             windfarm->read_memory_state(restart_chkfile);
         }
         if (solverChoice.dynamic_yaw && solverChoice.windfarm_type == WindFarmType::SimpleAD) {

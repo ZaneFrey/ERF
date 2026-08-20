@@ -1,0 +1,4 @@
+CEXE_sources += ERF_ClassicAD.cpp
+CEXE_sources += ERF_ClassicADPC.cpp
+CEXE_headers += ERF_ClassicAD.H
+CEXE_headers += ERF_ClassicADPC.H

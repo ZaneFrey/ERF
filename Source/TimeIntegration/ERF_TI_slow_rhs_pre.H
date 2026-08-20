@@ -149,6 +149,14 @@
                          (solverChoice.hindcast_surface_bcs? &surface_state_interp[level] : nullptr),
                          input_sounding_data, true);
 
+#if defined(ERF_USE_WINDFARM) && defined(ERF_USE_PARTICLES)
+        if (solverChoice.windfarm_type == WindFarmType::ClassicAD) {
+            MultiFab::Add(xmom_src, classic_ad_xmom_src[level], 0, 0, 1, 0);
+            MultiFab::Add(ymom_src, classic_ad_ymom_src[level], 0, 0, 1, 0);
+            MultiFab::Add(zmom_src, classic_ad_zmom_src[level], 0, 0, 1, 0);
+        }
+#endif
+
         // *****************************************************************************
         // Add body sources if doing flow around a body
         // *****************************************************************************

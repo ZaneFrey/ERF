@@ -10,6 +10,9 @@
 #include "ERF_EWP.H"
 #include "ERF_SimpleAD.H"
 #include "ERF_GeneralAD.H"
+#ifdef ERF_USE_PARTICLES
+#include "ERF_ClassicAD.H"
+#endif
 
 class WindFarm : public NullWindFarm {
 
@@ -39,6 +42,17 @@ public:
             SetModel<GeneralAD>();
             amrex::Print() << "Generalized actuator disk windfarm model!\n";
         }
+#ifdef ERF_USE_PARTICLES
+        else if (a_windfarm_type == WindFarmType::ClassicAD) {
+            SetModel<ClassicAD>();
+            amrex::Print() << "Classic particle actuator disk windfarm model!\n";
+        }
+#else
+        else if (a_windfarm_type == WindFarmType::ClassicAD) {
+            amrex::Abort("erf.windfarm_type = ClassicAD requires ERF particle support "
+                         "(CMake: ERF_ENABLE_PARTICLES=ON; GNU Make: USE_PARTICLES=TRUE)");
+        }
+#endif
          else {
             amrex::Abort("WindFarm: Dont know this windfarm_type!") ;
         }
@@ -109,6 +123,11 @@ public:
                               const amrex::Vector<amrex::DistributionMapping>& dmap,
                               const amrex::Vector<amrex::IntVect>& ref_ratio,
                               const amrex::Vector<std::unique_ptr<amrex::MultiFab>>& z_phys_nd);
+
+    void define_classic_ad_owner_levels (int finest_level,
+                                         const amrex::Vector<amrex::Geometry>& geom,
+                                         const amrex::Vector<amrex::BoxArray>& grids,
+                                         const amrex::Vector<amrex::IntVect>& ref_ratio);
 
     int num_turbines () const { return static_cast<int>(xloc.size()); }
 
@@ -184,6 +203,32 @@ public:
     {
         return m_windfarm_model[0]->read_memory_state(restart_chkfile);
     }
+
+#ifdef ERF_USE_PARTICLES
+    void configure_classic_ad (amrex::Real ctprime,
+                               amrex::Real cpprime,
+                               amrex::Real tsr,
+                               bool wake_rotation,
+                               amrex::Real memory_time,
+                               amrex::Real diameter,
+                               amrex::Real hub_height,
+                               amrex::Real spacing,
+                               bool spacing_was_supplied)
+    {
+        rotor_rad = 0.5 * diameter;
+        this->hub_height = hub_height;
+        classic_ad_model().configure(ctprime, cpprime, tsr, wake_rotation,
+                                     memory_time, diameter, hub_height,
+                                     spacing, spacing_was_supplied);
+    }
+
+    ClassicAD& classic_ad_model ()
+    {
+        auto* model = dynamic_cast<ClassicAD*>(m_windfarm_model[0].get());
+        AMREX_ALWAYS_ASSERT(model != nullptr);
+        return *model;
+    }
+#endif
 
     void advance (const amrex::Geometry& a_geom,
                   const amrex::Real& dt_advance,

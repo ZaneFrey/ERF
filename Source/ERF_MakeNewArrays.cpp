@@ -7,6 +7,7 @@
 */
 
 #include <memory>
+#include <cmath>
 
 #include "AMReX_buildInfo.H"
 
@@ -356,6 +357,26 @@ ERF::init_stuff (int lev, const BoxArray& ba, const DistributionMapping& dm,
     if (solverChoice.windfarm_type == WindFarmType::GeneralAD) {
         vars_windfarm[lev].define(ba, dm, 3, ngrow_state);// dudt, dvdt, dwdt
     }
+#ifdef ERF_USE_PARTICLES
+    if (solverChoice.windfarm_type == WindFarmType::ClassicAD) {
+        // A rotated horizontal 3-sigma box can project onto x/y by the sum of
+        // its normal and in-plane half-widths; its vertical support is always
+        // three z cells. This conservative grow vector covers every static yaw.
+        const auto dx_wt = geom[lev].CellSizeArray();
+        const Real diag_xy = std::sqrt(dx_wt[0]*dx_wt[0] +
+                                       dx_wt[1]*dx_wt[1]);
+        IntVect wt_ng(AMREX_D_DECL(
+            static_cast<int>(std::ceil(6.0*diag_xy/dx_wt[0])) + 2,
+            static_cast<int>(std::ceil(6.0*diag_xy/dx_wt[1])) + 2,
+            5));
+        classic_ad_xmom_src[lev].define(convert(ba, IntVect(1,0,0)), dm, 1, wt_ng);
+        classic_ad_ymom_src[lev].define(convert(ba, IntVect(0,1,0)), dm, 1, wt_ng);
+        classic_ad_zmom_src[lev].define(convert(ba, IntVect(0,0,1)), dm, 1, wt_ng);
+        classic_ad_xmom_src[lev].setVal(0.0);
+        classic_ad_ymom_src[lev].setVal(0.0);
+        classic_ad_zmom_src[lev].setVal(0.0);
+    }
+#endif
         Nturb[lev].define(ba, dm, 1, ngrow_state); // Number of turbines in a cell
         SMark[lev].define(ba, dm, 2, 1); // Free stream velocity/source term
                                                    // sampling marker in a cell - 2 components

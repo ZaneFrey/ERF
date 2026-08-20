@@ -99,6 +99,24 @@ ERF::Advance (int lev, Real time, Real dt_lev, int iteration, int /*ncycle*/)
     // Update the windfarm sources
     // **************************************************************************************
     if (solverChoice.windfarm_type != WindFarmType::None) {
+        if (solverChoice.windfarm_type == WindFarmType::ClassicAD) {
+#ifdef ERF_USE_PARTICLES
+            AMREX_ALWAYS_ASSERT(classic_ad_pc != nullptr);
+            S_old.FillBoundary(Geom(lev).periodicity());
+            U_old.FillBoundary(Geom(lev).periodicity());
+            V_old.FillBoundary(Geom(lev).periodicity());
+            W_old.FillBoundary(Geom(lev).periodicity());
+            classic_ad_pc->compute_sources(lev, time, dt_lev,
+                                           solverChoice.windfarm_start_time,
+                                           solverChoice.windfarm_ramp_tau,
+                                           S_old, U_old, V_old, W_old,
+                                           classic_ad_xmom_src[lev],
+                                           classic_ad_ymom_src[lev],
+                                           classic_ad_zmom_src[lev]);
+#else
+            Abort("ClassicAD requires ERF_USE_PARTICLES");
+#endif
+        } else {
         const bool is_ad_model = (solverChoice.windfarm_type == WindFarmType::SimpleAD ||
                                   solverChoice.windfarm_type == WindFarmType::GeneralAD);
         const amrex::Real eps = 1.0e-12;
@@ -196,6 +214,7 @@ ERF::Advance (int lev, Real time, Real dt_lev, int iteration, int /*ncycle*/)
             advance_windfarm(Geom(lev), dt_windfarm, S_old,
                              U_old, V_old, W_old, vars_windfarm[lev],
                              Nturb[lev], RMask[lev], SMark[lev], windfarm_time_for_io);
+        }
         }
     }
 

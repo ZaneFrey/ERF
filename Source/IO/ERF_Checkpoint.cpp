@@ -455,7 +455,8 @@ ERF::WriteCheckpointFile () const
     if (solverChoice.dynamic_yaw && solverChoice.windfarm_type == WindFarmType::SimpleAD) {
         windfarm->write_dynamic_yaw_state(checkpointname);
     }
-    if (solverChoice.windfarm_type == WindFarmType::SimpleAD) {
+    if (solverChoice.windfarm_type == WindFarmType::SimpleAD ||
+        solverChoice.windfarm_type == WindFarmType::ClassicAD) {
         windfarm->write_memory_state(checkpointname);
     }
 #endif
