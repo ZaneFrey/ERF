@@ -106,6 +106,28 @@ ERF::Advance (int lev, Real time, Real dt_lev, int iteration, int /*ncycle*/)
             U_old.FillBoundary(Geom(lev).periodicity());
             V_old.FillBoundary(Geom(lev).periodicity());
             W_old.FillBoundary(Geom(lev).periodicity());
+            if (solverChoice.dynamic_yaw &&
+                time + 1.0e-12 >= solverChoice.windfarm_start_time) {
+                AMREX_ALWAYS_ASSERT(lev == 0);
+                AMREX_ALWAYS_ASSERT(classic_ad_sensor_pc != nullptr);
+                amrex::Vector<amrex::Real> sensor_u_raw, sensor_v_raw;
+                classic_ad_sensor_pc->sample_uv(lev, U_old, V_old, W_old,
+                                                sensor_u_raw, sensor_v_raw);
+                auto& classic_model = windfarm->classic_ad_model();
+                classic_model.update_dynamic_yaw(sensor_u_raw, sensor_v_raw, dt_lev);
+
+                // Move both disks rigidly on device, then hand changed ownership
+                // to AMReX before any source or diagnostic calculation.
+                classic_ad_sensor_pc->update_positions();
+                classic_ad_pc->update_positions();
+                classic_ad_sensor_pc->Redistribute();
+                classic_ad_pc->Redistribute();
+
+                const amrex::Real step_end = time + dt_lev;
+                if (classic_model.yaw_output_due(step_end)) {
+                    classic_model.write_yaw_diagnostics(step_end);
+                }
+            }
             classic_ad_pc->compute_sources(lev, time, dt_lev,
                                            solverChoice.windfarm_start_time,
                                            solverChoice.windfarm_ramp_tau,

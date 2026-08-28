@@ -2520,6 +2520,14 @@ ERF::restart ()
                 rebuild_windfarm_hierarchy();
             }
         }
+#ifdef ERF_USE_PARTICLES
+        if (solverChoice.dynamic_yaw && solverChoice.windfarm_type == WindFarmType::ClassicAD) {
+            const bool read_state = windfarm->classic_ad_model().read_yaw_state(restart_chkfile);
+            if (read_state) {
+                rebuild_windfarm_hierarchy();
+            }
+        }
+#endif
     }
 #endif
 

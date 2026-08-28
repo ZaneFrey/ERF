@@ -154,6 +154,47 @@ ClassicADPC::rebuild (const Vector<int>& owner_levels)
 }
 
 void
+ClassicADPC::update_positions ()
+{
+    const int nturb = static_cast<int>(m_model.x_locations().size());
+    Gpu::DeviceVector<Real> d_xloc(nturb);
+    Gpu::DeviceVector<Real> d_yloc(nturb);
+    Gpu::DeviceVector<Real> d_angles(nturb);
+    Gpu::copyAsync(Gpu::hostToDevice, m_model.x_locations().begin(),
+                   m_model.x_locations().end(), d_xloc.begin());
+    Gpu::copyAsync(Gpu::hostToDevice, m_model.y_locations().begin(),
+                   m_model.y_locations().end(), d_yloc.begin());
+    Gpu::copyAsync(Gpu::hostToDevice, m_model.disk_face_angles_deg().begin(),
+                   m_model.disk_face_angles_deg().end(), d_angles.begin());
+    const Real* xloc = d_xloc.data();
+    const Real* yloc = d_yloc.data();
+    const Real* angles = d_angles.data();
+    const Real zhub = Geom(0).ProbLo(2)+m_model.hub_height();
+
+    for (int lev = 0; lev <= finestLevel(); ++lev) {
+        for (ParIterType pti(*this, lev); pti.isValid(); ++pti) {
+            auto& tile = ParticlesAt(lev, pti);
+            auto& aos = tile.GetArrayOfStructs();
+            auto& soa = tile.GetStructOfArrays();
+            const int np = aos.numParticles();
+            auto* particles = aos().data();
+            const auto* radius = soa.GetRealData(ClassicADRealIdx::radius).data();
+            const auto* theta = soa.GetRealData(ClassicADRealIdx::theta).data();
+            const auto* turb = soa.GetIntData(ClassicADIntIdx::turbine).data();
+            ParallelFor(np, [=] AMREX_GPU_DEVICE (int ip) noexcept {
+                Real nx, ny, e1x, e1y;
+                rotor_basis(angles[turb[ip]], nx, ny, e1x, e1y);
+                const Real er1 = radius[ip]*std::cos(theta[ip]);
+                particles[ip].pos(0) = xloc[turb[ip]]+er1*e1x;
+                particles[ip].pos(1) = yloc[turb[ip]]+er1*e1y;
+                particles[ip].pos(2) = zhub+radius[ip]*std::sin(theta[ip]);
+            });
+        }
+    }
+    Gpu::streamSynchronize();
+}
+
+void
 ClassicADPC::compute_sources (int lev, Real time, Real dt,
                               Real start_time, Real ramp_time,
                               const MultiFab& cons,
@@ -183,15 +224,30 @@ ClassicADPC::compute_sources (int lev, Real time, Real dt,
     Gpu::DeviceVector<Real> d_sum_u(nturb, 0.0);
     Gpu::DeviceVector<Real> d_sum_rho(nturb, 0.0);
     Gpu::DeviceVector<Real> d_sum_area(nturb, 0.0);
+    Gpu::DeviceVector<Real> d_geometry_error(nturb, 0.0);
 
     Real* sum_u = d_sum_u.data();
     Real* sum_rho = d_sum_rho.data();
     Real* sum_area = d_sum_area.data();
+    Real* geometry_error = d_geometry_error.data();
     const auto& sample_angles_h = m_model.disk_face_angles_deg();
     Gpu::DeviceVector<Real> d_sample_angles(sample_angles_h.size());
     Gpu::copyAsync(Gpu::hostToDevice, sample_angles_h.begin(), sample_angles_h.end(),
                    d_sample_angles.begin());
     const Real* sample_angles = d_sample_angles.data();
+    Gpu::DeviceVector<Real> d_center_x(nturb), d_center_y(nturb);
+    Gpu::copyAsync(Gpu::hostToDevice, m_model.x_locations().begin(),
+                   m_model.x_locations().end(), d_center_x.begin());
+    Gpu::copyAsync(Gpu::hostToDevice, m_model.y_locations().begin(),
+                   m_model.y_locations().end(), d_center_y.begin());
+    const Real* center_x = d_center_x.data();
+    const Real* center_y = d_center_y.data();
+    const Real center_z = Geom(0).ProbLo(2)+m_model.hub_height();
+    const auto phi_domain = geom.ProbHiArray();
+    const GpuArray<Real,AMREX_SPACEDIM> domain_length{{
+        AMREX_D_DECL(phi_domain[0]-plo[0], phi_domain[1]-plo[1],
+                     phi_domain[2]-plo[2])}};
+    const auto periodic = geom.isPeriodicArray();
 
     for (ParIterType pti(*this, lev); pti.isValid(); ++pti) {
         const int grid = pti.index();
@@ -201,6 +257,7 @@ ClassicADPC::compute_sources (int lev, Real time, Real dt,
         const int np = aos.numParticles();
         auto* particles = aos().data();
         const auto* area = soa.GetRealData(ClassicADRealIdx::area).data();
+        const auto* radius = soa.GetRealData(ClassicADRealIdx::radius).data();
         const auto* turb = soa.GetIntData(ClassicADIntIdx::turbine).data();
 
         const GpuArray<Array4<const Real>, AMREX_SPACEDIM> vel_arr{{
@@ -218,17 +275,37 @@ ClassicADPC::compute_sources (int lev, Real time, Real dt,
             Gpu::Atomic::Add(&sum_u[turb[ip]], un*area[ip]);
             Gpu::Atomic::Add(&sum_rho[turb[ip]], rho[0]*area[ip]);
             Gpu::Atomic::Add(&sum_area[turb[ip]], area[ip]);
+            const int it = turb[ip];
+            Real rx = particles[ip].pos(0)-center_x[it];
+            Real ry = particles[ip].pos(1)-center_y[it];
+            Real rz = particles[ip].pos(2)-center_z;
+            if (periodic[0]) {
+                if (rx >  0.5*domain_length[0]) { rx -= domain_length[0]; }
+                if (rx < -0.5*domain_length[0]) { rx += domain_length[0]; }
+            }
+            if (periodic[1]) {
+                if (ry >  0.5*domain_length[1]) { ry -= domain_length[1]; }
+                if (ry < -0.5*domain_length[1]) { ry += domain_length[1]; }
+            }
+            const Real plane_error = std::abs(rx*nx+ry*ny);
+            const Real radial_error = std::abs(std::sqrt(rx*rx+ry*ry+rz*rz)-radius[ip]);
+            Gpu::Atomic::Add(&geometry_error[it], area[ip]*(plane_error+radial_error));
         });
     }
     Gpu::streamSynchronize();
 
-    Vector<Real> area_sum(nturb), velocity_sum(nturb), density_sum(nturb);
+    Vector<Real> area_sum(nturb), velocity_sum(nturb), density_sum(nturb),
+                 geometry_error_h(nturb);
     Gpu::copy(Gpu::deviceToHost, d_sum_area.begin(), d_sum_area.end(), area_sum.begin());
     Gpu::copy(Gpu::deviceToHost, d_sum_u.begin(), d_sum_u.end(), velocity_sum.begin());
     Gpu::copy(Gpu::deviceToHost, d_sum_rho.begin(), d_sum_rho.end(), density_sum.begin());
+    Gpu::copy(Gpu::deviceToHost, d_geometry_error.begin(), d_geometry_error.end(),
+              geometry_error_h.begin());
     ParallelAllReduce::Sum(area_sum.data(), area_sum.size(), ParallelContext::CommunicatorAll());
     ParallelAllReduce::Sum(velocity_sum.data(), velocity_sum.size(), ParallelContext::CommunicatorAll());
     ParallelAllReduce::Sum(density_sum.data(), density_sum.size(), ParallelContext::CommunicatorAll());
+    ParallelAllReduce::Sum(geometry_error_h.data(), geometry_error_h.size(),
+                           ParallelContext::CommunicatorAll());
 
     const Real gamma_unclamped = (ramp_time > 0.0)
                                ? 1.0 - std::exp(-amrex::max(time-start_time, 0.0)/ramp_time)
@@ -250,6 +327,10 @@ ClassicADPC::compute_sources (int lev, Real time, Real dt,
         const Real rel_area_err = std::abs(area_sum[it]-rotor_area)/rotor_area;
         if (rel_area_err > 1.0e-11) {
             Abort("ClassicAD actuator-element areas do not sum to the rotor area");
+        }
+        if (geometry_error_h[it]/area_sum[it] >
+            1.0e-10*amrex::max(m_model.rotor_radius(), 1.0)) {
+            Abort("ClassicAD actuator particles do not form a rigid planar disk");
         }
         area_normalization[it] = area_sum[it];
         auto& s = state[it];

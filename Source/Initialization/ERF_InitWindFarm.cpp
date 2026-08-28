@@ -80,6 +80,18 @@ ERF::initialize_windfarm_catalog ()
                                    solverChoice.yaw_period,
                                    solverChoice.windfarm_start_time);
     }
+#ifdef ERF_USE_PARTICLES
+    if (solverChoice.dynamic_yaw && is_classic_ad) {
+        windfarm->init_classic_ad_dynamic_yaw(
+            solverChoice.turb_disk_angle,
+            solverChoice.classic_ad_yaw_sensor_distance_by_D,
+            solverChoice.classic_ad_yaw_sensor_mem_time,
+            solverChoice.classic_ad_yaw_out_per,
+            solverChoice.classic_ad_yaw_out_int,
+            solverChoice.classic_ad_yaw_out_int_was_supplied,
+            solverChoice.windfarm_start_time);
+    }
+#endif
 
     if (solverChoice.windfarm_type == WindFarmType::GeneralAD) {
         windfarm->read_windfarm_blade_table(solverChoice.windfarm_blade_table);
@@ -122,6 +134,13 @@ ERF::rebuild_windfarm_hierarchy ()
             owners[it] = windfarm->owner_level(it);
         }
         classic_ad_pc->rebuild(owners);
+        if (solverChoice.dynamic_yaw) {
+            if (!classic_ad_sensor_pc) {
+                classic_ad_sensor_pc = std::make_unique<ClassicADSensorPC>(
+                    static_cast<ParGDBBase*>(GetParGDB()), windfarm->classic_ad_model());
+            }
+            classic_ad_sensor_pc->rebuild();
+        }
 #endif
     } else if (is_legacy_ad) {
         windfarm->define_owner_levels(geom, grids, dmap, ref_ratio, z_phys_nd);

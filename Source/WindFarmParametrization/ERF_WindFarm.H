@@ -228,6 +228,20 @@ public:
         AMREX_ALWAYS_ASSERT(model != nullptr);
         return *model;
     }
+
+    void init_classic_ad_dynamic_yaw (amrex::Real disk_face_angle_deg,
+                                      amrex::Real sensor_distance_by_D,
+                                      amrex::Real sensor_memory_time,
+                                      amrex::Real yaw_out_per,
+                                      int yaw_out_int,
+                                      bool use_yaw_out_int,
+                                      amrex::Real windfarm_start_time)
+    {
+        classic_ad_model().initialize_dynamic_yaw(
+            disk_face_angle_deg, m_yaw_offset_deg, sensor_distance_by_D,
+            sensor_memory_time, yaw_out_per, yaw_out_int, use_yaw_out_int,
+            windfarm_start_time);
+    }
 #endif
 
     void advance (const amrex::Geometry& a_geom,

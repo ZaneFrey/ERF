@@ -1,0 +1,59 @@
+# Perturbed-inflow low-pass filtering test for ClassicAD V1.1 dynamic yaw.
+erf.prob_name = "Particles Over Flat Ground"
+erf.init_type = Isentropic
+
+max_step = 100
+amrex.fpe_trap_invalid = 1
+
+geometry.prob_lo = 0.0 0.0 0.0
+geometry.prob_hi = 400.0 200.0 200.0
+amr.n_cell = 40 20 20
+amr.max_grid_size = 10
+amr.max_level = 0
+geometry.is_periodic = 1 1 0
+
+zlo.type = "SlipWall"
+zhi.type = "SlipWall"
+
+erf.fixed_dt = 0.005
+erf.fixed_mri_dt_ratio = 4
+erf.sum_interval = 100
+erf.v = 0
+amr.v = 0
+erf.plot_int_1 = -1
+erf.check_int = -1
+
+erf.use_gravity = true
+erf.use_coriolis = false
+erf.les_type = "None"
+erf.molec_diff_type = "None"
+erf.dycore_horiz_adv_type = Centered_2nd
+erf.dycore_vert_adv_type = Centered_2nd
+
+erf.windfarm_type = ClassicAD
+erf.windfarm_loc_type = x_y
+erf.windfarm_loc_table = classic_ad_locations.txt
+erf.turb_disk_angle_from_x = 90.0
+erf.dynamic_yaw = true
+erf.windfarm_start_time = 0.0
+erf.windfarm_ramp_tau = 0.0
+
+erf.classic_ad.diameter = 60.0
+erf.classic_ad.hub_height = 100.0
+erf.classic_ad.ctprime = 1.3333333333333333
+erf.classic_ad.cpprime = 0.8
+erf.classic_ad.tsr = 8.0
+erf.classic_ad.wake_rotation = true
+erf.classic_ad.turb_mem_time = 0.0
+erf.classic_ad.actuator.spacing = 10.0
+erf.classic_ad.yaw_sensor_distance_by_D = 1.0
+erf.classic_ad.yaw_sensor_mem_time = 0.05
+erf.classic_ad.yaw_out_int = 1
+
+prob.T_0 = 300.0
+prob.rho_0 = 1.16
+prob.U_0 = 10.0
+prob.V_0 = 0.0
+prob.U_0_Pert_Mag = 2.0
+prob.V_0_Pert_Mag = 2.0
+prob.pert_ref_height = 200.0

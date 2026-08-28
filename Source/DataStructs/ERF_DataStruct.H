@@ -716,6 +716,12 @@ struct SolverChoice {
         pp_classic.query("tsr", classic_ad_tsr);
         pp_classic.query("diameter", classic_ad_diameter);
         pp_classic.query("hub_height", classic_ad_hub_height);
+        pp_classic.query("yaw_sensor_distance_by_D", classic_ad_yaw_sensor_distance_by_D);
+        pp_classic.query("yaw_sensor_mem_time", classic_ad_yaw_sensor_mem_time);
+        classic_ad_yaw_out_per_was_supplied =
+            pp_classic.query("yaw_out_per", classic_ad_yaw_out_per);
+        classic_ad_yaw_out_int_was_supplied =
+            pp_classic.query("yaw_out_int", classic_ad_yaw_out_int);
         amrex::ParmParse pp_classic_actuator("erf.classic_ad.actuator");
         classic_ad_spacing_was_supplied =
             pp_classic_actuator.query("spacing", classic_ad_actuator_spacing);
@@ -823,10 +829,11 @@ struct SolverChoice {
                            " velocity will be computed at.");
         }
         if (dynamic_yaw) {
-            if (windfarm_type != WindFarmType::SimpleAD) {
-                amrex::Error("Dynamic yaw is only supported for windfarm_type = SimpleAD");
+            if (!(windfarm_type == WindFarmType::SimpleAD ||
+                  windfarm_type == WindFarmType::ClassicAD)) {
+                amrex::Error("Dynamic yaw is only supported for windfarm_type = SimpleAD or ClassicAD");
             }
-            if (yaw_period <= 0.0) {
+            if (windfarm_type == WindFarmType::SimpleAD && yaw_period <= 0.0) {
                 amrex::Error("To use dynamic yaw, you must provide a positive value for erf.yaw_period (seconds).");
             }
         }
@@ -838,8 +845,26 @@ struct SolverChoice {
             if (terrain_type != TerrainType::None) {
                 amrex::Error("ClassicAD V1 supports flat terrain only (erf.terrain_type = None)");
             }
-            if (dynamic_yaw) {
-                amrex::Error("Dynamic yaw is not supported by ClassicAD V1");
+            if (dynamic_yaw && max_level != 0) {
+                amrex::Error("ClassicAD dynamic yaw V1.1 requires amr.max_level = 0");
+            }
+            if (dynamic_yaw && classic_ad_yaw_sensor_distance_by_D <= 0.0) {
+                amrex::Error("erf.classic_ad.yaw_sensor_distance_by_D must be > 0");
+            }
+            if (dynamic_yaw && classic_ad_yaw_sensor_mem_time < 0.0) {
+                amrex::Error("erf.classic_ad.yaw_sensor_mem_time must be >= 0");
+            }
+            if (dynamic_yaw && classic_ad_yaw_out_per_was_supplied &&
+                classic_ad_yaw_out_int_was_supplied) {
+                amrex::Error("Specify only one of erf.classic_ad.yaw_out_per and erf.classic_ad.yaw_out_int");
+            }
+            if (dynamic_yaw && classic_ad_yaw_out_per_was_supplied &&
+                classic_ad_yaw_out_per <= 0.0) {
+                amrex::Error("erf.classic_ad.yaw_out_per must be > 0 when supplied");
+            }
+            if (dynamic_yaw && classic_ad_yaw_out_int_was_supplied &&
+                classic_ad_yaw_out_int <= 0) {
+                amrex::Error("erf.classic_ad.yaw_out_int must be > 0 when supplied");
             }
             if (classic_ad_diameter <= 0.0) {
                 amrex::Error("erf.classic_ad.diameter is required and must be > 0");
@@ -1344,8 +1369,14 @@ struct SolverChoice {
     amrex::Real classic_ad_diameter = -1.0;
     amrex::Real classic_ad_hub_height = -1.0;
     amrex::Real classic_ad_actuator_spacing = -1.0;
+    amrex::Real classic_ad_yaw_sensor_distance_by_D = 1.0;
+    amrex::Real classic_ad_yaw_sensor_mem_time = 60.0;
+    amrex::Real classic_ad_yaw_out_per = 60.0;
+    int classic_ad_yaw_out_int = -1;
     bool classic_ad_wake_rotation = false;
     bool classic_ad_spacing_was_supplied = false;
+    bool classic_ad_yaw_out_per_was_supplied = false;
+    bool classic_ad_yaw_out_int_was_supplied = false;
 
     // Nudging factor for bdy sponging : F1 = 1/(nudge_factor * dt)
     amrex::Real bdy_nudge_factor = 10.0;

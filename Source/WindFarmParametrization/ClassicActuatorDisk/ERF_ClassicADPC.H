@@ -30,6 +30,7 @@ public:
         : Base(gdb), m_model(model) {}
 
     void rebuild (const amrex::Vector<int>& owner_levels);
+    void update_positions ();
 
     void compute_sources (int lev,
                           amrex::Real time,

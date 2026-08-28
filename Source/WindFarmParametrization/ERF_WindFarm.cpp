@@ -1693,6 +1693,13 @@ WindFarm::commit_yaw_geometry (const amrex::Vector<int>& turbine_ids)
 void
 WindFarm::get_disk_face_angles_deg (amrex::Vector<amrex::Real>& disk_face_angles_deg) const
 {
+#ifdef ERF_USE_PARTICLES
+    const auto* classic = dynamic_cast<const ClassicAD*>(m_windfarm_model[0].get());
+    if (classic != nullptr && classic->dynamic_yaw_enabled()) {
+        disk_face_angles_deg = classic->disk_face_angles_deg();
+        return;
+    }
+#endif
     const int nturb = static_cast<int>(xloc.size());
     disk_face_angles_deg.resize(nturb);
     for (int it = 0; it < nturb; ++it) {
