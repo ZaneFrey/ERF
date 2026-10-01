@@ -24,7 +24,7 @@ ERF::fill_from_bndryregs (const Vector<MultiFab*>& mfs, const Real time)
     const auto& dom_hi = ubound(domain);
 
     // Boundary-plane files are indexed by absolute simulation time.
-    Vector<std::unique_ptr<PlaneVector>>& bndry_data = m_r2d->interp_in_time(time + start_time);
+    m_r2d->interp_in_time(time + start_time);
 
     const BCRec* bc_ptr = domain_bcs_type_d.data();
 
@@ -34,10 +34,23 @@ ERF::fill_from_bndryregs (const Vector<MultiFab*>& mfs, const Real time)
     // xhi: ori = 3
     // yhi: ori = 4
     // zhi: ori = 5
-    const auto& bdatxlo = (*bndry_data[0])[lev].const_array();
-    const auto& bdatylo = (*bndry_data[1])[lev].const_array();
-    const auto& bdatxhi = (*bndry_data[3])[lev].const_array();
-    const auto& bdatyhi = (*bndry_data[4])[lev].const_array();
+    const Orientation xlo(Direction::x,Orientation::low);
+    const Orientation xhi(Direction::x,Orientation::high);
+    const Orientation ylo(Direction::y,Orientation::low);
+    const Orientation yhi(Direction::y,Orientation::high);
+    const FArrayBox* fabxlo = m_r2d->interpolated_face(xlo,lev);
+    const FArrayBox* fabxhi = m_r2d->interpolated_face(xhi,lev);
+    const FArrayBox* fabylo = m_r2d->interpolated_face(ylo,lev);
+    const FArrayBox* fabyhi = m_r2d->interpolated_face(yhi,lev);
+    Array4<const Real> bdatxlo, bdatxhi, bdatylo, bdatyhi;
+    const bool use_xlo = (fabxlo != nullptr);
+    const bool use_xhi = (fabxhi != nullptr);
+    const bool use_ylo = (fabylo != nullptr);
+    const bool use_yhi = (fabyhi != nullptr);
+    if (use_xlo) bdatxlo = fabxlo->const_array();
+    if (use_xhi) bdatxhi = fabxhi->const_array();
+    if (use_ylo) bdatylo = fabylo->const_array();
+    if (use_yhi) bdatyhi = fabyhi->const_array();
 
     int bccomp;
 
@@ -77,7 +90,7 @@ ERF::fill_from_bndryregs (const Vector<MultiFab*>& mfs, const Real time)
                 bx_xlo, ncomp, [=] AMREX_GPU_DEVICE (int i, int j, int k, int n) {
                     int bc_comp = (icomp+n >= RhoScalar_comp && icomp+n < RhoScalar_comp+NSCALARS) ?
                                    BCVars::RhoScalar_bc_comp : icomp+n;
-                    if (bc_ptr[bc_comp].lo(0) == ERFBCType::ext_dir_ingested) {
+                    if (use_xlo && bc_ptr[bc_comp].lo(0) == ERFBCType::ext_dir_ingested) {
                         int jb = std::min(std::max(j,dom_lo.y),dom_hi.y);
                         int kb = std::min(std::max(k,dom_lo.z),dom_hi.z);
                         dest_arr(i,j,k,icomp+n) = bdatxlo(dom_lo.x-1,jb,kb,bccomp+n);
@@ -86,7 +99,7 @@ ERF::fill_from_bndryregs (const Vector<MultiFab*>& mfs, const Real time)
                 bx_xhi, ncomp, [=] AMREX_GPU_DEVICE (int i, int j, int k, int n) {
                     int bc_comp = (icomp+n >= RhoScalar_comp && icomp+n < RhoScalar_comp+NSCALARS) ?
                                    BCVars::RhoScalar_bc_comp : icomp+n;
-                    if (bc_ptr[bc_comp].hi(0) == ERFBCType::ext_dir_ingested) {
+                    if (use_xhi && bc_ptr[bc_comp].hi(0) == ERFBCType::ext_dir_ingested) {
                         int jb = std::min(std::max(j,dom_lo.y),dom_hi.y);
                         int kb = std::min(std::max(k,dom_lo.z),dom_hi.z);
                         dest_arr(i,j,k,icomp+n) = bdatxhi(dom_hi.x+1,jb,kb,bccomp+n);
@@ -107,7 +120,7 @@ ERF::fill_from_bndryregs (const Vector<MultiFab*>& mfs, const Real time)
                bx_ylo, ncomp, [=] AMREX_GPU_DEVICE (int i, int j, int k, int n) {
                     int bc_comp = (icomp+n >= RhoScalar_comp && icomp+n < RhoScalar_comp+NSCALARS) ?
                                    BCVars::RhoScalar_bc_comp : icomp+n;
-                    if (bc_ptr[bc_comp].lo(1) == ERFBCType::ext_dir_ingested) {
+                    if (use_ylo && bc_ptr[bc_comp].lo(1) == ERFBCType::ext_dir_ingested) {
                         int ib = std::min(std::max(i,dom_lo.x),dom_hi.x);
                         int kb = std::min(std::max(k,dom_lo.z),dom_hi.z);
                         dest_arr(i,j,k,icomp+n) = bdatylo(ib,dom_lo.y-1,kb,bccomp+n);
@@ -116,7 +129,7 @@ ERF::fill_from_bndryregs (const Vector<MultiFab*>& mfs, const Real time)
                 bx_yhi, ncomp, [=] AMREX_GPU_DEVICE (int i, int j, int k, int n) {
                     int bc_comp = (icomp+n >= RhoScalar_comp && icomp+n < RhoScalar_comp+NSCALARS) ?
                                    BCVars::RhoScalar_bc_comp : icomp+n;
-                    if (bc_ptr[bc_comp].hi(1) == ERFBCType::ext_dir_ingested) {
+                    if (use_yhi && bc_ptr[bc_comp].hi(1) == ERFBCType::ext_dir_ingested) {
                         int ib = std::min(std::max(i,dom_lo.x),dom_hi.x);
                         int kb = std::min(std::max(k,dom_lo.z),dom_hi.z);
                         dest_arr(i,j,k,icomp+n) = bdatyhi(ib,dom_hi.y+1,kb,bccomp+n);
