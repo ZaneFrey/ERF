@@ -1403,6 +1403,11 @@ ERF::InitData_pre ()
     }
 
     solverChoice.check_params(max_level,geom,phys_bc_type);
+
+    if ((input_bndry_planes || output_bndry_planes) &&
+        solverChoice.terrain_type == TerrainType::MovingFittedMesh) {
+        Abort("Boundary-plane input/output does not support moving terrain");
+    }
 }
 
 void
@@ -1729,7 +1734,7 @@ ERF::InitData_post ()
     if (output_bndry_planes)
     {
         // Create the WriteBndryPlanes object so we can handle writing of boundary plane data
-        m_w2d = std::make_unique<WriteBndryPlanes>(grids,geom);
+        m_w2d = std::make_unique<WriteBndryPlanes>(grids,geom,z_phys_nd);
 
         Real tot_time = t_new[0]+start_time;
         if (tot_time >= bndry_output_planes_start_time) {

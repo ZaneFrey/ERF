@@ -2,11 +2,71 @@
 #include "AMReX_ParmParse.H"
 #include "AMReX_PlotFileUtil.H"
 #include "AMReX_MultiFabUtil.H"
+#include "AMReX_Utility.H"
+#include "AMReX_VisMF.H"
 #include "ERF_WriteBndryPlanes.H"
 #include "ERF_IndexDefines.H"
 #include "ERF_Derive.H"
+#include <algorithm>
+#include <fstream>
+#include <iomanip>
 
 using namespace amrex;
+
+namespace {
+
+std::string lateral_face_name (Orientation ori)
+{
+    if (ori == Orientation(Direction::x, Orientation::low )) return "xlo";
+    if (ori == Orientation(Direction::x, Orientation::high)) return "xhi";
+    if (ori == Orientation(Direction::y, Orientation::low )) return "ylo";
+    if (ori == Orientation(Direction::y, Orientation::high)) return "yhi";
+    return "invalid";
+}
+
+int lateral_face_index (const std::string& name)
+{
+    if (name == "xlo") return int(Orientation(Direction::x, Orientation::low));
+    if (name == "xhi") return int(Orientation(Direction::x, Orientation::high));
+    if (name == "ylo") return int(Orientation(Direction::y, Orientation::low));
+    if (name == "yhi") return int(Orientation(Direction::y, Orientation::high));
+    return -1;
+}
+
+MultiFab make_normalized_z_face (const MultiFab& z_phys_nd,
+                                 const Box& cell_box,
+                                 Orientation ori)
+{
+    Box source_box = surroundingNodes(cell_box);
+    const int normal = ori.coordDir();
+    const int face_index = ori.isLow() ? source_box.smallEnd(normal)
+                                       : source_box.bigEnd(normal);
+    source_box.setRange(normal, face_index, 1);
+
+    BoxArray source_ba(source_box);
+    DistributionMapping source_dm(source_ba);
+    MultiFab source(source_ba, source_dm, 1, 0);
+    source.ParallelCopy(z_phys_nd, 0, 0, 1);
+
+    Box normalized_box(source_box);
+    normalized_box.shift(-normalized_box.smallEnd());
+    BoxArray normalized_ba(normalized_box);
+    DistributionMapping normalized_dm(normalized_ba);
+    MultiFab normalized(normalized_ba, normalized_dm, 1, 0);
+
+    for (MFIter mfi(normalized); mfi.isValid(); ++mfi) {
+        const Box& bx = mfi.validbox();
+        const auto dst = normalized.array(mfi);
+        const auto src = source.const_array(mfi);
+        const IntVect offset = source_box.smallEnd();
+        ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept {
+            dst(i,j,k) = src(i+offset[0],j+offset[1],k+offset[2]);
+        });
+    }
+    return normalized;
+}
+
+}
 
 /**
  * Copies the contents of one boundary register to another in either x or y dimensions.
@@ -52,9 +112,12 @@ int WriteBndryPlanes::bndry_lev = 0;
  * @param geom Vector of Geometry containing the geometry at each level in the AMR
  */
 WriteBndryPlanes::WriteBndryPlanes (Vector<BoxArray>& grids,
-                                    Vector<Geometry>& geom) : m_geom(geom)
+                                    Vector<Geometry>& geom,
+                                    const Vector<std::unique_ptr<MultiFab>>& z_phys_nd)
+    : m_geom(geom)
 {
     ParmParse pp("erf");
+    bndry_lev = 0;
 
     // Get the radius inside the domain
     pp.query("in_rad",m_in_rad);
@@ -79,11 +142,11 @@ WriteBndryPlanes::WriteBndryPlanes (Vector<BoxArray>& grids,
         int jhi = static_cast<int>(Math::floor((box_hi[1] - xLo[1]) * dxi[1])+.5)-1;
 
         // Map this to index space -- for now we do no interpolation
-        target_box.setSmall(IntVect(ilo,jlo,0));
-        target_box.setBig(IntVect(ihi,jhi,domain.bigEnd(2)));
+        Box candidate_box(IntVect(ilo,jlo,0), IntVect(ihi,jhi,domain.bigEnd(2)));
+        if (ilev == 0) target_box = candidate_box;
 
         // Test if the target box at this level fits in the grids at this level
-        Box gbx = target_box; gbx.grow(IntVect(1,1,0));
+        Box gbx = candidate_box; gbx.grow(IntVect(1,1,0));
 
         // Ensure that the box is no larger than can fit in the (periodically grown) domain
         // at level 0
@@ -98,7 +161,10 @@ WriteBndryPlanes::WriteBndryPlanes (Vector<BoxArray>& grids,
             */
         }
 
-        if (grids[ilev].contains(gbx)) bndry_lev = ilev;
+        if (grids[ilev].contains(gbx)) {
+            bndry_lev = ilev;
+            target_box = candidate_box;
+        }
     }
 
     // The folder "m_filename" will contain the time series of data and the time.dat file
@@ -112,6 +178,101 @@ WriteBndryPlanes::WriteBndryPlanes (Vector<BoxArray>& grids,
         m_var_names.resize(num_vars);
         pp.queryarr("bndry_output_var_names",m_var_names,0,num_vars);
     }
+
+    if (std::find(m_var_names.begin(), m_var_names.end(), "density") == m_var_names.end()) {
+        Error("erf.bndry_output_var_names must include density");
+    }
+    const Vector<std::string> valid_vars{
+        "density", "temperature", "theta", "scalar", "ke", "qv", "qc", "velocity"};
+    for (int i = 0; i < m_var_names.size(); ++i) {
+        if (std::find(valid_vars.begin(), valid_vars.end(), m_var_names[i]) == valid_vars.end()) {
+            Error("Invalid erf.bndry_output_var_names entry '" + m_var_names[i] + "'");
+        }
+        if (std::find(m_var_names.begin(), m_var_names.begin()+i, m_var_names[i]) !=
+            m_var_names.begin()+i) {
+            Error("Duplicate erf.bndry_output_var_names entry '" + m_var_names[i] + "'");
+        }
+    }
+
+    m_output_faces.fill(false);
+    if (pp.contains("bndry_output_faces")) {
+        const int nfaces = pp.countval("bndry_output_faces");
+        if (nfaces == 0) Error("erf.bndry_output_faces must contain at least one face");
+        Vector<std::string> face_names(nfaces);
+        pp.getarr("bndry_output_faces", face_names, 0, nfaces);
+        for (const auto& face_name : face_names) {
+            const int iface = lateral_face_index(amrex::toLower(face_name));
+            if (iface < 0) {
+                Error("Invalid erf.bndry_output_faces entry '" + face_name +
+                      "'; valid values are xlo xhi ylo yhi");
+            }
+            if (m_output_faces[iface]) {
+                Error("Duplicate erf.bndry_output_faces entry '" + face_name + "'");
+            }
+            m_output_faces[iface] = true;
+        }
+    } else {
+        for (OrientationIter oit; oit != nullptr; ++oit) {
+            if (oit().coordDir() < 2) m_output_faces[int(oit())] = true;
+        }
+    }
+
+    write_header_and_coordinates(*z_phys_nd[bndry_lev]);
+}
+
+void
+WriteBndryPlanes::write_header_and_coordinates (const MultiFab& z_phys_nd)
+{
+    if (ParallelDescriptor::IOProcessor()) {
+        if (!UtilCreateDirectory(m_filename, 0755)) {
+            CreateDirectoryFailed(m_filename);
+        }
+    }
+    ParallelDescriptor::Barrier();
+
+    for (OrientationIter oit; oit != nullptr; ++oit) {
+        const Orientation ori = oit();
+        if (ori.coordDir() >= 2 || !m_output_faces[int(ori)]) continue;
+        MultiFab z_face = make_normalized_z_face(z_phys_nd, target_box, ori);
+        VisMF::Write(z_face, m_filename + "/z_phys_nd_" + lateral_face_name(ori));
+    }
+
+    if (ParallelDescriptor::IOProcessor()) {
+        const std::string header_name = m_filename + "/Header";
+        std::ofstream header(header_name, std::ofstream::out | std::ofstream::trunc);
+        if (!header.good()) FileOpenFailed(header_name);
+        header << std::setprecision(17);
+        header << "ERF_BOUNDARY_PLANES 2\n";
+        header << "level " << bndry_lev << "\n";
+        header << "cells " << target_box.length(0) << ' '
+               << target_box.length(1) << ' ' << target_box.length(2) << "\n";
+        const auto dx = m_geom[bndry_lev].CellSizeArray();
+        header << "cell_size " << dx[0] << ' ' << dx[1] << "\n";
+        int nfaces = 0;
+        for (bool enabled : m_output_faces) nfaces += enabled ? 1 : 0;
+        header << "faces " << nfaces;
+        for (OrientationIter oit; oit != nullptr; ++oit) {
+            const Orientation ori = oit();
+            if (ori.coordDir() < 2 && m_output_faces[int(ori)]) {
+                header << ' ' << lateral_face_name(ori);
+            }
+        }
+        header << '\n';
+        for (OrientationIter oit; oit != nullptr; ++oit) {
+            const Orientation ori = oit();
+            if (ori.coordDir() >= 2 || !m_output_faces[int(ori)]) continue;
+            const int transverse = ori.coordDir() == 0 ? 1 : 0;
+            header << "face " << lateral_face_name(ori) << ' '
+                   << target_box.length(transverse) << ' '
+                   << target_box.length(2) << ' '
+                   << dx[transverse] << ' '
+                   << "z_phys_nd_" << lateral_face_name(ori) << '\n';
+        }
+        header << "variables " << m_var_names.size();
+        for (const auto& var : m_var_names) header << ' ' << var;
+        header << '\n';
+    }
+    ParallelDescriptor::Barrier();
 }
 
 /**
@@ -240,7 +401,7 @@ void WriteBndryPlanes::write_planes (const int t_step, const Real time,
 
         for (OrientationIter oit; oit != nullptr; ++oit) {
             auto ori = oit();
-            if (ori.coordDir() < 2) {
+            if (ori.coordDir() < 2 && m_output_faces[int(ori)]) {
                 std::string facename = Concatenate(filename + '_', ori, 1);
                 br_shift(oit, bndry, bndry_shifted);
                 bndry_shifted[ori].write(facename);
