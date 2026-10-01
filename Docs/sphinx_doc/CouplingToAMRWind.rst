@@ -98,6 +98,7 @@ the following (or similar) should be added to the input file:
   erf.bndry_output_start_time = 0.0
   erf.bndry_output_planes_file = "BndryFiles"
   erf.bndry_output_var_names = temperature velocity density
+  erf.bndry_output_faces = xlo
   erf.bndry_output_box_lo = 256. 256.
   erf.bndry_output_box_hi = 768. 768.
 
@@ -126,9 +127,21 @@ is that the start and end times of the current simulation
 lie in the time period covered by the files in :cpp:`BndryFiles`.  Within :cpp:`BndryFiles` there is an
 ascii file :cpp:`time.dat` which contains the (originating) timesteps and physical times associated with each of the files.
 
-It is assumed at this point that the physical domain of the simulation reading the files is exactly the physical
-domain specified by :cpp:`bndry_output_box_lo` and :cpp:`bndry_output_box_hi` when the files were written.  If not, ERF will
-abort with an error message.
+ERF reads only those lateral planes that are configured as ingested inflow
+boundaries.  For example, when only ``xlo`` is an inflow, the precursor and
+target may have different ``x`` cell counts, spacing, and physical lengths.
+The transverse ``y`` discretization and the complete nodal vertical-coordinate
+plane must match.  This permits a short periodic precursor to drive an
+arbitrarily long downstream target without spatial interpolation at the inlet.
+The analogous rule applies to a ``y`` inflow, for which the ``x`` and vertical
+discretizations must match.
+
+Versioned boundary directories contain a ``Header`` and one
+``z_phys_nd_<face>`` coordinate file per written face.  ERF validates these
+before the target advances. Headerless legacy directories are accepted with a
+warning and shape-only validation. Boundary-plane coupling is level-0 only and
+does not spatially interpolate the incoming planes. Constant-height, stretched,
+and static terrain-following grids are supported; moving terrain is rejected.
 
 We note that the boundary plane data will only be used on faces identified in the inputs file as inflow faces, i.e. if
 we specific inflow/outflow in the x-direction, and periodic in the y-direction, as below, then only the "xlo" boundary data
@@ -140,4 +153,3 @@ from :cpp:`BndryFiles` will actually be used.
 
     xlo.type = "Inflow"
     xhi.type = "Outflow"
-

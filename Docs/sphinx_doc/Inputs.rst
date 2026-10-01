@@ -1576,11 +1576,14 @@ List of Parameters
 +--------------------------------------+---------------------------------+---------------------+---------+
 | **erf.bndry_output_box_hi**          | Upper-right (x,y) of output box | 2 Reals             | None    |
 +--------------------------------------+---------------------------------+---------------------+---------+
-| **erf.bndry_output_var_names**       | Variables to write              | List of strings     | All     |
+| **erf.bndry_output_var_names**       | Variables to write              | List of strings     | Required|
++--------------------------------------+---------------------------------+---------------------+---------+
+| **erf.bndry_output_faces**           | Lateral faces to write          | Any of xlo, xhi,    | All four|
+|                                      |                                 | ylo, yhi            |         |
 +--------------------------------------+---------------------------------+---------------------+---------+
 | **erf.bndry_file**                   | Input boundary-plane directory  | String              | None    |
 +--------------------------------------+---------------------------------+---------------------+---------+
-| **erf.bndry_input_var_names**        | Variables to read               | List of strings     | All     |
+| **erf.bndry_input_var_names**        | Variables to read               | List of strings     | Required|
 +--------------------------------------+---------------------------------+---------------------+---------+
 
 Notes
@@ -1588,6 +1591,16 @@ Notes
 
 - If both interval controls are set, output occurs when either criterion is met.
 - Output is written for the finest level that fully contains the requested box.
+- ``density`` must be included in ``erf.bndry_output_var_names`` because it is
+  required when primitive boundary variables are converted to conserved form.
+- The input reader opens only lateral faces configured to use ingested inflow data.
+  Thus an ``xlo`` precursor may have a different streamwise cell count, spacing,
+  and length from the target. Its ``y`` discretization and physical vertical
+  coordinates must match the target inlet exactly.
+- New boundary-plane directories contain a versioned ``Header`` and per-face
+  nodal vertical-coordinate data. Headerless legacy directories remain readable,
+  but ERF can validate only their array shapes.
+- Moving-terrain boundary-plane input and output are not supported.
 
 Numerical Stability
 ===================
