@@ -9,7 +9,7 @@ fabarray.mfiter_tile_size = 1024 1024 1024
 
 # ------------------  PROBLEM SIZE & GEOMETRY  -------------------
 geometry.prob_extent = 65000.0      12000.0     1500.0
-amr.n_cell           = 1300         480         250
+amr.n_cell           = 1300         240         250
 amr.max_level        = 0
 
 geometry.is_periodic = 0 1 0

@@ -8,9 +8,10 @@ amrex.fpe_trap_invalid = 0
 fabarray.mfiter_tile_size = 1024 1024 1024
 
 # ------------------  PROBLEM SIZE & GEOMETRY  -------------------
-# Square precursor domain; extract a 65 km x 12 km strip for the target inflow case.
-geometry.prob_extent = 65000.0      65000.0     1500.0
-amr.n_cell           = 1300         1300        250
+# Short periodic precursor.  Its x length and nx need not match the 65 km target;
+# the y/z extents and discretization match the target inlet exactly.
+geometry.prob_extent = 10000.0      12000.0     1500.0
+amr.n_cell           = 200          240         250
 amr.max_level        = 0
 
 geometry.is_periodic = 1 1 0
@@ -118,8 +119,9 @@ erf.bndry_output_planes_interval = 1
 erf.bndry_output_start_time = 0.0
 erf.bndry_output_planes_file = "precursor_bndry"
 erf.bndry_output_var_names = density temperature velocity
+erf.bndry_output_faces = xlo
 erf.bndry_output_box_lo = 0.0 0.0
-erf.bndry_output_box_hi = 65000.0 12000.0
+erf.bndry_output_box_hi = 10000.0 12000.0
 
 # ------------------  2D SLICES  -------------------
 #erf.do_plane_sampling   = true

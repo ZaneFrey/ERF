@@ -115,6 +115,24 @@ function(add_test_0 TEST_NAME TEST_DIR TEST_EXE PLTFILE)
     )
 endfunction(add_test_0)
 
+# Two-stage boundary-plane test.  The target is longer than the precursor in x
+# and the writer emits only the xlo face.
+function(add_test_precursor_short TEST_NAME TEST_DIR TEST_EXE)
+    setup_test()
+    resolve_test_exe("${TEST_DIR}" "${TEST_EXE}" TEST_EXE)
+    set(test_command sh -c
+        "${CMAKE_COMMAND} -E remove_directory BndryFiles && ${CMAKE_COMMAND} -E remove_directory LegacyBndryFiles && ${CMAKE_COMMAND} -E remove_directory AllFaceBndryFiles && ${CMAKE_COMMAND} -E remove_directory TerrainBndryFiles && ${MPI_COMMANDS} ${TEST_EXE} ${CURRENT_TEST_BINARY_DIR}/precursor.i > precursor.log 2>&1 && ${MPI_COMMANDS} ${TEST_EXE} ${CURRENT_TEST_BINARY_DIR}/target.i > target.log 2>&1 && ${MPI_COMMANDS} ${TEST_EXE} ${CURRENT_TEST_BINARY_DIR}/precursor.i erf.terrain_type=StaticFittedMesh prob.custom_terrain_type=WoA prob.dir=1 prob.hmax=5 prob.L=64 erf.bndry_output_planes_file=TerrainBndryFiles > precursor_terrain.log 2>&1 && ${MPI_COMMANDS} ${TEST_EXE} ${CURRENT_TEST_BINARY_DIR}/target.i erf.terrain_type=StaticFittedMesh prob.custom_terrain_type=WoA prob.dir=1 prob.hmax=5 prob.L=64 erf.bndry_file=TerrainBndryFiles > target_terrain.log 2>&1 && ! ${MPI_COMMANDS} ${TEST_EXE} ${CURRENT_TEST_BINARY_DIR}/target.i erf.terrain_type=StaticFittedMesh prob.custom_terrain_type=WoA prob.dir=1 prob.hmax=6 prob.L=64 erf.bndry_file=TerrainBndryFiles > bad_terrain.log 2>&1 && python3 ${CURRENT_TEST_BINARY_DIR}/prepare_legacy.py && ${MPI_COMMANDS} ${TEST_EXE} ${CURRENT_TEST_BINARY_DIR}/target.i erf.bndry_file=LegacyBndryFiles > legacy.log 2>&1 && python3 ${CURRENT_TEST_BINARY_DIR}/prepare_invalid.py && ! ${MPI_COMMANDS} ${TEST_EXE} ${CURRENT_TEST_BINARY_DIR}/target.i erf.bndry_file=BadNy > bad_ny.log 2>&1 && ! ${MPI_COMMANDS} ${TEST_EXE} ${CURRENT_TEST_BINARY_DIR}/target.i erf.bndry_file=BadDy > bad_dy.log 2>&1 && ! ${MPI_COMMANDS} ${TEST_EXE} ${CURRENT_TEST_BINARY_DIR}/target.i erf.bndry_file=BadNz > bad_nz.log 2>&1 && ! ${MPI_COMMANDS} ${TEST_EXE} ${CURRENT_TEST_BINARY_DIR}/target.i erf.bndry_file=BadZRef > bad_zref.log 2>&1 && ! ${MPI_COMMANDS} ${TEST_EXE} ${CURRENT_TEST_BINARY_DIR}/target.i erf.bndry_file=BadDensity > bad_density.log 2>&1 && ! ${MPI_COMMANDS} ${TEST_EXE} ${CURRENT_TEST_BINARY_DIR}/target.i erf.bndry_file=BadFile > bad_file.log 2>&1 && ${MPI_COMMANDS} ${TEST_EXE} ${CURRENT_TEST_BINARY_DIR}/precursor_all_faces.i > precursor_all_faces.log 2>&1 && ${MPI_COMMANDS} ${TEST_EXE} ${CURRENT_TEST_BINARY_DIR}/target_xhi.i > target_xhi.log 2>&1 && ${MPI_COMMANDS} ${TEST_EXE} ${CURRENT_TEST_BINARY_DIR}/target_ylo.i > target_ylo.log 2>&1 && ${MPI_COMMANDS} ${TEST_EXE} ${CURRENT_TEST_BINARY_DIR}/target_yhi.i > target_yhi.log 2>&1 && python3 ${CURRENT_TEST_BINARY_DIR}/validate.py")
+    add_test(${TEST_NAME} ${test_command})
+    set_tests_properties(${TEST_NAME}
+        PROPERTIES
+        TIMEOUT 5400
+        PROCESSORS ${NP}
+        WORKING_DIRECTORY "${CURRENT_TEST_BINARY_DIR}/"
+        LABELS "regression;boundary-planes"
+        ATTACHED_FILES_ON_FAIL "${CURRENT_TEST_BINARY_DIR}/precursor.log;${CURRENT_TEST_BINARY_DIR}/target.log;${CURRENT_TEST_BINARY_DIR}/legacy.log;${CURRENT_TEST_BINARY_DIR}/precursor_all_faces.log;${CURRENT_TEST_BINARY_DIR}/target_xhi.log;${CURRENT_TEST_BINARY_DIR}/target_ylo.log;${CURRENT_TEST_BINARY_DIR}/target_yhi.log"
+    )
+endfunction(add_test_precursor_short)
+
 # SDM regression test
 function(add_test_sdm TEST_NAME TEST_DIR TEST_EXE PLTFILE TEST_RTOL TEST_ATOL)
     set(options )
@@ -186,6 +204,7 @@ add_test_r(MSF_Sub_IsentropicVortexAdv       ""  "erf_exec" "plt00010")
 add_test_r(ABL_MOST                          ""  "erf_exec" "plt00010")
 add_test_r(ABL_MYNN_PBL                      ""  "erf_exec" "plt00100" INPUT_SOUNDING "input_sounding_GABLS1")
 add_test_r(ABL_InflowFile                    ""  "erf_exec" "plt00010")
+add_test_precursor_short(PrecursorInflowShort "" "erf_exec")
 add_test_r(MoistBubble                       ""  "erf_exec" "plt00010")
 add_test_r(SquallLine_2D                     ""  "erf_exec" "plt00010")
 add_test_r(SuperCell_3D                      ""  "erf_exec" "plt00010")
