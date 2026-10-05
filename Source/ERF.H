@@ -77,6 +77,7 @@
 #include "ERF_WindFarm.H"
 #ifdef ERF_USE_PARTICLES
 #include "ERF_ClassicADPC.H"
+#include "ERF_ClassicADSensorPC.H"
 #endif
 #endif
 #include <ERF_SurfaceModel.H>
@@ -1364,6 +1365,7 @@ private:
                                                    // velocity upstream of the turbine
 #ifdef ERF_USE_PARTICLES
     std::unique_ptr<ClassicADPC> classic_ad_pc;
+    std::unique_ptr<ClassicADSensorPC> classic_ad_sensor_pc;
     amrex::Vector<amrex::MultiFab> classic_ad_xmom_src;
     amrex::Vector<amrex::MultiFab> classic_ad_ymom_src;
     amrex::Vector<amrex::MultiFab> classic_ad_zmom_src;

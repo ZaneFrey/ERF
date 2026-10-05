@@ -108,6 +108,15 @@ ERF::rebuild_windfarm_hierarchy ()
             owner_levels[turbine_id] = windfarm->owner_level(turbine_id);
         }
         classic_ad_pc->rebuild(owner_levels);
+
+        if (solverChoice.dynamic_yaw) {
+            if (!classic_ad_sensor_pc) {
+                classic_ad_sensor_pc = std::make_unique<ClassicADSensorPC>(
+                    static_cast<ParGDBBase*>(GetParGDB()),
+                    windfarm->classic_ad_model());
+            }
+            classic_ad_sensor_pc->rebuild();
+        }
 #endif
     }
 

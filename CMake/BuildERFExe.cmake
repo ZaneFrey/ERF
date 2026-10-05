@@ -379,6 +379,7 @@ function(build_erf_lib erf_lib_name)
       target_sources(${erf_lib_name} PRIVATE
         ${SRC_DIR}/WindFarmParametrization/ClassicActuatorDisk/ERF_ClassicAD.cpp
         ${SRC_DIR}/WindFarmParametrization/ClassicActuatorDisk/ERF_ClassicADPC.cpp
+        ${SRC_DIR}/WindFarmParametrization/ClassicActuatorDisk/ERF_ClassicADSensorPC.cpp
       )
       target_include_directories(${erf_lib_name} PUBLIC
         $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/Source/WindFarmParametrization/ClassicActuatorDisk>)
