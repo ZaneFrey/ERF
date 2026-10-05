@@ -33,6 +33,13 @@ public:
 
     void rebuild (const amrex::Vector<int>& owner_levels);
 
+    void sample_disk_state (int lev,
+                            amrex::Real dt,
+                            const amrex::MultiFab& cons,
+                            const amrex::MultiFab& u,
+                            const amrex::MultiFab& v,
+                            const amrex::MultiFab& w);
+
 private:
     ClassicAD& m_model;
     amrex::Vector<int> m_owner_levels;

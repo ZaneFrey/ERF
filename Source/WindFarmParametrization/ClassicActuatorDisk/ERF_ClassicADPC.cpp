@@ -2,10 +2,15 @@
 
 #if defined(ERF_USE_PARTICLES) && defined(ERF_USE_WINDFARM)
 
+#include <ERF_IndexDefines.H>
+
+#include <AMReX_GpuAtomic.H>
 #include <AMReX_ParallelDescriptor.H>
+#include <AMReX_TracerParticle_mod_K.H>
 
 #include <array>
 #include <cmath>
+#include <limits>
 
 using namespace amrex;
 
@@ -14,11 +19,13 @@ namespace {
 constexpr Real classic_pi = 3.141592653589793238462643383279502884;
 
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
-void rotor_basis (Real face_angle_deg, Real& e1x, Real& e1y) noexcept
+void rotor_basis (Real face_angle_deg,
+                  Real& nx, Real& ny,
+                  Real& e1x, Real& e1y) noexcept
 {
     const Real psi = (face_angle_deg - Real(90.0)) * classic_pi / Real(180.0);
-    const Real nx = std::cos(psi);
-    const Real ny = std::sin(psi);
+    nx = std::cos(psi);
+    ny = std::sin(psi);
     e1x = -ny;
     e1y = nx;
 }
@@ -64,9 +71,11 @@ ClassicADPC::rebuild (const Vector<int>& owner_levels)
                     continue;
                 }
 
+                Real nx;
+                Real ny;
                 Real e1x;
                 Real e1y;
-                rotor_basis(face_angles[turbine_id], e1x, e1y);
+                rotor_basis(face_angles[turbine_id], nx, ny, e1x, e1y);
                 const Real zhub = ground[turbine_id] + m_model.hub_height();
                 int element_id = 0;
 
@@ -129,6 +138,147 @@ ClassicADPC::rebuild (const Vector<int>& owner_levels)
             Gpu::streamSynchronize();
         }
         AddParticlesAtLevel(incoming, lev);
+    }
+}
+
+void
+ClassicADPC::sample_disk_state (int lev,
+                                Real dt,
+                                const MultiFab& cons,
+                                const MultiFab& u,
+                                const MultiFab& v,
+                                const MultiFab& w)
+{
+    AMREX_ALWAYS_ASSERT(lev >= 0 && lev <= finestLevel());
+    AMREX_ALWAYS_ASSERT(dt >= Real(0.0));
+
+    const int nturb = static_cast<int>(m_model.x_locations().size());
+    if (nturb == 0) {
+        return;
+    }
+
+    AMREX_ALWAYS_ASSERT(static_cast<int>(m_owner_levels.size()) == nturb);
+    auto& state = m_model.turbine_state();
+    AMREX_ALWAYS_ASSERT(static_cast<int>(state.size()) == nturb);
+
+    const Geometry& geom = Geom(lev);
+    const auto plo = geom.ProbLoArray();
+    const auto dxi = geom.InvCellSizeArray();
+
+    Gpu::DeviceVector<Real> d_velocity_sum(nturb, Real(0.0));
+    Gpu::DeviceVector<Real> d_density_sum(nturb, Real(0.0));
+    Gpu::DeviceVector<Real> d_area_sum(nturb, Real(0.0));
+    Real* velocity_sum_device = d_velocity_sum.data();
+    Real* density_sum_device = d_density_sum.data();
+    Real* area_sum_device = d_area_sum.data();
+
+    const auto& face_angles = m_model.disk_face_angles_deg();
+    AMREX_ALWAYS_ASSERT(static_cast<int>(face_angles.size()) == nturb);
+    Gpu::DeviceVector<Real> d_face_angles(face_angles.size());
+    Gpu::copyAsync(Gpu::hostToDevice,
+                   face_angles.begin(), face_angles.end(),
+                   d_face_angles.begin());
+    const Real* face_angles_device = d_face_angles.data();
+
+    for (ParIterType pti(*this, lev); pti.isValid(); ++pti) {
+        const int grid = pti.index();
+        auto& tile = ParticlesAt(lev, pti);
+        auto& aos = tile.GetArrayOfStructs();
+        auto& soa = tile.GetStructOfArrays();
+        const int np = aos.numParticles();
+        const auto* particles = aos().data();
+        const auto* area = soa.GetRealData(ClassicADRealIdx::area).data();
+        const auto* turbine = soa.GetIntData(ClassicADIntIdx::turbine).data();
+
+        const GpuArray<Array4<const Real>, AMREX_SPACEDIM> velocity_arrays{{
+            u[grid].const_array(),
+            v[grid].const_array(),
+            w[grid].const_array()}};
+        const auto density_array = cons[grid].const_array(Rho_comp);
+
+        ParallelFor(np, [=] AMREX_GPU_DEVICE (int ip) noexcept {
+            ParticleReal velocity[AMREX_SPACEDIM];
+            ParticleReal density[1];
+            mac_interpolate(particles[ip], plo, dxi,
+                            velocity_arrays, velocity);
+            cic_interpolate(particles[ip], plo, dxi,
+                            density_array, density, 1);
+
+            Real nx;
+            Real ny;
+            Real e1x;
+            Real e1y;
+            rotor_basis(face_angles_device[turbine[ip]],
+                        nx, ny, e1x, e1y);
+            const Real disk_normal_velocity =
+                velocity[0]*nx + velocity[1]*ny;
+
+            Gpu::Atomic::Add(&velocity_sum_device[turbine[ip]],
+                             disk_normal_velocity*area[ip]);
+            Gpu::Atomic::Add(&density_sum_device[turbine[ip]],
+                             density[0]*area[ip]);
+            Gpu::Atomic::Add(&area_sum_device[turbine[ip]], area[ip]);
+        });
+    }
+    Gpu::streamSynchronize();
+
+    Vector<Real> velocity_sum(nturb);
+    Vector<Real> density_sum(nturb);
+    Vector<Real> area_sum(nturb);
+    Gpu::copy(Gpu::deviceToHost,
+              d_velocity_sum.begin(), d_velocity_sum.end(),
+              velocity_sum.begin());
+    Gpu::copy(Gpu::deviceToHost,
+              d_density_sum.begin(), d_density_sum.end(),
+              density_sum.begin());
+    Gpu::copy(Gpu::deviceToHost,
+              d_area_sum.begin(), d_area_sum.end(),
+              area_sum.begin());
+
+    ParallelAllReduce::Sum(velocity_sum.data(), velocity_sum.size(),
+                           ParallelContext::CommunicatorAll());
+    ParallelAllReduce::Sum(density_sum.data(), density_sum.size(),
+                           ParallelContext::CommunicatorAll());
+    ParallelAllReduce::Sum(area_sum.data(), area_sum.size(),
+                           ParallelContext::CommunicatorAll());
+
+    const Real rotor_area = classic_pi *
+        m_model.rotor_radius() * m_model.rotor_radius();
+    const Real minimum_area =
+        std::numeric_limits<Real>::epsilon() * rotor_area;
+
+    for (int turbine_id = 0; turbine_id < nturb; ++turbine_id) {
+        if (m_owner_levels[turbine_id] != lev) {
+            continue;
+        }
+        if (area_sum[turbine_id] <= minimum_area) {
+            Abort("ClassicAD turbine has no locally/globally owned actuator area");
+        }
+        const Real relative_area_error =
+            std::abs(area_sum[turbine_id] - rotor_area) / rotor_area;
+        if (relative_area_error > Real(1.0e-11)) {
+            Abort("ClassicAD actuator-element areas do not sum to the rotor area");
+        }
+
+        auto& turbine_state = state[turbine_id];
+        turbine_state.actuator_area = area_sum[turbine_id];
+        turbine_state.disk_velocity_raw =
+            velocity_sum[turbine_id] / area_sum[turbine_id];
+        turbine_state.disk_density =
+            density_sum[turbine_id] / area_sum[turbine_id];
+
+        if (!turbine_state.memory_initialized ||
+            m_model.memory_time() == Real(0.0)) {
+            turbine_state.disk_velocity_filtered =
+                turbine_state.disk_velocity_raw;
+            turbine_state.memory_initialized = true;
+        } else {
+            const Real alpha =
+                Real(1.0) - std::exp(-dt / m_model.memory_time());
+            turbine_state.disk_velocity_filtered += alpha *
+                (turbine_state.disk_velocity_raw -
+                 turbine_state.disk_velocity_filtered);
+        }
     }
 }
 
