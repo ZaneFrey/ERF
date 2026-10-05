@@ -76,6 +76,7 @@ public:
         const amrex::Vector<amrex::Real>& sensor_u_raw,
         const amrex::Vector<amrex::Real>& sensor_v_raw,
         amrex::Real dt);
+    void write_diagnostics (amrex::Real time) const;
     void write_memory_state (const std::string& checkpointname) const override;
     bool read_memory_state (const std::string& restart_chkfile) override;
     void write_yaw_state (const std::string& checkpointname) const;

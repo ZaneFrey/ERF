@@ -208,6 +208,7 @@ ERF::Advance (int lev, double time, double dt_lev, int iteration, int /*ncycle*/
                     classic_ad_xmom_src[lev],
                     classic_ad_ymom_src[lev],
                     classic_ad_zmom_src[lev]);
+                windfarm->classic_ad_model().write_diagnostics(time);
             }
         }
 #endif

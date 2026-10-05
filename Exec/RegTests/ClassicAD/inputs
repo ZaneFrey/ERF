@@ -2,7 +2,7 @@
 erf.prob_name = "Particles Over Flat Ground"
 erf.init_type = Isentropic
 
-max_step = 2
+max_step = 3
 amrex.fpe_trap_invalid = 1
 
 geometry.prob_lo = 0.0 0.0 0.0
@@ -42,6 +42,9 @@ erf.windfarm_ramp_tau = 0.10
 erf.classic_ad.diameter = 60.0
 erf.classic_ad.hub_height = 100.0
 erf.classic_ad.ctprime = 1.3333333333333333
+erf.classic_ad.cpprime = 0.8
+erf.classic_ad.tsr = 8.0
+erf.classic_ad.wake_rotation = true
 erf.classic_ad.turb_mem_time = 0.10
 erf.classic_ad.actuator.spacing = 10.0
 erf.classic_ad.yaw_sensor_distance_by_D = 1.0

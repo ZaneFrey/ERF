@@ -157,6 +157,62 @@ ClassicAD::update_dynamic_yaw (const Vector<Real>& sensor_u_raw,
 }
 
 void
+ClassicAD::write_diagnostics (Real time) const
+{
+    if (!ParallelDescriptor::IOProcessor()) {
+        return;
+    }
+
+    const std::string filename = "power_output_ClassicAD.txt";
+    const bool write_header = !FileExists(filename);
+    std::ofstream output(filename, std::ios::out | std::ios::app);
+    if (!output.good()) {
+        Abort("Failed to open ClassicAD diagnostics output");
+    }
+    output << std::setprecision(17);
+
+    if (write_header) {
+        output << "# time";
+        for (int turbine_id = 0;
+             turbine_id < static_cast<int>(m_turbine_state.size());
+             ++turbine_id) {
+            output << " Ud_raw_" << turbine_id
+                   << " Ud_f_" << turbine_id
+                   << " rho_d_" << turbine_id
+                   << " T_target_" << turbine_id
+                   << " T_applied_" << turbine_id
+                   << " P_axial_" << turbine_id;
+            if (m_wake_rotation) {
+                output << " P_rotor_" << turbine_id
+                       << " Omega_" << turbine_id
+                       << " Q_target_" << turbine_id
+                       << " Q_applied_" << turbine_id
+                       << " Q_LES_" << turbine_id;
+            }
+        }
+        output << '\n';
+    }
+
+    output << time;
+    for (const auto& state : m_turbine_state) {
+        output << ' ' << state.disk_velocity_raw
+               << ' ' << state.disk_velocity_filtered
+               << ' ' << state.disk_density
+               << ' ' << state.thrust_target
+               << ' ' << state.thrust_applied
+               << ' ' << state.axial_power;
+        if (m_wake_rotation) {
+            output << ' ' << state.rotor_power
+                   << ' ' << state.omega
+                   << ' ' << state.torque_target
+                   << ' ' << state.torque_applied
+                   << ' ' << state.les_torque;
+        }
+    }
+    output << '\n';
+}
+
+void
 ClassicAD::write_memory_state (const std::string& checkpointname) const
 {
     if (!ParallelDescriptor::IOProcessor()) { return; }

@@ -1,10 +1,10 @@
 # ClassicAD integration smoke test
 
 This short, single-turbine case exercises the upstream-compatible ClassicAD
-path without turbine refinement, forest geometry, RMask, or wake rotation. It
-covers wind-farm catalog loading, owner-level assignment, actuator and sensor
-particle construction, filtered disk velocity, startup/ramp behavior, dynamic
-yaw, force deposition, and checkpoint/restart state.
+path without turbine refinement, forest geometry, or RMask. It covers
+wind-farm catalog loading, owner-level assignment, actuator and sensor particle
+construction, filtered disk velocity, startup/ramp behavior, dynamic yaw, wake
+rotation, force deposition, and checkpoint/restart state.
 
 Build ERF with wind-farm and particle support, then run from a fresh directory:
 
@@ -17,7 +17,7 @@ CASE_DIR=/path/to/ERF/Exec/RegTests/ClassicAD
 python3 "${CASE_DIR}/validate_checkpoint.py" .
 ```
 
-The run should complete two time steps and create `chk00002` containing both
+The run should complete three time steps and create `chk00002` containing both
 `ClassicADMemoryState` and `ClassicADYawState`. To exercise restoration of
 both state files, continue that checkpoint for one additional step:
 
@@ -27,5 +27,8 @@ both state files, continue that checkpoint for one additional step:
   amr.restart=chk00002 max_step=3 erf.check_int=-1
 ```
 
-The model's runtime checks also verify actuator/sensor area, rigid sensor-disk
-geometry, and discrete Gaussian force conservation.
+The validator checks the configured rotor-power, angular-velocity, and torque
+equations, the startup-ramped applied torque, and the deposited LES torque. The
+model's runtime checks also verify actuator/sensor area, rigid sensor-disk
+geometry, finite-element thrust and torque, tangential-force symmetry, and
+discrete Gaussian force conservation.
