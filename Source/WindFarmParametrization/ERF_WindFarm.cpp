@@ -48,6 +48,10 @@ WindFarm::read_windfarm_locations_table (const std::string windfarm_loc_table,
 {
     if(x_y) {
         init_windfarm_x_y(windfarm_loc_table);
+        for (int it = 0; it < static_cast<int>(xloc.size()); ++it) {
+            xloc[it] += windfarm_x_shift;
+            yloc[it] += windfarm_y_shift;
+        }
     }
     else if(lat_lon) {
         init_windfarm_lat_lon(windfarm_loc_table, windfarm_x_shift, windfarm_y_shift);
@@ -955,4 +959,3 @@ WindFarm::write_actuator_disks_vtk (const Geometry& geom,
         fclose(file_averaging_disks_in_dom);
     }
 }
-

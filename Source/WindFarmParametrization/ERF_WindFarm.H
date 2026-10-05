@@ -105,6 +105,8 @@ public:
                                         const amrex::Real windfarm_x_shift = zero,
                                         const amrex::Real windfarm_y_shift = zero);
 
+    int num_turbines () const { return static_cast<int>(xloc.size()); }
+
     /**
      * @brief Read the turbine specification table.
      * @param[in] windfarm_spec_table Path to the specification table.

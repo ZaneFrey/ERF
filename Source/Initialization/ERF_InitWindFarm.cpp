@@ -21,16 +21,41 @@ using namespace amrex;
 void
 ERF::init_windfarm (int lev)
 {
+    const bool is_classic_ad = (solverChoice.windfarm_type == WindFarmType::ClassicAD);
+
     if(solverChoice.windfarm_loc_type == WindFarmLocType::lat_lon) {
-        windfarm->read_tables(solverChoice.windfarm_loc_table,
-                              solverChoice.windfarm_spec_table,
-                              false, true,
-                              solverChoice.windfarm_x_shift,
-                              solverChoice.windfarm_y_shift);
+        if (is_classic_ad) {
+            windfarm->read_windfarm_locations_table(solverChoice.windfarm_loc_table,
+                                                    false, true,
+                                                    solverChoice.windfarm_x_shift,
+                                                    solverChoice.windfarm_y_shift);
+        } else {
+            windfarm->read_tables(solverChoice.windfarm_loc_table,
+                                  solverChoice.windfarm_spec_table,
+                                  false, true,
+                                  solverChoice.windfarm_x_shift,
+                                  solverChoice.windfarm_y_shift);
+        }
     } else if(solverChoice.windfarm_loc_type == WindFarmLocType::x_y) {
-        windfarm->read_tables(solverChoice.windfarm_loc_table,
-                             solverChoice.windfarm_spec_table,
-                             true, false);
+        if (is_classic_ad) {
+            const Real xshift = (solverChoice.windfarm_x_shift == -one)
+                ? zero : solverChoice.windfarm_x_shift;
+            const Real yshift = (solverChoice.windfarm_y_shift == -one)
+                ? zero : solverChoice.windfarm_y_shift;
+            windfarm->read_windfarm_locations_table(solverChoice.windfarm_loc_table,
+                                                    true, false, xshift, yshift);
+        } else {
+            windfarm->read_tables(solverChoice.windfarm_loc_table,
+                                  solverChoice.windfarm_spec_table,
+                                  true, false);
+        }
+    }
+
+    if (is_classic_ad) {
+#ifdef ERF_USE_PARTICLES
+        windfarm->classic_ad_model().initialize_turbine_state(windfarm->num_turbines());
+#endif
+        return;
     }
 
     windfarm->fill_Nturb_multifab(geom[lev], Nturb[lev], z_phys_nd[lev]);

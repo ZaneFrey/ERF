@@ -58,6 +58,9 @@ public:
     amrex::Real actuator_spacing () const { return m_actuator_spacing; }
     bool spacing_was_supplied () const { return m_spacing_was_supplied; }
 
+    const amrex::Vector<amrex::Real>& x_locations () const { return m_xloc; }
+    const amrex::Vector<amrex::Real>& y_locations () const { return m_yloc; }
+
     amrex::Vector<ClassicADTurbineState>& turbine_state () { return m_turbine_state; }
     const amrex::Vector<ClassicADTurbineState>& turbine_state () const { return m_turbine_state; }
 
