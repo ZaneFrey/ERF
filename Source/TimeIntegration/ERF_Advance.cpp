@@ -149,6 +149,13 @@ ERF::Advance (int lev, double time, double dt_lev, int iteration, int /*ncycle*/
     // Update the windfarm sources
     // **************************************************************************************
     if (solverChoice.windfarm_type != WindFarmType::None) {
+#ifdef ERF_USE_PARTICLES
+        if (solverChoice.windfarm_type == WindFarmType::ClassicAD) {
+            AMREX_ALWAYS_ASSERT(classic_ad_pc != nullptr);
+            classic_ad_pc->sample_disk_state(
+                lev, dt_lev, S_old, U_old, V_old, W_old);
+        }
+#endif
         advance_windfarm(Geom(lev), dt_lev, S_old,
                          U_old, V_old, W_old, vars_windfarm[lev],
                          Nturb[lev], SMark[lev], time);
