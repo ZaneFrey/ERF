@@ -1,5 +1,6 @@
   ParmParse pp_for_pert_vels("prob");
   Real U_0 = zero; pp_for_pert_vels.query("U_0",U_0);
+  Real V_0 = zero; pp_for_pert_vels.query("V_0",V_0);
 
   const Real ztop = geomdata.ProbHi()[2];
 
@@ -11,6 +12,13 @@
   {
       Real zbot = z_nd(i,j,0);
       x_vel_pert(i, j, k) = U_0 * ztop / (ztop - zbot);
+  });
+
+  // Set the y-velocity
+  ParallelFor(ybx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept
+  {
+      Real zbot = z_nd(i,j,0);
+      y_vel_pert(i, j, k) = V_0 * ztop / (ztop - zbot);
   });
 
   const auto dx = geomdata.CellSize();
