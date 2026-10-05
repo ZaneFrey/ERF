@@ -6,8 +6,38 @@
 #include <filesystem>
 #include <dirent.h>   // For POSIX directory handling
 #include <algorithm> // For std::sort
+#include <cmath>
+#include <sstream>
+
+#include <AMReX_BoxList.H>
 
 using namespace amrex;
+
+namespace {
+
+BoxArray
+build_uncovered_valid_boxes (const Box& domain,
+                             const BoxArray& level_grids,
+                             const BoxArray* finer_grids,
+                             const IntVect* ref_ratio)
+{
+    BoxList uncovered(level_grids);
+
+    if (finer_grids != nullptr && ref_ratio != nullptr) {
+        BoxArray covered_by_fine(*finer_grids);
+        covered_by_fine.coarsen(*ref_ratio);
+
+        BoxList complement;
+        complement.complementIn(domain, covered_by_fine);
+        uncovered.intersect(complement);
+        uncovered.removeEmpty();
+        uncovered.simplify();
+    }
+
+    return BoxArray(std::move(uncovered));
+}
+
+} // namespace
 
 /**
  * Read in the turbine locations in latitude-longitude from windturbines.txt
@@ -46,6 +76,10 @@ WindFarm::read_windfarm_locations_table (const std::string windfarm_loc_table,
                                          const Real windfarm_x_shift,
                                          const Real windfarm_y_shift)
 {
+    zloc.clear();
+    m_owner_level.clear();
+    m_turbines_on_level.clear();
+
     if(x_y) {
         init_windfarm_x_y(windfarm_loc_table);
         for (int it = 0; it < static_cast<int>(xloc.size()); ++it) {
@@ -62,6 +96,121 @@ WindFarm::read_windfarm_locations_table (const std::string windfarm_loc_table,
     }
 
     set_turb_loc(xloc, yloc);
+}
+
+void
+WindFarm::define_classic_ad_owner_levels (
+    int finest_level,
+    const Vector<Geometry>& geom,
+    const Vector<BoxArray>& grids,
+    const Vector<IntVect>& ref_ratio,
+    Real disk_face_angle_deg)
+{
+    const int nturb = static_cast<int>(xloc.size());
+    const int nlev = finest_level + 1;
+    AMREX_ALWAYS_ASSERT(finest_level >= 0);
+    AMREX_ALWAYS_ASSERT(static_cast<int>(geom.size()) >= nlev);
+    AMREX_ALWAYS_ASSERT(static_cast<int>(grids.size()) >= nlev);
+    AMREX_ALWAYS_ASSERT(finest_level == 0 ||
+                        static_cast<int>(ref_ratio.size()) >= finest_level);
+    AMREX_ALWAYS_ASSERT(rotor_rad > zero && hub_height > zero);
+
+    m_owner_level.assign(nturb, -1);
+    m_turbines_on_level.assign(nlev, {});
+    zloc.assign(nturb, geom[0].ProbLo(2));
+    Vector<Real> face_angles(nturb, disk_face_angle_deg);
+
+    Vector<BoxArray> uncovered(nlev);
+    for (int lev = 0; lev < nlev; ++lev) {
+        const BoxArray* finer = (lev < finest_level) ? &grids[lev+1] : nullptr;
+        const IntVect* ratio = (lev < finest_level) ? &ref_ratio[lev] : nullptr;
+        uncovered[lev] = build_uncovered_valid_boxes(
+            geom[lev].Domain(), grids[lev], finer, ratio);
+    }
+
+    for (int it = 0; it < nturb; ++it) {
+        bool assigned = false;
+        for (int lev = finest_level; lev >= 0; --lev) {
+            const auto dx = geom[lev].CellSizeArray();
+            const auto plo = geom[lev].ProbLoArray();
+            const Box& domain = geom[lev].Domain();
+            const Real psi = (face_angles[it] - Real(90.0)) * M_PI / Real(180.0);
+            const Real nx = std::cos(psi);
+            const Real ny = std::sin(psi);
+            const Real e1x = -ny;
+            const Real e1y = nx;
+            const Real epsn = std::sqrt((nx*dx[0])*(nx*dx[0]) +
+                                        (ny*dx[1])*(ny*dx[1]));
+            const Real eps1 = std::sqrt((e1x*dx[0])*(e1x*dx[0]) +
+                                        (e1y*dx[1])*(e1y*dx[1]));
+            const Real hx = Real(3.0) * (std::abs(nx)*epsn + std::abs(e1x)*eps1);
+            const Real hy = Real(3.0) * (std::abs(ny)*epsn + std::abs(e1y)*eps1);
+            const Real hz = Real(3.0) * dx[2];
+            const Real xext = std::abs(e1x)*rotor_rad + hx;
+            const Real yext = std::abs(e1y)*rotor_rad + hy;
+            const Real zhub = geom[0].ProbLo(2) + hub_height;
+            const Real zext = rotor_rad + hz;
+
+            IntVect lo(AMREX_D_DECL(
+                static_cast<int>(std::floor((xloc[it]-xext-plo[0])/dx[0])),
+                static_cast<int>(std::floor((yloc[it]-yext-plo[1])/dx[1])),
+                static_cast<int>(std::floor((zhub-zext-plo[2])/dx[2]))));
+            IntVect hi(AMREX_D_DECL(
+                static_cast<int>(std::floor((xloc[it]+xext-plo[0])/dx[0])),
+                static_cast<int>(std::floor((yloc[it]+yext-plo[1])/dx[1])),
+                static_cast<int>(std::floor((zhub+zext-plo[2])/dx[2]))));
+
+            bool outside_nonperiodic = false;
+            for (int dir = 0; dir < AMREX_SPACEDIM; ++dir) {
+                if (!geom[lev].isPeriodic(dir) &&
+                    (lo[dir] < domain.smallEnd(dir) || hi[dir] > domain.bigEnd(dir))) {
+                    outside_nonperiodic = true;
+                }
+            }
+            if (outside_nonperiodic) {
+                continue;
+            }
+
+            const Box footprint(lo, hi);
+            bool support_is_uncovered = true;
+            bool found_periodic_piece = false;
+            const Box central_piece = footprint & domain;
+            if (central_piece.ok()) {
+                support_is_uncovered = uncovered[lev].contains(central_piece);
+                found_periodic_piece = true;
+            }
+
+            Vector<IntVect> periodic_shifts;
+            geom[lev].periodicShift(domain, footprint, periodic_shifts);
+            for (const IntVect& shift : periodic_shifts) {
+                Box periodic_piece = footprint;
+                periodic_piece.shift(shift);
+                periodic_piece &= domain;
+                if (periodic_piece.ok()) {
+                    support_is_uncovered = support_is_uncovered &&
+                                           uncovered[lev].contains(periodic_piece);
+                    found_periodic_piece = true;
+                }
+            }
+
+            if (found_periodic_piece && support_is_uncovered) {
+                m_owner_level[it] = lev;
+                m_turbines_on_level[lev].push_back(it);
+                assigned = true;
+                break;
+            }
+        }
+
+        if (!assigned) {
+            std::ostringstream message;
+            message << "ClassicAD turbine " << it
+                    << " and its complete 3-sigma force support do not lie within one AMR level";
+            Abort(message.str());
+        }
+    }
+
+    set_turb_zloc(zloc);
+    set_turb_disk_angles(face_angles);
 }
 
 /**

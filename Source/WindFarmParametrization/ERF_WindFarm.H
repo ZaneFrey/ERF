@@ -120,6 +120,13 @@ public:
         return m_owner_level[turbine_id];
     }
 
+    void define_classic_ad_owner_levels (
+        int finest_level,
+        const amrex::Vector<amrex::Geometry>& geom,
+        const amrex::Vector<amrex::BoxArray>& grids,
+        const amrex::Vector<amrex::IntVect>& ref_ratio,
+        amrex::Real disk_face_angle_deg);
+
     /**
      * @brief Read the turbine specification table.
      * @param[in] windfarm_spec_table Path to the specification table.
@@ -284,6 +291,11 @@ public:
         m_windfarm_model[0]->set_turb_loc(a_xloc, a_yloc);
     }
 
+    void set_turb_zloc (const amrex::Vector<amrex::Real>& a_zloc) override
+    {
+        m_windfarm_model[0]->set_turb_zloc(a_zloc);
+    }
+
     /**
      * @brief Set the turbine disk angle.
      * @param[in] a_turb_disk_angle Disk angle.
@@ -291,6 +303,12 @@ public:
     void set_turb_disk_angle (const amrex::Real& a_turb_disk_angle) override
     {
         m_windfarm_model[0]->set_turb_disk_angle(a_turb_disk_angle);
+    }
+
+    void set_turb_disk_angles (
+        const amrex::Vector<amrex::Real>& a_turb_disk_angles) override
+    {
+        m_windfarm_model[0]->set_turb_disk_angles(a_turb_disk_angles);
     }
 
     /**

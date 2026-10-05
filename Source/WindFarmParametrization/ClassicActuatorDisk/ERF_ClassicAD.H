@@ -60,6 +60,11 @@ public:
 
     const amrex::Vector<amrex::Real>& x_locations () const { return m_xloc; }
     const amrex::Vector<amrex::Real>& y_locations () const { return m_yloc; }
+    const amrex::Vector<amrex::Real>& ground_elevations () const { return m_zloc; }
+    const amrex::Vector<amrex::Real>& disk_face_angles_deg () const
+    {
+        return m_turb_disk_angles;
+    }
 
     amrex::Vector<ClassicADTurbineState>& turbine_state () { return m_turbine_state; }
     const amrex::Vector<ClassicADTurbineState>& turbine_state () const { return m_turbine_state; }

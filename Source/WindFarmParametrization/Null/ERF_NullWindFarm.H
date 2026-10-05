@@ -47,9 +47,19 @@ public:
         m_yloc = yloc;
     }
 
+    virtual void set_turb_zloc (const amrex::Vector<amrex::Real>& zloc)
+    {
+        m_zloc = zloc;
+    }
+
     virtual void set_turb_disk_angle (const amrex::Real& turb_disk_angle)
     {
         m_turb_disk_angle = turb_disk_angle;
+    }
+
+    virtual void set_turb_disk_angles (const amrex::Vector<amrex::Real>& turb_disk_angles)
+    {
+        m_turb_disk_angles = turb_disk_angles;
     }
 
     virtual void set_blade_spec (const amrex::Vector<amrex::Real>& bld_rad_loc,
@@ -192,7 +202,8 @@ bool find_if_marked (amrex::Real x1, amrex::Real x2, amrex::Real y1, amrex::Real
 
 protected:
 
-    amrex::Vector<amrex::Real> m_xloc, m_yloc;
+    amrex::Vector<amrex::Real> m_xloc, m_yloc, m_zloc;
+    amrex::Vector<amrex::Real> m_turb_disk_angles;
     amrex::Real m_turb_disk_angle;
     amrex::Real m_hub_height, m_rotor_rad, m_thrust_coeff_standing, m_nominal_power;
     amrex::Vector<amrex::Real> m_wind_speed, m_thrust_coeff, m_power;
