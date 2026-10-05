@@ -2840,6 +2840,16 @@ void
 ERF::initializeWindFarm (const int& a_nlevsmax/*!< number of AMR levels */ )
 {
     windfarm = std::make_unique<WindFarm>(a_nlevsmax, solverChoice.windfarm_type);
+#ifdef ERF_USE_PARTICLES
+    if (solverChoice.windfarm_type == WindFarmType::ClassicAD) {
+        windfarm->configure_classic_ad(solverChoice.classic_ad_ctprime,
+                                       solverChoice.classic_ad_turb_mem_time,
+                                       solverChoice.classic_ad_diameter,
+                                       solverChoice.classic_ad_hub_height,
+                                       solverChoice.classic_ad_actuator_spacing,
+                                       solverChoice.classic_ad_spacing_was_supplied);
+    }
+#endif
 }
 #endif
 
