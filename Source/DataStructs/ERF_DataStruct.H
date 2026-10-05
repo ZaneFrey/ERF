@@ -1623,6 +1623,17 @@ struct SolverChoice {
 
         pp.queryAdd("windfarm_x_shift",windfarm_x_shift);
         pp.queryAdd("windfarm_y_shift",windfarm_y_shift);
+
+        amrex::ParmParse pp_classic("erf.classic_ad");
+        pp_classic.queryAdd("ctprime", classic_ad_ctprime);
+        pp_classic.queryAdd("turb_mem_time", classic_ad_turb_mem_time);
+        pp_classic.queryAdd("diameter", classic_ad_diameter);
+        pp_classic.queryAdd("hub_height", classic_ad_hub_height);
+
+        amrex::ParmParse pp_classic_actuator("erf.classic_ad.actuator");
+        classic_ad_spacing_was_supplied =
+            pp_classic_actuator.query("spacing", classic_ad_actuator_spacing);
+
         // Test if time averaged data is to be output
         pp.queryAdd("time_avg_vel",time_avg_vel);
 
@@ -1759,6 +1770,30 @@ struct SolverChoice {
         //
         // Wind farm checks
         //
+        if (windfarm_type == WindFarmType::ClassicAD) {
+#ifndef ERF_USE_PARTICLES
+            amrex::Error("erf.windfarm_type = ClassicAD requires ERF particle support "
+                         "(CMake: ERF_ENABLE_PARTICLES=ON; GNU Make: USE_PARTICLES=TRUE)");
+#endif
+            if (terrain_type != TerrainType::None) {
+                amrex::Error("ClassicAD supports flat terrain only (erf.terrain_type = None)");
+            }
+            if (classic_ad_diameter <= zero) {
+                amrex::Error("erf.classic_ad.diameter is required and must be > 0");
+            }
+            if (classic_ad_hub_height <= zero) {
+                amrex::Error("erf.classic_ad.hub_height is required and must be > 0");
+            }
+            if (classic_ad_ctprime < zero) {
+                amrex::Error("erf.classic_ad.ctprime must be >= 0");
+            }
+            if (classic_ad_turb_mem_time < zero) {
+                amrex::Error("erf.classic_ad.turb_mem_time must be >= 0");
+            }
+            if (classic_ad_spacing_was_supplied && classic_ad_actuator_spacing <= zero) {
+                amrex::Error("erf.classic_ad.actuator.spacing must be > 0 when supplied");
+            }
+        }
         if (windfarm_type==WindFarmType::SimpleAD and sampling_distance_by_D < zero) {
              amrex::Error("To use simplified actuator disks, you need to provide a variable"
                            " erf.sampling_distance_by_D in the inputs which specifies the upstream"
@@ -2442,6 +2477,12 @@ struct SolverChoice {
     amrex::Real turb_disk_angle  = -one;
     amrex::Real windfarm_x_shift = -one;
     amrex::Real windfarm_y_shift = -one;
+    amrex::Real classic_ad_ctprime = amrex::Real(4.0/3.0);
+    amrex::Real classic_ad_turb_mem_time = amrex::Real(600.0);
+    amrex::Real classic_ad_diameter = -one;
+    amrex::Real classic_ad_hub_height = -one;
+    amrex::Real classic_ad_actuator_spacing = -one;
+    bool classic_ad_spacing_was_supplied = false;
 
     // Nudging factor for bdy sponging : F1 = 1/(nudge_factor * dt)
     amrex::Real bdy_nudge_factor = amrex::Real(10.0);
@@ -2744,6 +2785,18 @@ struct SolverChoice {
  * @brief Wind-farm x-coordinate shift.
  * @var SolverChoice::windfarm_y_shift
  * @brief Wind-farm y-coordinate shift.
+ * @var SolverChoice::classic_ad_ctprime
+ * @brief ClassicAD local thrust coefficient.
+ * @var SolverChoice::classic_ad_turb_mem_time
+ * @brief ClassicAD disk-velocity filter time scale [s].
+ * @var SolverChoice::classic_ad_diameter
+ * @brief ClassicAD rotor diameter [m].
+ * @var SolverChoice::classic_ad_hub_height
+ * @brief ClassicAD hub height above flat terrain [m].
+ * @var SolverChoice::classic_ad_actuator_spacing
+ * @brief Requested ClassicAD actuator-element spacing [m].
+ * @var SolverChoice::classic_ad_spacing_was_supplied
+ * @brief Whether the ClassicAD actuator spacing was explicitly configured.
  * @var SolverChoice::bdy_nudge_factor
  * @brief Boundary sponge nudging factor.
  * @var SolverChoice::use_wrf_bdy_qc_qi
