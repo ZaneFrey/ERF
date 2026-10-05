@@ -2,6 +2,8 @@
 #include "ERF_Constants.H"
 #include <ERF_Utils.H>
 
+#include <cmath>
+
 #ifdef ERF_USE_WINDFARM
 #include <ERF_WindFarm.H>
 #endif
@@ -152,14 +154,36 @@ ERF::Advance (int lev, double time, double dt_lev, int iteration, int /*ncycle*/
 #ifdef ERF_USE_PARTICLES
         if (solverChoice.windfarm_type == WindFarmType::ClassicAD) {
             AMREX_ALWAYS_ASSERT(classic_ad_pc != nullptr);
-            classic_ad_pc->sample_disk_state(
-                lev, dt_lev, S_old, U_old, V_old, W_old);
-            classic_ad_pc->update_axial_forces(lev, Real(1.0));
-            classic_ad_pc->deposit_forces(
-                lev,
-                classic_ad_xmom_src[lev],
-                classic_ad_ymom_src[lev],
-                classic_ad_zmom_src[lev]);
+            constexpr Real activation_tolerance = Real(1.0e-12);
+            const Real windfarm_start_time =
+                solverChoice.windfarm_start_time;
+
+            if (time + activation_tolerance < windfarm_start_time) {
+                classic_ad_xmom_src[lev].setVal(Real(0.0));
+                classic_ad_ymom_src[lev].setVal(Real(0.0));
+                classic_ad_zmom_src[lev].setVal(Real(0.0));
+            } else {
+                classic_ad_pc->sample_disk_state(
+                    lev, dt_lev, S_old, U_old, V_old, W_old);
+
+                const Real time_since_start =
+                    amrex::max(Real(time) - windfarm_start_time, Real(0.0));
+                const Real load_factor_unclamped =
+                    (solverChoice.windfarm_ramp_tau > Real(0.0))
+                    ? Real(1.0) - std::exp(
+                        -time_since_start / solverChoice.windfarm_ramp_tau)
+                    : Real(1.0);
+                const Real load_factor = amrex::max(
+                    Real(0.0),
+                    amrex::min(Real(1.0), load_factor_unclamped));
+
+                classic_ad_pc->update_axial_forces(lev, load_factor);
+                classic_ad_pc->deposit_forces(
+                    lev,
+                    classic_ad_xmom_src[lev],
+                    classic_ad_ymom_src[lev],
+                    classic_ad_zmom_src[lev]);
+            }
         }
 #endif
         advance_windfarm(Geom(lev), dt_lev, S_old,

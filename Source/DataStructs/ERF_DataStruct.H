@@ -1620,6 +1620,8 @@ struct SolverChoice {
         // by the diameter of the turbine
         pp.queryAdd("sampling_distance_by_D", sampling_distance_by_D);
         pp.queryAdd("turb_disk_angle_from_x", turb_disk_angle);
+        pp.queryAdd("windfarm_start_time", windfarm_start_time);
+        pp.queryAdd("windfarm_ramp_tau", windfarm_ramp_tau);
 
         pp.queryAdd("windfarm_x_shift",windfarm_x_shift);
         pp.queryAdd("windfarm_y_shift",windfarm_y_shift);
@@ -1793,6 +1795,19 @@ struct SolverChoice {
             if (classic_ad_spacing_was_supplied && classic_ad_actuator_spacing <= zero) {
                 amrex::Error("erf.classic_ad.actuator.spacing must be > 0 when supplied");
             }
+        }
+        if (windfarm_start_time < zero) {
+            amrex::Error("erf.windfarm_start_time must be >= 0");
+        }
+        if (windfarm_start_time > zero &&
+            windfarm_type != WindFarmType::ClassicAD) {
+            amrex::Error(
+                "erf.windfarm_start_time is currently supported only for ClassicAD");
+        }
+        if (windfarm_ramp_tau > zero &&
+            windfarm_type != WindFarmType::ClassicAD) {
+            amrex::Error(
+                "erf.windfarm_ramp_tau is currently supported only for ClassicAD");
         }
         if (windfarm_type==WindFarmType::SimpleAD and sampling_distance_by_D < zero) {
              amrex::Error("To use simplified actuator disks, you need to provide a variable"
@@ -2476,6 +2491,8 @@ struct SolverChoice {
     std::string windfarm_blade_table, windfarm_airfoil_tables;
     amrex::Real sampling_distance_by_D = -one;
     amrex::Real turb_disk_angle  = -one;
+    amrex::Real windfarm_start_time = zero;
+    amrex::Real windfarm_ramp_tau = -one;
     amrex::Real windfarm_x_shift = -one;
     amrex::Real windfarm_y_shift = -one;
     amrex::Real classic_ad_ctprime = amrex::Real(4.0/3.0);
