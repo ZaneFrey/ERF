@@ -1,0 +1,74 @@
+#ifndef ERF_CLASSICAD_H
+#define ERF_CLASSICAD_H
+
+#include <ERF_NullWindFarm.H>
+
+/**
+ * @brief Per-turbine state retained by the classic actuator-disk model.
+ */
+struct ClassicADTurbineState
+{
+    amrex::Real disk_velocity_raw{0.0};
+    amrex::Real disk_velocity_filtered{0.0};
+    amrex::Real disk_density{0.0};
+    amrex::Real thrust_target{0.0};
+    amrex::Real thrust_applied{0.0};
+    amrex::Real axial_power{0.0};
+    amrex::Real actuator_area{0.0};
+    bool memory_initialized{false};
+};
+
+/**
+ * @brief State and configuration for the classic actuator-disk model.
+ */
+class ClassicAD : public NullWindFarm
+{
+public:
+    ClassicAD () = default;
+
+    void advance (const amrex::Geometry&,
+                  const double&,
+                  amrex::MultiFab&,
+                  amrex::MultiFab&,
+                  amrex::MultiFab&,
+                  amrex::MultiFab&,
+                  amrex::MultiFab&,
+                  const amrex::MultiFab&,
+                  const amrex::MultiFab&,
+                  const double&) override
+    {
+        // ClassicAD applies persistent momentum sources through its particle container.
+    }
+
+    void configure (amrex::Real ctprime,
+                    amrex::Real memory_time,
+                    amrex::Real diameter,
+                    amrex::Real hub_height,
+                    amrex::Real spacing,
+                    bool spacing_was_supplied);
+
+    void initialize_turbine_state (int nturb);
+    void write_memory_state (const std::string& checkpointname) const override;
+    bool read_memory_state (const std::string& restart_chkfile) override;
+
+    amrex::Real ctprime () const { return m_ctprime; }
+    amrex::Real memory_time () const { return m_memory_time; }
+    amrex::Real rotor_radius () const { return 0.5 * m_diameter; }
+    amrex::Real hub_height () const { return m_hub_height_classic; }
+    amrex::Real actuator_spacing () const { return m_actuator_spacing; }
+    bool spacing_was_supplied () const { return m_spacing_was_supplied; }
+
+    amrex::Vector<ClassicADTurbineState>& turbine_state () { return m_turbine_state; }
+    const amrex::Vector<ClassicADTurbineState>& turbine_state () const { return m_turbine_state; }
+
+private:
+    amrex::Real m_ctprime{4.0/3.0};
+    amrex::Real m_memory_time{600.0};
+    amrex::Real m_diameter{-1.0};
+    amrex::Real m_hub_height_classic{-1.0};
+    amrex::Real m_actuator_spacing{-1.0};
+    bool m_spacing_was_supplied{false};
+    amrex::Vector<ClassicADTurbineState> m_turbine_state;
+};
+
+#endif
