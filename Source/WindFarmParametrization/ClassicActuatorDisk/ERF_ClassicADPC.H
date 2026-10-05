@@ -40,6 +40,8 @@ public:
                             const amrex::MultiFab& v,
                             const amrex::MultiFab& w);
 
+    void update_axial_forces (int lev, amrex::Real load_factor);
+
 private:
     ClassicAD& m_model;
     amrex::Vector<int> m_owner_levels;

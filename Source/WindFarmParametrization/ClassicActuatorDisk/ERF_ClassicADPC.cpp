@@ -282,4 +282,101 @@ ClassicADPC::sample_disk_state (int lev,
     }
 }
 
+void
+ClassicADPC::update_axial_forces (int lev, Real load_factor)
+{
+    AMREX_ALWAYS_ASSERT(lev >= 0 && lev <= finestLevel());
+    AMREX_ALWAYS_ASSERT(load_factor >= Real(0.0) &&
+                        load_factor <= Real(1.0));
+
+    const int nturb = static_cast<int>(m_model.x_locations().size());
+    if (nturb == 0) {
+        return;
+    }
+
+    AMREX_ALWAYS_ASSERT(static_cast<int>(m_owner_levels.size()) == nturb);
+    auto& state = m_model.turbine_state();
+    AMREX_ALWAYS_ASSERT(static_cast<int>(state.size()) == nturb);
+
+    const Real rotor_area = classic_pi *
+        m_model.rotor_radius() * m_model.rotor_radius();
+    const Real minimum_area =
+        std::numeric_limits<Real>::epsilon() * rotor_area;
+    Vector<Real> thrust_applied(nturb, Real(0.0));
+    Vector<Real> area_normalization(nturb, rotor_area);
+
+    for (int turbine_id = 0; turbine_id < nturb; ++turbine_id) {
+        if (m_owner_levels[turbine_id] != lev) {
+            continue;
+        }
+
+        auto& turbine_state = state[turbine_id];
+        AMREX_ALWAYS_ASSERT(turbine_state.memory_initialized);
+        AMREX_ALWAYS_ASSERT(turbine_state.actuator_area > minimum_area);
+
+        const Real disk_velocity =
+            turbine_state.disk_velocity_filtered;
+        turbine_state.thrust_target = Real(0.5) *
+            turbine_state.disk_density * rotor_area *
+            m_model.ctprime() * disk_velocity * disk_velocity;
+        turbine_state.thrust_applied =
+            load_factor * turbine_state.thrust_target;
+        turbine_state.axial_power =
+            turbine_state.thrust_target * disk_velocity;
+
+        thrust_applied[turbine_id] = turbine_state.thrust_applied;
+        area_normalization[turbine_id] = turbine_state.actuator_area;
+    }
+
+    const auto& face_angles = m_model.disk_face_angles_deg();
+    AMREX_ALWAYS_ASSERT(static_cast<int>(face_angles.size()) == nturb);
+    Gpu::DeviceVector<Real> d_thrust_applied(nturb);
+    Gpu::DeviceVector<Real> d_area_normalization(nturb);
+    Gpu::DeviceVector<Real> d_face_angles(nturb);
+    Gpu::copyAsync(Gpu::hostToDevice,
+                   thrust_applied.begin(), thrust_applied.end(),
+                   d_thrust_applied.begin());
+    Gpu::copyAsync(Gpu::hostToDevice,
+                   area_normalization.begin(), area_normalization.end(),
+                   d_area_normalization.begin());
+    Gpu::copyAsync(Gpu::hostToDevice,
+                   face_angles.begin(), face_angles.end(),
+                   d_face_angles.begin());
+
+    const Real* thrust_applied_device = d_thrust_applied.data();
+    const Real* area_normalization_device = d_area_normalization.data();
+    const Real* face_angles_device = d_face_angles.data();
+
+    for (ParIterType pti(*this, lev); pti.isValid(); ++pti) {
+        auto& tile = ParticlesAt(lev, pti);
+        auto& aos = tile.GetArrayOfStructs();
+        auto& soa = tile.GetStructOfArrays();
+        const int np = aos.numParticles();
+        const auto* area = soa.GetRealData(ClassicADRealIdx::area).data();
+        auto* force_x = soa.GetRealData(ClassicADRealIdx::force_x).data();
+        auto* force_y = soa.GetRealData(ClassicADRealIdx::force_y).data();
+        auto* force_z = soa.GetRealData(ClassicADRealIdx::force_z).data();
+        const auto* turbine =
+            soa.GetIntData(ClassicADIntIdx::turbine).data();
+
+        ParallelFor(np, [=] AMREX_GPU_DEVICE (int ip) noexcept {
+            const int turbine_id = turbine[ip];
+            Real nx;
+            Real ny;
+            Real e1x;
+            Real e1y;
+            rotor_basis(face_angles_device[turbine_id],
+                        nx, ny, e1x, e1y);
+
+            const Real axial_force =
+                -thrust_applied_device[turbine_id] * area[ip] /
+                area_normalization_device[turbine_id];
+            force_x[ip] = axial_force * nx;
+            force_y[ip] = axial_force * ny;
+            force_z[ip] = Real(0.0);
+        });
+    }
+    Gpu::streamSynchronize();
+}
+
 #endif

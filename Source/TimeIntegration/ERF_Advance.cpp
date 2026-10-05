@@ -154,6 +154,7 @@ ERF::Advance (int lev, double time, double dt_lev, int iteration, int /*ncycle*/
             AMREX_ALWAYS_ASSERT(classic_ad_pc != nullptr);
             classic_ad_pc->sample_disk_state(
                 lev, dt_lev, S_old, U_old, V_old, W_old);
+            classic_ad_pc->update_axial_forces(lev, Real(1.0));
         }
 #endif
         advance_windfarm(Geom(lev), dt_lev, S_old,
