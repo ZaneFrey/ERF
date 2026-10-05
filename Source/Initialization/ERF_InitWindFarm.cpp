@@ -71,6 +71,30 @@ ERF::initialize_windfarm_catalog ()
 }
 
 /**
+ * @brief Recompute wind-turbine ownership for the active AMR hierarchy.
+ */
+void
+ERF::rebuild_windfarm_hierarchy ()
+{
+    initialize_windfarm_catalog();
+    m_windfarm_hierarchy_initialized = false;
+
+    if (solverChoice.windfarm_type == WindFarmType::ClassicAD) {
+        Vector<IntVect> active_ref_ratio;
+        active_ref_ratio.reserve(finest_level);
+        for (int lev = 0; lev < finest_level; ++lev) {
+            active_ref_ratio.push_back(refRatio(lev));
+        }
+
+        windfarm->define_classic_ad_owner_levels(
+            finest_level, geom, grids, active_ref_ratio,
+            solverChoice.turb_disk_angle);
+    }
+
+    m_windfarm_hierarchy_initialized = true;
+}
+
+/**
  * @brief Initialize level-dependent wind farm fields.
  * @param lev Level to initialize.
  */

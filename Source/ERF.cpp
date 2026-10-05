@@ -920,6 +920,12 @@ ERF::InitData_post ()
         restart();
     }
 
+#ifdef ERF_USE_WINDFARM
+    if (solverChoice.windfarm_type == WindFarmType::ClassicAD) {
+        rebuild_windfarm_hierarchy();
+    }
+#endif
+
     // Faces of the resolved buildings, from the blanking both paths have built.
     init_ibseb();
 

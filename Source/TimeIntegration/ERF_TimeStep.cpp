@@ -202,6 +202,12 @@ ERF::timeStep (int lev, double time, int /*iteration*/)
 
                 regrid(lev, static_cast<Real>(time));
 
+#ifdef ERF_USE_WINDFARM
+                if (solverChoice.windfarm_type == WindFarmType::ClassicAD) {
+                    rebuild_windfarm_hierarchy();
+                }
+#endif
+
 #ifdef ERF_USE_PARTICLES
                 if (Microphysics::modelType(solverChoice.moisture_type) == MoistureModelType::Lagrangian) {
                     auto* pc = dynamic_cast<LagrangianMicrophysics&>(*micro).getParticleContainer();
