@@ -923,6 +923,10 @@ ERF::InitData_post ()
 #ifdef ERF_USE_WINDFARM
     if (solverChoice.windfarm_type == WindFarmType::ClassicAD) {
         rebuild_windfarm_hierarchy();
+        if (!restart_chkfile.empty()) {
+            AMREX_ALWAYS_ASSERT(windfarm != nullptr);
+            windfarm->read_memory_state(restart_chkfile);
+        }
     }
 #endif
 

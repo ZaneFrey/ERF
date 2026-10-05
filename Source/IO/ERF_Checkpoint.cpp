@@ -817,6 +817,13 @@ ERF::WriteCheckpointFile () const
    particleData.Checkpoint(checkpointname);
 #endif
 
+#ifdef ERF_USE_WINDFARM
+    if (solverChoice.windfarm_type == WindFarmType::ClassicAD) {
+        AMREX_ALWAYS_ASSERT(windfarm != nullptr);
+        windfarm->write_memory_state(checkpointname);
+    }
+#endif
+
 #if 0
 #ifdef ERF_USE_NETCDF
    // Write bdy_data files
