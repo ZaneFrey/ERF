@@ -15,12 +15,15 @@ using namespace amrex;
 // Wind farm initialization entry point.
 
 /**
- * @brief Initialize wind farm configuration and turbine data.
- * @param lev Level to initialize.
+ * @brief Load immutable wind-farm tables and initialize per-turbine state once.
  */
 void
-ERF::init_windfarm (int lev)
+ERF::initialize_windfarm_catalog ()
 {
+    if (m_windfarm_catalog_initialized) {
+        return;
+    }
+
     const bool is_classic_ad = (solverChoice.windfarm_type == WindFarmType::ClassicAD);
 
     if(solverChoice.windfarm_loc_type == WindFarmLocType::lat_lon) {
@@ -55,6 +58,28 @@ ERF::init_windfarm (int lev)
 #ifdef ERF_USE_PARTICLES
         windfarm->classic_ad_model().initialize_turbine_state(windfarm->num_turbines());
 #endif
+    }
+
+    if(solverChoice.windfarm_type == WindFarmType::GeneralAD) {
+        windfarm->read_windfarm_blade_table(solverChoice.windfarm_blade_table);
+        windfarm->read_windfarm_airfoil_tables(solverChoice.windfarm_airfoil_tables,
+                                               solverChoice.windfarm_blade_table);
+        windfarm->read_windfarm_spec_table_extra(solverChoice.windfarm_spec_table_extra);
+    }
+
+    m_windfarm_catalog_initialized = true;
+}
+
+/**
+ * @brief Initialize level-dependent wind farm fields.
+ * @param lev Level to initialize.
+ */
+void
+ERF::init_windfarm (int lev)
+{
+    initialize_windfarm_catalog();
+
+    if (solverChoice.windfarm_type == WindFarmType::ClassicAD) {
         return;
     }
 
@@ -81,12 +106,6 @@ ERF::init_windfarm (int lev)
                                            solverChoice.sampling_distance_by_D);
     }
 
-    if(solverChoice.windfarm_type == WindFarmType::GeneralAD) {
-        windfarm->read_windfarm_blade_table(solverChoice.windfarm_blade_table);
-        windfarm->read_windfarm_airfoil_tables(solverChoice.windfarm_airfoil_tables,
-                                               solverChoice.windfarm_blade_table);
-        windfarm->read_windfarm_spec_table_extra(solverChoice.windfarm_spec_table_extra);
-    }
 }
 
 /**

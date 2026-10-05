@@ -958,6 +958,7 @@ public:
 #endif // ERF_USE_NETCDF
 
 #ifdef ERF_USE_WINDFARM
+    void initialize_windfarm_catalog ();
     void init_windfarm (int lev);
     void advance_windfarm (const amrex::Geometry& a_geom,
                            const double& dt_advance,
@@ -1348,6 +1349,7 @@ private:
 
 #ifdef ERF_USE_WINDFARM
     std::unique_ptr<WindFarm> windfarm;
+    bool m_windfarm_catalog_initialized{false};
     amrex::Vector<amrex::MultiFab> Nturb;
     amrex::Vector<amrex::MultiFab> vars_windfarm; // Fitch: Vabs, Vabsdt, dudt, dvdt, dTKEdt
                                                   // EWP:                 dudt, dvdt, dTKEdt
