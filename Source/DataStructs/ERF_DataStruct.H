@@ -148,7 +148,7 @@ inline bool anelastic_superdroplets_configuration_invalid (
  * @brief Wind-farm model.
  */
 AMREX_ENUM(WindFarmType,
-    Fitch, EWP, SimpleAD, GeneralAD, None
+    Fitch, EWP, SimpleAD, GeneralAD, ClassicAD, None
 );
 
 /**
