@@ -166,6 +166,16 @@ public:
     void write_actuator_disks_vtk (const amrex::Geometry& geom,
                                    const amrex::Real& sampling_distance_by_D);
 
+    void write_memory_state (const std::string& checkpointname) const override
+    {
+        m_windfarm_model[0]->write_memory_state(checkpointname);
+    }
+
+    bool read_memory_state (const std::string& restart_chkfile) override
+    {
+        return m_windfarm_model[0]->read_memory_state(restart_chkfile);
+    }
+
     /**
      * @brief Advance the wind farm model in time.
      * @param[in] a_geom Geometry
@@ -300,4 +310,3 @@ private:
 };
 
 #endif
-

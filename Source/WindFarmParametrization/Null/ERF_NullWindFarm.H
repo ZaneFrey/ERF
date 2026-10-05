@@ -1,6 +1,8 @@
 #ifndef ERF_NULLWINDFARM_H
 #define ERF_NULLWINDFARM_H
 
+#include <string>
+
 #include <ERF_DataStruct.H>
 #include <AMReX_Geometry.H>
 #include <AMReX_MultiFab.H>
@@ -79,6 +81,17 @@ public:
         m_C_T = C_T;
         m_rotor_RPM = rotor_RPM;
         m_blade_pitch = blade_pitch;
+    }
+
+    virtual void write_memory_state (const std::string& checkpointname) const
+    {
+        amrex::ignore_unused(checkpointname);
+    }
+
+    virtual bool read_memory_state (const std::string& restart_chkfile)
+    {
+        amrex::ignore_unused(restart_chkfile);
+        return false;
     }
 
     void get_turb_spec (amrex::Real& rotor_rad, amrex::Real& hub_height,
@@ -190,4 +203,3 @@ protected:
 
 
 #endif
-
