@@ -41,7 +41,7 @@ public:
                             const amrex::MultiFab& v,
                             const amrex::MultiFab& w);
 
-    void update_axial_forces (int lev, amrex::Real load_factor);
+    void update_forces (int lev, amrex::Real load_factor);
 
     void deposit_forces (int lev,
                          amrex::MultiFab& xmom_src,

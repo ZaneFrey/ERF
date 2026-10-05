@@ -381,7 +381,7 @@ ClassicADPC::sample_disk_state (int lev,
 }
 
 void
-ClassicADPC::update_axial_forces (int lev, Real load_factor)
+ClassicADPC::update_forces (int lev, Real load_factor)
 {
     AMREX_ALWAYS_ASSERT(lev >= 0 && lev <= finestLevel());
     AMREX_ALWAYS_ASSERT(load_factor >= Real(0.0) &&
@@ -401,6 +401,7 @@ ClassicADPC::update_axial_forces (int lev, Real load_factor)
     const Real minimum_area =
         std::numeric_limits<Real>::epsilon() * rotor_area;
     Vector<Real> thrust_applied(nturb, Real(0.0));
+    Vector<Real> torque_applied(nturb, Real(0.0));
     Vector<Real> area_normalization(nturb, rotor_area);
 
     for (int turbine_id = 0; turbine_id < nturb; ++turbine_id) {
@@ -425,6 +426,7 @@ ClassicADPC::update_axial_forces (int lev, Real load_factor)
         turbine_state.omega = Real(0.0);
         turbine_state.torque_target = Real(0.0);
         turbine_state.torque_applied = Real(0.0);
+        turbine_state.les_torque = Real(0.0);
 
         if (m_model.wake_rotation_enabled() &&
             std::abs(disk_velocity) > Real(1.0e-12)) {
@@ -443,17 +445,22 @@ ClassicADPC::update_axial_forces (int lev, Real load_factor)
         }
 
         thrust_applied[turbine_id] = turbine_state.thrust_applied;
+        torque_applied[turbine_id] = turbine_state.torque_applied;
         area_normalization[turbine_id] = turbine_state.actuator_area;
     }
 
     const auto& face_angles = m_model.disk_face_angles_deg();
     AMREX_ALWAYS_ASSERT(static_cast<int>(face_angles.size()) == nturb);
     Gpu::DeviceVector<Real> d_thrust_applied(nturb);
+    Gpu::DeviceVector<Real> d_torque_applied(nturb);
     Gpu::DeviceVector<Real> d_area_normalization(nturb);
     Gpu::DeviceVector<Real> d_face_angles(nturb);
     Gpu::copyAsync(Gpu::hostToDevice,
                    thrust_applied.begin(), thrust_applied.end(),
                    d_thrust_applied.begin());
+    Gpu::copyAsync(Gpu::hostToDevice,
+                   torque_applied.begin(), torque_applied.end(),
+                   d_torque_applied.begin());
     Gpu::copyAsync(Gpu::hostToDevice,
                    area_normalization.begin(), area_normalization.end(),
                    d_area_normalization.begin());
@@ -461,15 +468,69 @@ ClassicADPC::update_axial_forces (int lev, Real load_factor)
                    face_angles.begin(), face_angles.end(),
                    d_face_angles.begin());
 
-    const Real* thrust_applied_device = d_thrust_applied.data();
+    Gpu::DeviceVector<Real> d_raw_torque(nturb, Real(0.0));
+    Real* raw_torque_device = d_raw_torque.data();
+    const Real* torque_applied_device = d_torque_applied.data();
     const Real* area_normalization_device = d_area_normalization.data();
-    const Real* face_angles_device = d_face_angles.data();
 
     for (ParIterType pti(*this, lev); pti.isValid(); ++pti) {
         auto& tile = ParticlesAt(lev, pti);
         auto& aos = tile.GetArrayOfStructs();
         auto& soa = tile.GetStructOfArrays();
         const int np = aos.numParticles();
+        const auto* radius =
+            soa.GetRealData(ClassicADRealIdx::radius).data();
+        const auto* area =
+            soa.GetRealData(ClassicADRealIdx::area).data();
+        const auto* turbine =
+            soa.GetIntData(ClassicADIntIdx::turbine).data();
+
+        ParallelFor(np, [=] AMREX_GPU_DEVICE (int ip) noexcept {
+            const int turbine_id = turbine[ip];
+            if (torque_applied_device[turbine_id] != Real(0.0)) {
+                const Real raw_tangential_force =
+                    torque_applied_device[turbine_id] * area[ip] /
+                    (area_normalization_device[turbine_id] * radius[ip]);
+                Gpu::Atomic::Add(
+                    &raw_torque_device[turbine_id],
+                    radius[ip] * raw_tangential_force);
+            }
+        });
+    }
+    Gpu::streamSynchronize();
+
+    Vector<Real> raw_torque(nturb, Real(0.0));
+    Gpu::copy(Gpu::deviceToHost,
+              d_raw_torque.begin(), d_raw_torque.end(),
+              raw_torque.begin());
+    ParallelAllReduce::Sum(raw_torque.data(), raw_torque.size(),
+                           ParallelContext::CommunicatorAll());
+
+    Vector<Real> torque_scale(nturb, Real(0.0));
+    for (int turbine_id = 0; turbine_id < nturb; ++turbine_id) {
+        if (std::abs(raw_torque[turbine_id]) > Real(1.0e-30)) {
+            torque_scale[turbine_id] =
+                torque_applied[turbine_id] / raw_torque[turbine_id];
+        }
+    }
+    Gpu::DeviceVector<Real> d_torque_scale(nturb);
+    Gpu::copyAsync(Gpu::hostToDevice,
+                   torque_scale.begin(), torque_scale.end(),
+                   d_torque_scale.begin());
+
+    const Real* thrust_applied_device = d_thrust_applied.data();
+    const Real* face_angles_device = d_face_angles.data();
+    const Real* torque_scale_device = d_torque_scale.data();
+
+    for (ParIterType pti(*this, lev); pti.isValid(); ++pti) {
+        auto& tile = ParticlesAt(lev, pti);
+        auto& aos = tile.GetArrayOfStructs();
+        auto& soa = tile.GetStructOfArrays();
+        const int np = aos.numParticles();
+        const auto* radius =
+            soa.GetRealData(ClassicADRealIdx::radius).data();
+        const auto* theta =
+            soa.GetRealData(ClassicADRealIdx::theta).data();
         const auto* area = soa.GetRealData(ClassicADRealIdx::area).data();
         auto* force_x = soa.GetRealData(ClassicADRealIdx::force_x).data();
         auto* force_y = soa.GetRealData(ClassicADRealIdx::force_y).data();
@@ -489,12 +550,178 @@ ClassicADPC::update_axial_forces (int lev, Real load_factor)
             const Real axial_force =
                 -thrust_applied_device[turbine_id] * area[ip] /
                 area_normalization_device[turbine_id];
-            force_x[ip] = axial_force * nx;
-            force_y[ip] = axial_force * ny;
-            force_z[ip] = Real(0.0);
+            Real tangential_x = Real(0.0);
+            Real tangential_y = Real(0.0);
+            Real tangential_z = Real(0.0);
+            if (torque_applied_device[turbine_id] != Real(0.0)) {
+                const Real tangential_magnitude =
+                    torque_scale_device[turbine_id] *
+                    torque_applied_device[turbine_id] * area[ip] /
+                    (area_normalization_device[turbine_id] * radius[ip]);
+                const Real sin_theta = std::sin(theta[ip]);
+                const Real cos_theta = std::cos(theta[ip]);
+
+                // Apply -e_theta, where e_theta = n x e_r.
+                tangential_x = -ny * sin_theta * tangential_magnitude;
+                tangential_y =  nx * sin_theta * tangential_magnitude;
+                tangential_z = -cos_theta * tangential_magnitude;
+            }
+            force_x[ip] = axial_force * nx + tangential_x;
+            force_y[ip] = axial_force * ny + tangential_y;
+            force_z[ip] = tangential_z;
         });
     }
     Gpu::streamSynchronize();
+
+    // Validate finite actuator-element thrust, torque, and symmetry before
+    // regularizing their forces onto the staggered momentum grids.
+    Gpu::DeviceVector<Real> d_force_sum(3*nturb, Real(0.0));
+    Gpu::DeviceVector<Real> d_force_abs_sum(3*nturb, Real(0.0));
+    Gpu::DeviceVector<Real> d_axial_sum(nturb, Real(0.0));
+    Gpu::DeviceVector<Real> d_torque_sum(nturb, Real(0.0));
+    Gpu::DeviceVector<Real> d_tangent_abs(nturb, Real(0.0));
+    Real* force_sum_device = d_force_sum.data();
+    Real* force_abs_sum_device = d_force_abs_sum.data();
+    Real* axial_sum_device = d_axial_sum.data();
+    Real* torque_sum_device = d_torque_sum.data();
+    Real* tangent_abs_device = d_tangent_abs.data();
+
+    for (ParIterType pti(*this, lev); pti.isValid(); ++pti) {
+        auto& tile = ParticlesAt(lev, pti);
+        auto& aos = tile.GetArrayOfStructs();
+        auto& soa = tile.GetStructOfArrays();
+        const int np = aos.numParticles();
+        const auto* radius =
+            soa.GetRealData(ClassicADRealIdx::radius).data();
+        const auto* theta =
+            soa.GetRealData(ClassicADRealIdx::theta).data();
+        const auto* force_x =
+            soa.GetRealData(ClassicADRealIdx::force_x).data();
+        const auto* force_y =
+            soa.GetRealData(ClassicADRealIdx::force_y).data();
+        const auto* force_z =
+            soa.GetRealData(ClassicADRealIdx::force_z).data();
+        const auto* turbine =
+            soa.GetIntData(ClassicADIntIdx::turbine).data();
+
+        ParallelFor(np, [=] AMREX_GPU_DEVICE (int ip) noexcept {
+            const int turbine_id = turbine[ip];
+            Real nx;
+            Real ny;
+            Real e1x;
+            Real e1y;
+            rotor_basis(face_angles_device[turbine_id],
+                        nx, ny, e1x, e1y);
+
+            const Real axial = force_x[ip]*nx + force_y[ip]*ny;
+            const Real tangent_x = force_x[ip] - axial*nx;
+            const Real tangent_y = force_y[ip] - axial*ny;
+            const Real tangent_z = force_z[ip];
+            const Real radial_in_plane = radius[ip] * std::cos(theta[ip]);
+            const Real radius_x = radial_in_plane * e1x;
+            const Real radius_y = radial_in_plane * e1y;
+            const Real radius_z = radius[ip] * std::sin(theta[ip]);
+            const Real cross_x =
+                radius_y*force_z[ip] - radius_z*force_y[ip];
+            const Real cross_y =
+                radius_z*force_x[ip] - radius_x*force_z[ip];
+
+            Gpu::Atomic::Add(
+                &force_sum_device[3*turbine_id], force_x[ip]);
+            Gpu::Atomic::Add(
+                &force_sum_device[3*turbine_id+1], force_y[ip]);
+            Gpu::Atomic::Add(
+                &force_sum_device[3*turbine_id+2], force_z[ip]);
+            Gpu::Atomic::Add(
+                &force_abs_sum_device[3*turbine_id], std::abs(force_x[ip]));
+            Gpu::Atomic::Add(
+                &force_abs_sum_device[3*turbine_id+1], std::abs(force_y[ip]));
+            Gpu::Atomic::Add(
+                &force_abs_sum_device[3*turbine_id+2], std::abs(force_z[ip]));
+            Gpu::Atomic::Add(&axial_sum_device[turbine_id], axial);
+            Gpu::Atomic::Add(
+                &torque_sum_device[turbine_id], cross_x*nx + cross_y*ny);
+            Gpu::Atomic::Add(
+                &tangent_abs_device[turbine_id],
+                std::sqrt(tangent_x*tangent_x +
+                          tangent_y*tangent_y +
+                          tangent_z*tangent_z));
+        });
+    }
+    Gpu::streamSynchronize();
+
+    Vector<Real> force_sum(3*nturb);
+    Vector<Real> force_abs_sum(3*nturb);
+    Vector<Real> axial_sum(nturb);
+    Vector<Real> torque_sum(nturb);
+    Vector<Real> tangent_abs(nturb);
+    Gpu::copy(Gpu::deviceToHost,
+              d_force_sum.begin(), d_force_sum.end(), force_sum.begin());
+    Gpu::copy(Gpu::deviceToHost,
+              d_force_abs_sum.begin(), d_force_abs_sum.end(),
+              force_abs_sum.begin());
+    Gpu::copy(Gpu::deviceToHost,
+              d_axial_sum.begin(), d_axial_sum.end(), axial_sum.begin());
+    Gpu::copy(Gpu::deviceToHost,
+              d_torque_sum.begin(), d_torque_sum.end(), torque_sum.begin());
+    Gpu::copy(Gpu::deviceToHost,
+              d_tangent_abs.begin(), d_tangent_abs.end(),
+              tangent_abs.begin());
+    ParallelAllReduce::Sum(force_sum.data(), force_sum.size(),
+                           ParallelContext::CommunicatorAll());
+    ParallelAllReduce::Sum(force_abs_sum.data(), force_abs_sum.size(),
+                           ParallelContext::CommunicatorAll());
+    ParallelAllReduce::Sum(axial_sum.data(), axial_sum.size(),
+                           ParallelContext::CommunicatorAll());
+    ParallelAllReduce::Sum(torque_sum.data(), torque_sum.size(),
+                           ParallelContext::CommunicatorAll());
+    ParallelAllReduce::Sum(tangent_abs.data(), tangent_abs.size(),
+                           ParallelContext::CommunicatorAll());
+
+    for (int turbine_id = 0; turbine_id < nturb; ++turbine_id) {
+        if (m_owner_levels[turbine_id] != lev) {
+            continue;
+        }
+
+        const Real thrust_scale = amrex::max(
+            std::abs(thrust_applied[turbine_id]), Real(1.0));
+        if (std::abs(axial_sum[turbine_id] +
+                     thrust_applied[turbine_id]) >
+            Real(1.0e-10) * thrust_scale) {
+            Abort("ClassicAD finite axial elements do not recover the applied thrust");
+        }
+
+        const Real torque_reference = amrex::max(
+            std::abs(torque_applied[turbine_id]), Real(1.0));
+        if (std::abs(torque_sum[turbine_id] +
+                     torque_applied[turbine_id]) >
+            Real(1.0e-10) * torque_reference) {
+            Abort("ClassicAD finite tangential elements do not recover the applied torque");
+        }
+
+        Real nx;
+        Real ny;
+        Real e1x;
+        Real e1y;
+        rotor_basis(face_angles[turbine_id], nx, ny, e1x, e1y);
+        const Real net_tangent_x =
+            force_sum[3*turbine_id] - axial_sum[turbine_id]*nx;
+        const Real net_tangent_y =
+            force_sum[3*turbine_id+1] - axial_sum[turbine_id]*ny;
+        const Real net_tangent_z = force_sum[3*turbine_id+2];
+        const Real force_scale = std::sqrt(
+            force_abs_sum[3*turbine_id]*force_abs_sum[3*turbine_id] +
+            force_abs_sum[3*turbine_id+1]*force_abs_sum[3*turbine_id+1] +
+            force_abs_sum[3*turbine_id+2]*force_abs_sum[3*turbine_id+2]);
+        const Real tangent_scale = amrex::max(
+            amrex::max(tangent_abs[turbine_id], force_scale), Real(1.0));
+        if (std::sqrt(net_tangent_x*net_tangent_x +
+                      net_tangent_y*net_tangent_y +
+                      net_tangent_z*net_tangent_z) >
+            Real(1.0e-10) * tangent_scale) {
+            Abort("ClassicAD symmetric tangential loading has a nonzero net force");
+        }
+    }
 }
 
 void
@@ -535,9 +762,37 @@ ClassicADPC::deposit_forces (int lev,
     Gpu::DeviceVector<Real> d_expected_force(3, Real(0.0));
     Gpu::DeviceVector<Real> d_expected_force_abs(3, Real(0.0));
     Gpu::DeviceVector<Real> d_deposited_force(3, Real(0.0));
+    Gpu::DeviceVector<Real> d_les_torque(nturb, Real(0.0));
+    Gpu::DeviceVector<Real> d_hub_x(nturb);
+    Gpu::DeviceVector<Real> d_hub_y(nturb);
+    Gpu::DeviceVector<Real> d_hub_z(nturb);
+    const auto& hub_x = m_model.x_locations();
+    const auto& hub_y = m_model.y_locations();
+    const auto& ground_elevation = m_model.ground_elevations();
+    Vector<Real> hub_z(nturb);
+    for (int turbine_id = 0; turbine_id < nturb; ++turbine_id) {
+        hub_z[turbine_id] =
+            ground_elevation[turbine_id] + m_model.hub_height();
+    }
+    Gpu::copyAsync(Gpu::hostToDevice,
+                   hub_x.begin(), hub_x.end(), d_hub_x.begin());
+    Gpu::copyAsync(Gpu::hostToDevice,
+                   hub_y.begin(), hub_y.end(), d_hub_y.begin());
+    Gpu::copyAsync(Gpu::hostToDevice,
+                   hub_z.begin(), hub_z.end(), d_hub_z.begin());
     Real* expected_force_device = d_expected_force.data();
     Real* expected_force_abs_device = d_expected_force_abs.data();
     Real* deposited_force_device = d_deposited_force.data();
+    Real* les_torque_device = d_les_torque.data();
+    const Real* hub_x_device = d_hub_x.data();
+    const Real* hub_y_device = d_hub_y.data();
+    const Real* hub_z_device = d_hub_z.data();
+    const auto prob_hi = geom.ProbHiArray();
+    const GpuArray<Real,AMREX_SPACEDIM> prob_length{{AMREX_D_DECL(
+        prob_hi[0]-prob_lo[0],
+        prob_hi[1]-prob_lo[1],
+        prob_hi[2]-prob_lo[2])}};
+    const auto is_periodic = geom.isPeriodicArray();
 
     for (ParIterType pti(*this, lev); pti.isValid(); ++pti) {
         const int grid = pti.index();
@@ -659,6 +914,7 @@ ClassicADPC::deposit_forces (int lev,
                 }
 
                 Real integrated_force = Real(0.0);
+                Real integrated_torque = Real(0.0);
                 for (int k = klo; k <= khi; ++k) {
                     for (int j = jlo; j <= jhi; ++j) {
                         for (int i = ilo; i <= ihi; ++i) {
@@ -688,11 +944,56 @@ ClassicADPC::deposit_forces (int lev,
                                 Gpu::Atomic::Add(&z_source(i,j,k), value);
                             }
                             integrated_force += value * cell_volume;
+
+                            Real radius_x =
+                                x - hub_x_device[turbine[ip]];
+                            Real radius_y =
+                                y - hub_y_device[turbine[ip]];
+                            Real radius_z =
+                                z - hub_z_device[turbine[ip]];
+                            if (is_periodic[0]) {
+                                if (radius_x > Real(0.5)*prob_length[0]) {
+                                    radius_x -= prob_length[0];
+                                }
+                                if (radius_x < -Real(0.5)*prob_length[0]) {
+                                    radius_x += prob_length[0];
+                                }
+                            }
+                            if (is_periodic[1]) {
+                                if (radius_y > Real(0.5)*prob_length[1]) {
+                                    radius_y -= prob_length[1];
+                                }
+                                if (radius_y < -Real(0.5)*prob_length[1]) {
+                                    radius_y += prob_length[1];
+                                }
+                            }
+                            if (is_periodic[2]) {
+                                if (radius_z > Real(0.5)*prob_length[2]) {
+                                    radius_z -= prob_length[2];
+                                }
+                                if (radius_z < -Real(0.5)*prob_length[2]) {
+                                    radius_z += prob_length[2];
+                                }
+                            }
+
+                            if (component == 0) {
+                                integrated_torque +=
+                                    ny * radius_z * value * cell_volume;
+                            } else if (component == 1) {
+                                integrated_torque -=
+                                    nx * radius_z * value * cell_volume;
+                            } else {
+                                integrated_torque +=
+                                    (nx*radius_y - ny*radius_x) *
+                                    value * cell_volume;
+                            }
                         }
                     }
                 }
                 Gpu::Atomic::Add(&deposited_force_device[component],
                                  integrated_force);
+                Gpu::Atomic::Add(
+                    &les_torque_device[turbine[ip]], integrated_torque);
             }
         });
     }
@@ -705,6 +1006,7 @@ ClassicADPC::deposit_forces (int lev,
     Vector<Real> expected_force(3);
     Vector<Real> expected_force_abs(3);
     Vector<Real> deposited_force(3);
+    Vector<Real> les_torque(nturb);
     Gpu::copy(Gpu::deviceToHost,
               d_expected_force.begin(), d_expected_force.end(),
               expected_force.begin());
@@ -714,11 +1016,16 @@ ClassicADPC::deposit_forces (int lev,
     Gpu::copy(Gpu::deviceToHost,
               d_deposited_force.begin(), d_deposited_force.end(),
               deposited_force.begin());
+    Gpu::copy(Gpu::deviceToHost,
+              d_les_torque.begin(), d_les_torque.end(),
+              les_torque.begin());
     ParallelAllReduce::Sum(expected_force.data(), expected_force.size(),
                            ParallelContext::CommunicatorAll());
     ParallelAllReduce::Sum(expected_force_abs.data(), expected_force_abs.size(),
                            ParallelContext::CommunicatorAll());
     ParallelAllReduce::Sum(deposited_force.data(), deposited_force.size(),
+                           ParallelContext::CommunicatorAll());
+    ParallelAllReduce::Sum(les_torque.data(), les_torque.size(),
                            ParallelContext::CommunicatorAll());
 
     for (int component = 0; component < 3; ++component) {
@@ -728,6 +1035,15 @@ ClassicADPC::deposit_forces (int lev,
                      expected_force[component]) >
             Real(1.0e-10) * force_scale) {
             Abort("ClassicAD Gaussian deposition failed discrete force conservation");
+        }
+    }
+
+    AMREX_ALWAYS_ASSERT(static_cast<int>(m_owner_levels.size()) == nturb);
+    auto& state = m_model.turbine_state();
+    AMREX_ALWAYS_ASSERT(static_cast<int>(state.size()) == nturb);
+    for (int turbine_id = 0; turbine_id < nturb; ++turbine_id) {
+        if (m_owner_levels[turbine_id] == lev) {
+            state[turbine_id].les_torque = les_torque[turbine_id];
         }
     }
 }
