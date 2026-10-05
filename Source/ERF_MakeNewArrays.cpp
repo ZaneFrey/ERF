@@ -6,6 +6,7 @@
  * Worker routines for filling data at new levels after initialization, restart or regridding
 */
 
+#include <cmath>
 #include <memory>
 #include "ERF_Constants.H"
 
@@ -429,6 +430,31 @@ ERF::init_stuff (int lev, const BoxArray& ba, const DistributionMapping& dm,
     if (solverChoice.windfarm_type == WindFarmType::GeneralAD) {
         vars_windfarm[lev].define(ba, dm, 3, ngrow_state);// dudt, dvdt, dwdt
     }
+#ifdef ERF_USE_PARTICLES
+    if (solverChoice.windfarm_type == WindFarmType::ClassicAD) {
+        // Cover the three-sigma deposition support for any horizontal disk
+        // orientation, including disks reoriented by dynamic yaw.
+        const auto dx = geom[lev].CellSizeArray();
+        const Real horizontal_diagonal =
+            std::sqrt(dx[0]*dx[0] + dx[1]*dx[1]);
+        const IntVect source_ngrow(AMREX_D_DECL(
+            static_cast<int>(std::ceil(
+                Real(6.0)*horizontal_diagonal/dx[0])) + 2,
+            static_cast<int>(std::ceil(
+                Real(6.0)*horizontal_diagonal/dx[1])) + 2,
+            5));
+
+        classic_ad_xmom_src[lev].define(
+            convert(ba, IntVect(1,0,0)), dm, 1, source_ngrow);
+        classic_ad_ymom_src[lev].define(
+            convert(ba, IntVect(0,1,0)), dm, 1, source_ngrow);
+        classic_ad_zmom_src[lev].define(
+            convert(ba, IntVect(0,0,1)), dm, 1, source_ngrow);
+        classic_ad_xmom_src[lev].setVal(Real(0.0));
+        classic_ad_ymom_src[lev].setVal(Real(0.0));
+        classic_ad_zmom_src[lev].setVal(Real(0.0));
+    }
+#endif
         Nturb[lev].define(ba, dm, 1, ngrow_state); // Number of turbines in a cell
         SMark[lev].define(ba, dm, 2, 1); // Free stream velocity/source term
                                                    // sampling marker in a cell - 2 components

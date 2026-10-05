@@ -1364,6 +1364,9 @@ private:
                                                    // velocity upstream of the turbine
 #ifdef ERF_USE_PARTICLES
     std::unique_ptr<ClassicADPC> classic_ad_pc;
+    amrex::Vector<amrex::MultiFab> classic_ad_xmom_src;
+    amrex::Vector<amrex::MultiFab> classic_ad_ymom_src;
+    amrex::Vector<amrex::MultiFab> classic_ad_zmom_src;
 #endif
 #endif
 

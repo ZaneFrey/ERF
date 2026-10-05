@@ -226,6 +226,11 @@ ERF::ERF_shared ()
     Nturb.resize(nlevs_max);
     vars_windfarm.resize(nlevs_max);
     SMark.resize(nlevs_max);
+#ifdef ERF_USE_PARTICLES
+    classic_ad_xmom_src.resize(nlevs_max);
+    classic_ad_ymom_src.resize(nlevs_max);
+    classic_ad_zmom_src.resize(nlevs_max);
+#endif
 #endif
 
     qheating_rates.resize(nlevs_max);
