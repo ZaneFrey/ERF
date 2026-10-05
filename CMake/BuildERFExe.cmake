@@ -375,6 +375,13 @@ function(build_erf_lib erf_lib_name)
       ${SRC_DIR}/WindFarmParametrization/SimpleActuatorDisk/ERF_AdvanceSimpleAD.cpp
       ${SRC_DIR}/WindFarmParametrization/GeneralActuatorDisk/ERF_AdvanceGeneralAD.cpp
     )
+    if(ERF_ENABLE_PARTICLES)
+      target_sources(${erf_lib_name} PRIVATE
+        ${SRC_DIR}/WindFarmParametrization/ClassicActuatorDisk/ERF_ClassicAD.cpp
+      )
+      target_include_directories(${erf_lib_name} PUBLIC
+        $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/Source/WindFarmParametrization/ClassicActuatorDisk>)
+    endif()
     target_compile_definitions(${erf_lib_name} PUBLIC ERF_USE_WINDFARM)
   endif()
 
