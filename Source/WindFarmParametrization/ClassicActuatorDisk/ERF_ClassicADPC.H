@@ -42,6 +42,11 @@ public:
 
     void update_axial_forces (int lev, amrex::Real load_factor);
 
+    void deposit_forces (int lev,
+                         amrex::MultiFab& xmom_src,
+                         amrex::MultiFab& ymom_src,
+                         amrex::MultiFab& zmom_src);
+
 private:
     ClassicAD& m_model;
     amrex::Vector<int> m_owner_levels;

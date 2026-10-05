@@ -30,6 +30,34 @@ void rotor_basis (Real face_angle_deg,
     e1y = nx;
 }
 
+AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+Real gaussian_kernel (Real x, Real y, Real z,
+                      Real particle_x, Real particle_y, Real particle_z,
+                      Real nx, Real ny, Real e1x, Real e1y,
+                      Real epsilon_normal,
+                      Real epsilon_in_plane,
+                      Real epsilon_vertical) noexcept
+{
+    const Real dx = x - particle_x;
+    const Real dy = y - particle_y;
+    const Real dz = z - particle_z;
+    const Real normal_distance = dx*nx + dy*ny;
+    const Real in_plane_distance = dx*e1x + dy*e1y;
+
+    if (std::abs(normal_distance) > Real(3.0)*epsilon_normal ||
+        std::abs(in_plane_distance) > Real(3.0)*epsilon_in_plane ||
+        std::abs(dz) > Real(3.0)*epsilon_vertical) {
+        return Real(0.0);
+    }
+
+    return std::exp(-Real(0.5) *
+        (normal_distance*normal_distance /
+             (epsilon_normal*epsilon_normal) +
+         in_plane_distance*in_plane_distance /
+             (epsilon_in_plane*epsilon_in_plane) +
+         dz*dz / (epsilon_vertical*epsilon_vertical)));
+}
+
 } // namespace
 
 void
@@ -377,6 +405,241 @@ ClassicADPC::update_axial_forces (int lev, Real load_factor)
         });
     }
     Gpu::streamSynchronize();
+}
+
+void
+ClassicADPC::deposit_forces (int lev,
+                             MultiFab& xmom_src,
+                             MultiFab& ymom_src,
+                             MultiFab& zmom_src)
+{
+    AMREX_ALWAYS_ASSERT(lev >= 0 && lev <= finestLevel());
+    AMREX_ALWAYS_ASSERT(xmom_src.ixType() == IndexType(IntVect(1,0,0)));
+    AMREX_ALWAYS_ASSERT(ymom_src.ixType() == IndexType(IntVect(0,1,0)));
+    AMREX_ALWAYS_ASSERT(zmom_src.ixType() == IndexType(IntVect(0,0,1)));
+
+    xmom_src.setVal(Real(0.0));
+    ymom_src.setVal(Real(0.0));
+    zmom_src.setVal(Real(0.0));
+
+    const int nturb = static_cast<int>(m_model.x_locations().size());
+    if (nturb == 0) {
+        return;
+    }
+
+    const Geometry& geom = Geom(lev);
+    const auto prob_lo = geom.ProbLoArray();
+    const auto inverse_cell_size = geom.InvCellSizeArray();
+    const auto cell_size = geom.CellSizeArray();
+    const Real cell_volume =
+        cell_size[0] * cell_size[1] * cell_size[2];
+
+    const auto& face_angles = m_model.disk_face_angles_deg();
+    AMREX_ALWAYS_ASSERT(static_cast<int>(face_angles.size()) == nturb);
+    Gpu::DeviceVector<Real> d_face_angles(nturb);
+    Gpu::copyAsync(Gpu::hostToDevice,
+                   face_angles.begin(), face_angles.end(),
+                   d_face_angles.begin());
+    const Real* face_angles_device = d_face_angles.data();
+
+    Gpu::DeviceVector<Real> d_expected_force(3, Real(0.0));
+    Gpu::DeviceVector<Real> d_expected_force_abs(3, Real(0.0));
+    Gpu::DeviceVector<Real> d_deposited_force(3, Real(0.0));
+    Real* expected_force_device = d_expected_force.data();
+    Real* expected_force_abs_device = d_expected_force_abs.data();
+    Real* deposited_force_device = d_deposited_force.data();
+
+    for (ParIterType pti(*this, lev); pti.isValid(); ++pti) {
+        const int grid = pti.index();
+        auto& tile = ParticlesAt(lev, pti);
+        auto& aos = tile.GetArrayOfStructs();
+        auto& soa = tile.GetStructOfArrays();
+        const int np = aos.numParticles();
+        const auto* particles = aos().data();
+        const auto* force_x =
+            soa.GetRealData(ClassicADRealIdx::force_x).data();
+        const auto* force_y =
+            soa.GetRealData(ClassicADRealIdx::force_y).data();
+        const auto* force_z =
+            soa.GetRealData(ClassicADRealIdx::force_z).data();
+        const auto* turbine =
+            soa.GetIntData(ClassicADIntIdx::turbine).data();
+
+        auto x_source = xmom_src[grid].array();
+        auto y_source = ymom_src[grid].array();
+        auto z_source = zmom_src[grid].array();
+        const Box x_box = xmom_src[grid].box();
+        const Box y_box = ymom_src[grid].box();
+        const Box z_box = zmom_src[grid].box();
+
+        ParallelFor(np, [=] AMREX_GPU_DEVICE (int ip) noexcept {
+            Real nx;
+            Real ny;
+            Real e1x;
+            Real e1y;
+            rotor_basis(face_angles_device[turbine[ip]],
+                        nx, ny, e1x, e1y);
+
+            const Real epsilon_normal = std::sqrt(
+                (nx*cell_size[0])*(nx*cell_size[0]) +
+                (ny*cell_size[1])*(ny*cell_size[1]));
+            const Real epsilon_in_plane = std::sqrt(
+                (e1x*cell_size[0])*(e1x*cell_size[0]) +
+                (e1y*cell_size[1])*(e1y*cell_size[1]));
+            const Real epsilon_vertical = cell_size[2];
+            const Real support_x = Real(3.0) *
+                (std::abs(nx)*epsilon_normal +
+                 std::abs(e1x)*epsilon_in_plane);
+            const Real support_y = Real(3.0) *
+                (std::abs(ny)*epsilon_normal +
+                 std::abs(e1y)*epsilon_in_plane);
+            const Real support_z = Real(3.0) * epsilon_vertical;
+            const Real particle_x = particles[ip].pos(0);
+            const Real particle_y = particles[ip].pos(1);
+            const Real particle_z = particles[ip].pos(2);
+
+            const Real offsets[3][3] = {
+                {Real(0.0), Real(0.5), Real(0.5)},
+                {Real(0.5), Real(0.0), Real(0.5)},
+                {Real(0.5), Real(0.5), Real(0.0)}};
+            const Box source_boxes[3] = {x_box, y_box, z_box};
+            const Real forces[3] = {
+                force_x[ip], force_y[ip], force_z[ip]};
+
+            for (int component = 0; component < 3; ++component) {
+                Gpu::Atomic::Add(&expected_force_device[component],
+                                 forces[component]);
+                Gpu::Atomic::Add(&expected_force_abs_device[component],
+                                 std::abs(forces[component]));
+                if (forces[component] == Real(0.0)) {
+                    continue;
+                }
+
+                const Box& source_box = source_boxes[component];
+                int ilo = static_cast<int>(std::ceil(
+                    (particle_x-support_x-prob_lo[0])*
+                    inverse_cell_size[0] - offsets[component][0]));
+                int ihi = static_cast<int>(std::floor(
+                    (particle_x+support_x-prob_lo[0])*
+                    inverse_cell_size[0] - offsets[component][0]));
+                int jlo = static_cast<int>(std::ceil(
+                    (particle_y-support_y-prob_lo[1])*
+                    inverse_cell_size[1] - offsets[component][1]));
+                int jhi = static_cast<int>(std::floor(
+                    (particle_y+support_y-prob_lo[1])*
+                    inverse_cell_size[1] - offsets[component][1]));
+                int klo = static_cast<int>(std::ceil(
+                    (particle_z-support_z-prob_lo[2])*
+                    inverse_cell_size[2] - offsets[component][2]));
+                int khi = static_cast<int>(std::floor(
+                    (particle_z+support_z-prob_lo[2])*
+                    inverse_cell_size[2] - offsets[component][2]));
+                ilo = amrex::max(ilo, source_box.smallEnd(0));
+                ihi = amrex::min(ihi, source_box.bigEnd(0));
+                jlo = amrex::max(jlo, source_box.smallEnd(1));
+                jhi = amrex::min(jhi, source_box.bigEnd(1));
+                klo = amrex::max(klo, source_box.smallEnd(2));
+                khi = amrex::min(khi, source_box.bigEnd(2));
+
+                Real weight_volume = Real(0.0);
+                for (int k = klo; k <= khi; ++k) {
+                    for (int j = jlo; j <= jhi; ++j) {
+                        for (int i = ilo; i <= ihi; ++i) {
+                            const Real x = prob_lo[0] +
+                                (static_cast<Real>(i) +
+                                 offsets[component][0]) * cell_size[0];
+                            const Real y = prob_lo[1] +
+                                (static_cast<Real>(j) +
+                                 offsets[component][1]) * cell_size[1];
+                            const Real z = prob_lo[2] +
+                                (static_cast<Real>(k) +
+                                 offsets[component][2]) * cell_size[2];
+                            weight_volume += gaussian_kernel(
+                                x, y, z,
+                                particle_x, particle_y, particle_z,
+                                nx, ny, e1x, e1y,
+                                epsilon_normal,
+                                epsilon_in_plane,
+                                epsilon_vertical) * cell_volume;
+                        }
+                    }
+                }
+                if (weight_volume <= Real(0.0)) {
+                    continue;
+                }
+
+                Real integrated_force = Real(0.0);
+                for (int k = klo; k <= khi; ++k) {
+                    for (int j = jlo; j <= jhi; ++j) {
+                        for (int i = ilo; i <= ihi; ++i) {
+                            const Real x = prob_lo[0] +
+                                (static_cast<Real>(i) +
+                                 offsets[component][0]) * cell_size[0];
+                            const Real y = prob_lo[1] +
+                                (static_cast<Real>(j) +
+                                 offsets[component][1]) * cell_size[1];
+                            const Real z = prob_lo[2] +
+                                (static_cast<Real>(k) +
+                                 offsets[component][2]) * cell_size[2];
+                            const Real value = forces[component] *
+                                gaussian_kernel(
+                                    x, y, z,
+                                    particle_x, particle_y, particle_z,
+                                    nx, ny, e1x, e1y,
+                                    epsilon_normal,
+                                    epsilon_in_plane,
+                                    epsilon_vertical) / weight_volume;
+
+                            if (component == 0) {
+                                Gpu::Atomic::Add(&x_source(i,j,k), value);
+                            } else if (component == 1) {
+                                Gpu::Atomic::Add(&y_source(i,j,k), value);
+                            } else {
+                                Gpu::Atomic::Add(&z_source(i,j,k), value);
+                            }
+                            integrated_force += value * cell_volume;
+                        }
+                    }
+                }
+                Gpu::Atomic::Add(&deposited_force_device[component],
+                                 integrated_force);
+            }
+        });
+    }
+    Gpu::streamSynchronize();
+
+    xmom_src.SumBoundary(geom.periodicity());
+    ymom_src.SumBoundary(geom.periodicity());
+    zmom_src.SumBoundary(geom.periodicity());
+
+    Vector<Real> expected_force(3);
+    Vector<Real> expected_force_abs(3);
+    Vector<Real> deposited_force(3);
+    Gpu::copy(Gpu::deviceToHost,
+              d_expected_force.begin(), d_expected_force.end(),
+              expected_force.begin());
+    Gpu::copy(Gpu::deviceToHost,
+              d_expected_force_abs.begin(), d_expected_force_abs.end(),
+              expected_force_abs.begin());
+    Gpu::copy(Gpu::deviceToHost,
+              d_deposited_force.begin(), d_deposited_force.end(),
+              deposited_force.begin());
+    ParallelAllReduce::Sum(expected_force.data(), expected_force.size(),
+                           ParallelContext::CommunicatorAll());
+    ParallelAllReduce::Sum(expected_force_abs.data(), expected_force_abs.size(),
+                           ParallelContext::CommunicatorAll());
+    ParallelAllReduce::Sum(deposited_force.data(), deposited_force.size(),
+                           ParallelContext::CommunicatorAll());
+
+    for (int component = 0; component < 3; ++component) {
+        const Real force_scale =
+            amrex::max(expected_force_abs[component], Real(1.0));
+        if (std::abs(deposited_force[component] -
+                     expected_force[component]) >
+            Real(1.0e-10) * force_scale) {
+            Abort("ClassicAD Gaussian deposition failed discrete force conservation");
+        }
+    }
 }
 
 #endif
