@@ -75,6 +75,9 @@
 
 #ifdef ERF_USE_WINDFARM
 #include "ERF_WindFarm.H"
+#ifdef ERF_USE_PARTICLES
+#include "ERF_ClassicADPC.H"
+#endif
 #endif
 #include <ERF_SurfaceModel.H>
 
@@ -1359,6 +1362,9 @@ private:
     amrex::Vector<amrex::MultiFab> SMark; // A multifab that holds an integer corresponding
                                                    // to the number of the wind turbine to sample
                                                    // velocity upstream of the turbine
+#ifdef ERF_USE_PARTICLES
+    std::unique_ptr<ClassicADPC> classic_ad_pc;
+#endif
 #endif
 
     std::unique_ptr<SurfaceModel> m_SurfaceModel = nullptr;

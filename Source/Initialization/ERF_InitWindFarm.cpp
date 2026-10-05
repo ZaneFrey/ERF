@@ -89,6 +89,20 @@ ERF::rebuild_windfarm_hierarchy ()
         windfarm->define_classic_ad_owner_levels(
             finest_level, geom, grids, active_ref_ratio,
             solverChoice.turb_disk_angle);
+
+#ifdef ERF_USE_PARTICLES
+        if (!classic_ad_pc) {
+            classic_ad_pc = std::make_unique<ClassicADPC>(
+                static_cast<ParGDBBase*>(GetParGDB()),
+                windfarm->classic_ad_model());
+        }
+
+        Vector<int> owner_levels(windfarm->num_turbines());
+        for (int turbine_id = 0; turbine_id < windfarm->num_turbines(); ++turbine_id) {
+            owner_levels[turbine_id] = windfarm->owner_level(turbine_id);
+        }
+        classic_ad_pc->rebuild(owner_levels);
+#endif
     }
 
     m_windfarm_hierarchy_initialized = true;
