@@ -216,6 +216,17 @@
                          sounding_at_level(level), lsf_at_level(level), lsf_data[level],
                          get_eb(level), true);
 
+#if defined(ERF_USE_WINDFARM) && defined(ERF_USE_PARTICLES)
+        if (solverChoice.windfarm_type == WindFarmType::ClassicAD) {
+            MultiFab::Add(
+                xmom_src, classic_ad_xmom_src[level], 0, 0, 1, 0);
+            MultiFab::Add(
+                ymom_src, classic_ad_ymom_src[level], 0, 0, 1, 0);
+            MultiFab::Add(
+                zmom_src, classic_ad_zmom_src[level], 0, 0, 1, 0);
+        }
+#endif
+
         // Nudging of the velocity towards observations at stations
         if (solverChoice.nudging_from_observations && obs_nudging) {
             obs_nudging->add_momentum_sources(level, old_stage_time, static_cast<Real>(slow_dt), fine_geom,
