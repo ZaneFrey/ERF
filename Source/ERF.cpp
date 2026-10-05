@@ -2864,6 +2864,9 @@ ERF::initializeWindFarm (const int& a_nlevsmax/*!< number of AMR levels */ )
 #ifdef ERF_USE_PARTICLES
     if (solverChoice.windfarm_type == WindFarmType::ClassicAD) {
         windfarm->configure_classic_ad(solverChoice.classic_ad_ctprime,
+                                       solverChoice.classic_ad_cpprime,
+                                       solverChoice.classic_ad_tsr,
+                                       solverChoice.classic_ad_wake_rotation,
                                        solverChoice.classic_ad_turb_mem_time,
                                        solverChoice.classic_ad_diameter,
                                        solverChoice.classic_ad_hub_height,

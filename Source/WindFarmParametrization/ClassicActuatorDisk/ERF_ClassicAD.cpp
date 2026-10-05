@@ -38,11 +38,15 @@ Real wrap_360 (Real angle)
 } // namespace
 
 void
-ClassicAD::configure (Real ctprime, Real memory_time,
+ClassicAD::configure (Real ctprime, Real cpprime, Real tsr,
+                      bool wake_rotation, Real memory_time,
                       Real diameter, Real hub_height, Real spacing,
                       bool spacing_was_supplied)
 {
     m_ctprime = ctprime;
+    m_cpprime = cpprime;
+    m_tsr = tsr;
+    m_wake_rotation = wake_rotation;
     m_memory_time = memory_time;
     m_diameter = diameter;
     m_hub_height_classic = hub_height;

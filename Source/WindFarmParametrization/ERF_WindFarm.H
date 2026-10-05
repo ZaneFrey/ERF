@@ -214,6 +214,9 @@ public:
 
 #ifdef ERF_USE_PARTICLES
     void configure_classic_ad (amrex::Real ctprime,
+                               amrex::Real cpprime,
+                               amrex::Real tsr,
+                               bool wake_rotation,
                                amrex::Real memory_time,
                                amrex::Real diameter,
                                amrex::Real hub_height,
@@ -222,8 +225,9 @@ public:
     {
         rotor_rad = amrex::Real(0.5) * diameter;
         this->hub_height = hub_height;
-        classic_ad_model().configure(ctprime, memory_time, diameter, hub_height,
-                                     spacing, spacing_was_supplied);
+        classic_ad_model().configure(ctprime, cpprime, tsr, wake_rotation,
+                                     memory_time, diameter, hub_height, spacing,
+                                     spacing_was_supplied);
     }
 
     ClassicAD& classic_ad_model ()

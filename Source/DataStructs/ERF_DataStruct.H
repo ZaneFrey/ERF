@@ -1629,6 +1629,9 @@ struct SolverChoice {
 
         amrex::ParmParse pp_classic("erf.classic_ad");
         pp_classic.queryAdd("ctprime", classic_ad_ctprime);
+        pp_classic.queryAdd("cpprime", classic_ad_cpprime);
+        pp_classic.queryAdd("tsr", classic_ad_tsr);
+        pp_classic.queryAdd("wake_rotation", classic_ad_wake_rotation);
         pp_classic.queryAdd("turb_mem_time", classic_ad_turb_mem_time);
         pp_classic.queryAdd("diameter", classic_ad_diameter);
         pp_classic.queryAdd("hub_height", classic_ad_hub_height);
@@ -1810,6 +1813,13 @@ struct SolverChoice {
             }
             if (classic_ad_ctprime < zero) {
                 amrex::Error("erf.classic_ad.ctprime must be >= 0");
+            }
+            if (classic_ad_cpprime < zero) {
+                amrex::Error("erf.classic_ad.cpprime must be >= 0");
+            }
+            if (classic_ad_wake_rotation && classic_ad_tsr <= zero) {
+                amrex::Error(
+                    "erf.classic_ad.tsr must be > 0 when wake rotation is enabled");
             }
             if (classic_ad_turb_mem_time < zero) {
                 amrex::Error("erf.classic_ad.turb_mem_time must be >= 0");
@@ -2519,12 +2529,15 @@ struct SolverChoice {
     amrex::Real windfarm_x_shift = -one;
     amrex::Real windfarm_y_shift = -one;
     amrex::Real classic_ad_ctprime = amrex::Real(4.0/3.0);
+    amrex::Real classic_ad_cpprime = amrex::Real(0.8);
+    amrex::Real classic_ad_tsr = amrex::Real(8.0);
     amrex::Real classic_ad_turb_mem_time = amrex::Real(600.0);
     amrex::Real classic_ad_diameter = -one;
     amrex::Real classic_ad_hub_height = -one;
     amrex::Real classic_ad_actuator_spacing = -one;
     amrex::Real classic_ad_yaw_sensor_distance_by_D = one;
     amrex::Real classic_ad_yaw_sensor_mem_time = amrex::Real(60.0);
+    bool classic_ad_wake_rotation = false;
     bool classic_ad_spacing_was_supplied = false;
 
     // Nudging factor for bdy sponging : F1 = 1/(nudge_factor * dt)
@@ -2830,6 +2843,12 @@ struct SolverChoice {
  * @brief Wind-farm y-coordinate shift.
  * @var SolverChoice::classic_ad_ctprime
  * @brief ClassicAD local thrust coefficient.
+ * @var SolverChoice::classic_ad_cpprime
+ * @brief ClassicAD local power coefficient.
+ * @var SolverChoice::classic_ad_tsr
+ * @brief ClassicAD tip-speed ratio.
+ * @var SolverChoice::classic_ad_wake_rotation
+ * @brief Whether ClassicAD applies tangential loading for wake rotation.
  * @var SolverChoice::classic_ad_turb_mem_time
  * @brief ClassicAD disk-velocity filter time scale [s].
  * @var SolverChoice::classic_ad_diameter

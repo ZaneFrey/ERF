@@ -53,6 +53,9 @@ public:
     }
 
     void configure (amrex::Real ctprime,
+                    amrex::Real cpprime,
+                    amrex::Real tsr,
+                    bool wake_rotation,
                     amrex::Real memory_time,
                     amrex::Real diameter,
                     amrex::Real hub_height,
@@ -74,6 +77,9 @@ public:
     bool read_yaw_state (const std::string& restart_chkfile);
 
     amrex::Real ctprime () const { return m_ctprime; }
+    amrex::Real cpprime () const { return m_cpprime; }
+    amrex::Real tsr () const { return m_tsr; }
+    bool wake_rotation_enabled () const { return m_wake_rotation; }
     amrex::Real memory_time () const { return m_memory_time; }
     amrex::Real rotor_radius () const { return 0.5 * m_diameter; }
     amrex::Real hub_height () const { return m_hub_height_classic; }
@@ -104,6 +110,9 @@ private:
     void synchronize_rotor_angles ();
 
     amrex::Real m_ctprime{4.0/3.0};
+    amrex::Real m_cpprime{0.8};
+    amrex::Real m_tsr{8.0};
+    bool m_wake_rotation{false};
     amrex::Real m_memory_time{600.0};
     amrex::Real m_diameter{-1.0};
     amrex::Real m_hub_height_classic{-1.0};
