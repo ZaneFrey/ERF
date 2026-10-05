@@ -56,6 +56,12 @@ ERF::initialize_windfarm_catalog ()
 
     if (is_classic_ad) {
 #ifdef ERF_USE_PARTICLES
+        if (solverChoice.dynamic_yaw) {
+            windfarm->classic_ad_model().initialize_dynamic_yaw(
+                solverChoice.turb_disk_angle,
+                solverChoice.classic_ad_yaw_sensor_distance_by_D,
+                solverChoice.classic_ad_yaw_sensor_mem_time);
+        }
         windfarm->classic_ad_model().initialize_turbine_state(windfarm->num_turbines());
 #endif
     }

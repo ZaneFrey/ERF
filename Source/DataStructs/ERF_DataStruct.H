@@ -1620,6 +1620,7 @@ struct SolverChoice {
         // by the diameter of the turbine
         pp.queryAdd("sampling_distance_by_D", sampling_distance_by_D);
         pp.queryAdd("turb_disk_angle_from_x", turb_disk_angle);
+        pp.queryAdd("dynamic_yaw", dynamic_yaw);
         pp.queryAdd("windfarm_start_time", windfarm_start_time);
         pp.queryAdd("windfarm_ramp_tau", windfarm_ramp_tau);
 
@@ -1631,6 +1632,12 @@ struct SolverChoice {
         pp_classic.queryAdd("turb_mem_time", classic_ad_turb_mem_time);
         pp_classic.queryAdd("diameter", classic_ad_diameter);
         pp_classic.queryAdd("hub_height", classic_ad_hub_height);
+        pp_classic.queryAdd(
+            "yaw_sensor_distance_by_D",
+            classic_ad_yaw_sensor_distance_by_D);
+        pp_classic.queryAdd(
+            "yaw_sensor_mem_time",
+            classic_ad_yaw_sensor_mem_time);
 
         amrex::ParmParse pp_classic_actuator("erf.classic_ad.actuator");
         classic_ad_spacing_was_supplied =
@@ -1772,6 +1779,10 @@ struct SolverChoice {
         //
         // Wind farm checks
         //
+        if (dynamic_yaw && windfarm_type != WindFarmType::ClassicAD) {
+            amrex::Error(
+                "erf.dynamic_yaw is currently supported only for ClassicAD");
+        }
         if (windfarm_type == WindFarmType::ClassicAD) {
 #ifndef ERF_USE_PARTICLES
             amrex::Error("erf.windfarm_type = ClassicAD requires ERF particle support "
@@ -1779,6 +1790,17 @@ struct SolverChoice {
 #endif
             if (terrain_type != TerrainType::None) {
                 amrex::Error("ClassicAD supports flat terrain only (erf.terrain_type = None)");
+            }
+            if (dynamic_yaw && max_level != 0) {
+                amrex::Error("ClassicAD dynamic yaw currently requires amr.max_level = 0");
+            }
+            if (dynamic_yaw && classic_ad_yaw_sensor_distance_by_D <= zero) {
+                amrex::Error(
+                    "erf.classic_ad.yaw_sensor_distance_by_D must be > 0");
+            }
+            if (dynamic_yaw && classic_ad_yaw_sensor_mem_time < zero) {
+                amrex::Error(
+                    "erf.classic_ad.yaw_sensor_mem_time must be >= 0");
             }
             if (classic_ad_diameter <= zero) {
                 amrex::Error("erf.classic_ad.diameter is required and must be > 0");
@@ -2491,6 +2513,7 @@ struct SolverChoice {
     std::string windfarm_blade_table, windfarm_airfoil_tables;
     amrex::Real sampling_distance_by_D = -one;
     amrex::Real turb_disk_angle  = -one;
+    bool dynamic_yaw = false;
     amrex::Real windfarm_start_time = zero;
     amrex::Real windfarm_ramp_tau = -one;
     amrex::Real windfarm_x_shift = -one;
@@ -2500,6 +2523,8 @@ struct SolverChoice {
     amrex::Real classic_ad_diameter = -one;
     amrex::Real classic_ad_hub_height = -one;
     amrex::Real classic_ad_actuator_spacing = -one;
+    amrex::Real classic_ad_yaw_sensor_distance_by_D = one;
+    amrex::Real classic_ad_yaw_sensor_mem_time = amrex::Real(60.0);
     bool classic_ad_spacing_was_supplied = false;
 
     // Nudging factor for bdy sponging : F1 = 1/(nudge_factor * dt)

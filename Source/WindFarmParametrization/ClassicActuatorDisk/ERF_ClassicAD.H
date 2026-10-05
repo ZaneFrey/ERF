@@ -18,6 +18,18 @@ struct ClassicADTurbineState
     bool memory_initialized{false};
 };
 
+struct ClassicADYawState
+{
+    amrex::Real psi_ref{0.0};
+    amrex::Real psi_rotor{0.0};
+    amrex::Real phi_cmd{0.0};
+    amrex::Real sensor_u_raw{0.0};
+    amrex::Real sensor_v_raw{0.0};
+    amrex::Real sensor_u_filtered{0.0};
+    amrex::Real sensor_v_filtered{0.0};
+    bool sensor_initialized{false};
+};
+
 /**
  * @brief State and configuration for the classic actuator-disk model.
  */
@@ -48,6 +60,13 @@ public:
                     bool spacing_was_supplied);
 
     void initialize_turbine_state (int nturb);
+    void initialize_dynamic_yaw (amrex::Real disk_face_angle_deg,
+                                 amrex::Real sensor_distance_by_D,
+                                 amrex::Real sensor_memory_time);
+    void update_dynamic_yaw (
+        const amrex::Vector<amrex::Real>& sensor_u_raw,
+        const amrex::Vector<amrex::Real>& sensor_v_raw,
+        amrex::Real dt);
     void write_memory_state (const std::string& checkpointname) const override;
     bool read_memory_state (const std::string& restart_chkfile) override;
 
@@ -57,6 +76,11 @@ public:
     amrex::Real hub_height () const { return m_hub_height_classic; }
     amrex::Real actuator_spacing () const { return m_actuator_spacing; }
     bool spacing_was_supplied () const { return m_spacing_was_supplied; }
+    bool dynamic_yaw_enabled () const { return m_dynamic_yaw_enabled; }
+    amrex::Real yaw_sensor_distance_by_D () const
+    {
+        return m_yaw_sensor_distance_by_D;
+    }
 
     const amrex::Vector<amrex::Real>& x_locations () const { return m_xloc; }
     const amrex::Vector<amrex::Real>& y_locations () const { return m_yloc; }
@@ -65,11 +89,17 @@ public:
     {
         return m_turb_disk_angles;
     }
+    const amrex::Vector<ClassicADYawState>& yaw_state () const
+    {
+        return m_yaw_state;
+    }
 
     amrex::Vector<ClassicADTurbineState>& turbine_state () { return m_turbine_state; }
     const amrex::Vector<ClassicADTurbineState>& turbine_state () const { return m_turbine_state; }
 
 private:
+    void synchronize_rotor_angles ();
+
     amrex::Real m_ctprime{4.0/3.0};
     amrex::Real m_memory_time{600.0};
     amrex::Real m_diameter{-1.0};
@@ -77,6 +107,10 @@ private:
     amrex::Real m_actuator_spacing{-1.0};
     bool m_spacing_was_supplied{false};
     amrex::Vector<ClassicADTurbineState> m_turbine_state;
+    bool m_dynamic_yaw_enabled{false};
+    amrex::Real m_yaw_sensor_distance_by_D{1.0};
+    amrex::Real m_yaw_sensor_memory_time{60.0};
+    amrex::Vector<ClassicADYawState> m_yaw_state;
 };
 
 #endif

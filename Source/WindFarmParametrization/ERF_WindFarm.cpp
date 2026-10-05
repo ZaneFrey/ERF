@@ -119,6 +119,12 @@ WindFarm::define_classic_ad_owner_levels (
     m_turbines_on_level.assign(nlev, {});
     zloc.assign(nturb, geom[0].ProbLo(2));
     Vector<Real> face_angles(nturb, disk_face_angle_deg);
+#ifdef ERF_USE_PARTICLES
+    if (classic_ad_model().dynamic_yaw_enabled()) {
+        face_angles = classic_ad_model().disk_face_angles_deg();
+        AMREX_ALWAYS_ASSERT(static_cast<int>(face_angles.size()) == nturb);
+    }
+#endif
 
     Vector<BoxArray> uncovered(nlev);
     for (int lev = 0; lev < nlev; ++lev) {
