@@ -107,6 +107,19 @@ public:
 
     int num_turbines () const { return static_cast<int>(xloc.size()); }
 
+    const amrex::Vector<int>& turbines_on_level (int lev) const
+    {
+        AMREX_ALWAYS_ASSERT(lev >= 0 && lev < static_cast<int>(m_turbines_on_level.size()));
+        return m_turbines_on_level[lev];
+    }
+
+    int owner_level (int turbine_id) const
+    {
+        AMREX_ALWAYS_ASSERT(turbine_id >= 0 &&
+                            turbine_id < static_cast<int>(m_owner_level.size()));
+        return m_owner_level[turbine_id];
+    }
+
     /**
      * @brief Read the turbine specification table.
      * @param[in] windfarm_spec_table Path to the specification table.
@@ -326,6 +339,8 @@ public:
 protected:
 
     amrex::Vector<amrex::Real> xloc, yloc, zloc;
+    amrex::Vector<int> m_owner_level;
+    amrex::Vector<amrex::Vector<int>> m_turbines_on_level;
     amrex::Real my_turb_disk_angle;
     amrex::Real hub_height, rotor_rad, thrust_coeff_standing, nominal_power;
     amrex::Vector<amrex::Real> wind_speed, thrust_coeff, power;
