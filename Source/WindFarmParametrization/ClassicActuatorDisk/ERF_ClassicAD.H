@@ -14,6 +14,10 @@ struct ClassicADTurbineState
     amrex::Real thrust_target{0.0};
     amrex::Real thrust_applied{0.0};
     amrex::Real axial_power{0.0};
+    amrex::Real rotor_power{0.0};
+    amrex::Real omega{0.0};
+    amrex::Real torque_target{0.0};
+    amrex::Real torque_applied{0.0};
     amrex::Real actuator_area{0.0};
     bool memory_initialized{false};
 };

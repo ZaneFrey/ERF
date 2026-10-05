@@ -421,6 +421,26 @@ ClassicADPC::update_axial_forces (int lev, Real load_factor)
             load_factor * turbine_state.thrust_target;
         turbine_state.axial_power =
             turbine_state.thrust_target * disk_velocity;
+        turbine_state.rotor_power = Real(0.0);
+        turbine_state.omega = Real(0.0);
+        turbine_state.torque_target = Real(0.0);
+        turbine_state.torque_applied = Real(0.0);
+
+        if (m_model.wake_rotation_enabled() &&
+            std::abs(disk_velocity) > Real(1.0e-12)) {
+            turbine_state.omega =
+                m_model.tsr() * disk_velocity / m_model.rotor_radius();
+            turbine_state.rotor_power = Real(0.5) *
+                turbine_state.disk_density * rotor_area *
+                m_model.cpprime() * disk_velocity * disk_velocity *
+                disk_velocity;
+            turbine_state.torque_target = Real(0.5) *
+                turbine_state.disk_density * rotor_area *
+                m_model.cpprime() * disk_velocity * disk_velocity *
+                m_model.rotor_radius() / m_model.tsr();
+            turbine_state.torque_applied =
+                load_factor * turbine_state.torque_target;
+        }
 
         thrust_applied[turbine_id] = turbine_state.thrust_applied;
         area_normalization[turbine_id] = turbine_state.actuator_area;
