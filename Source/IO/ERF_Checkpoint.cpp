@@ -821,6 +821,11 @@ ERF::WriteCheckpointFile () const
     if (solverChoice.windfarm_type == WindFarmType::ClassicAD) {
         AMREX_ALWAYS_ASSERT(windfarm != nullptr);
         windfarm->write_memory_state(checkpointname);
+#ifdef ERF_USE_PARTICLES
+        if (solverChoice.dynamic_yaw) {
+            windfarm->classic_ad_model().write_yaw_state(checkpointname);
+        }
+#endif
     }
 #endif
 

@@ -62,13 +62,16 @@ public:
     void initialize_turbine_state (int nturb);
     void initialize_dynamic_yaw (amrex::Real disk_face_angle_deg,
                                  amrex::Real sensor_distance_by_D,
-                                 amrex::Real sensor_memory_time);
+                                 amrex::Real sensor_memory_time,
+                                 amrex::Real windfarm_start_time);
     void update_dynamic_yaw (
         const amrex::Vector<amrex::Real>& sensor_u_raw,
         const amrex::Vector<amrex::Real>& sensor_v_raw,
         amrex::Real dt);
     void write_memory_state (const std::string& checkpointname) const override;
     bool read_memory_state (const std::string& restart_chkfile) override;
+    void write_yaw_state (const std::string& checkpointname) const;
+    bool read_yaw_state (const std::string& restart_chkfile);
 
     amrex::Real ctprime () const { return m_ctprime; }
     amrex::Real memory_time () const { return m_memory_time; }
@@ -110,6 +113,8 @@ private:
     bool m_dynamic_yaw_enabled{false};
     amrex::Real m_yaw_sensor_distance_by_D{1.0};
     amrex::Real m_yaw_sensor_memory_time{60.0};
+    amrex::Real m_next_yaw_output_time{0.0};
+    long m_yaw_active_step_count{0};
     amrex::Vector<ClassicADYawState> m_yaw_state;
 };
 

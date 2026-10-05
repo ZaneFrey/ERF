@@ -926,6 +926,17 @@ ERF::InitData_post ()
         if (!restart_chkfile.empty()) {
             AMREX_ALWAYS_ASSERT(windfarm != nullptr);
             windfarm->read_memory_state(restart_chkfile);
+#ifdef ERF_USE_PARTICLES
+            if (solverChoice.dynamic_yaw &&
+                windfarm->classic_ad_model().read_yaw_state(restart_chkfile)) {
+                AMREX_ALWAYS_ASSERT(classic_ad_sensor_pc != nullptr);
+                AMREX_ALWAYS_ASSERT(classic_ad_pc != nullptr);
+                classic_ad_sensor_pc->update_positions();
+                classic_ad_pc->update_positions();
+                classic_ad_sensor_pc->Redistribute();
+                classic_ad_pc->Redistribute();
+            }
+#endif
         }
     }
 #endif

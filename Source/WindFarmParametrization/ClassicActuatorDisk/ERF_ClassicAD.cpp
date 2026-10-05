@@ -68,12 +68,15 @@ ClassicAD::initialize_turbine_state (int nturb)
 void
 ClassicAD::initialize_dynamic_yaw (Real disk_face_angle_deg,
                                    Real sensor_distance_by_D,
-                                   Real sensor_memory_time)
+                                   Real sensor_memory_time,
+                                   Real windfarm_start_time)
 {
     const int nturb = static_cast<int>(m_xloc.size());
     m_dynamic_yaw_enabled = true;
     m_yaw_sensor_distance_by_D = sensor_distance_by_D;
     m_yaw_sensor_memory_time = sensor_memory_time;
+    m_next_yaw_output_time = windfarm_start_time;
+    m_yaw_active_step_count = 0;
     m_yaw_state.assign(nturb, {});
 
     const Real initial_angle = wrap_pi(
@@ -145,6 +148,7 @@ ClassicAD::update_dynamic_yaw (const Vector<Real>& sensor_u_raw,
             state.phi_cmd - state.psi_ref);
         state.psi_ref = wrap_pi(state.psi_ref + alpha*yaw_error);
     }
+    ++m_yaw_active_step_count;
     synchronize_rotor_angles();
 }
 
@@ -201,5 +205,82 @@ ClassicAD::read_memory_state (const std::string& restart_chkfile)
     if (!input.good() && !input.eof()) {
         Abort("Failed while reading ClassicADMemoryState");
     }
+    return true;
+}
+
+void
+ClassicAD::write_yaw_state (const std::string& checkpointname) const
+{
+    if (!m_dynamic_yaw_enabled || !ParallelDescriptor::IOProcessor()) {
+        return;
+    }
+
+    std::ofstream out(checkpointname + "/ClassicADYawState",
+                      std::ios::out | std::ios::trunc);
+    if (!out.good()) {
+        Abort("Failed to open ClassicADYawState for checkpoint write");
+    }
+
+    out << std::setprecision(17);
+    out << "ClassicADYawState_v1\n" << m_yaw_state.size() << '\n';
+    out << m_next_yaw_output_time << ' '
+        << m_yaw_active_step_count << '\n';
+    for (const auto& state : m_yaw_state) {
+        out << state.psi_ref << ' '
+            << state.psi_rotor << ' '
+            << state.phi_cmd << ' '
+            << state.sensor_u_raw << ' '
+            << state.sensor_v_raw << ' '
+            << state.sensor_u_filtered << ' '
+            << state.sensor_v_filtered << ' '
+            << static_cast<int>(state.sensor_initialized) << '\n';
+    }
+}
+
+bool
+ClassicAD::read_yaw_state (const std::string& restart_chkfile)
+{
+    if (!m_dynamic_yaw_enabled) {
+        return false;
+    }
+
+    const std::string filename = restart_chkfile + "/ClassicADYawState";
+    if (!FileExists(filename)) {
+        return false;
+    }
+
+    Vector<char> file_chars;
+    ParallelDescriptor::ReadAndBcastFile(filename, file_chars);
+    std::istringstream input(
+        std::string(file_chars.dataPtr()), std::istringstream::in);
+
+    std::string tag;
+    int nturb = 0;
+    input >> tag >> nturb;
+    if (tag != "ClassicADYawState_v1") {
+        Abort("Unknown ClassicADYawState format");
+    }
+    if (nturb != static_cast<int>(m_yaw_state.size())) {
+        Abort("ClassicADYawState turbine count does not match windfarm_loc_table");
+    }
+
+    input >> m_next_yaw_output_time >> m_yaw_active_step_count;
+    for (auto& state : m_yaw_state) {
+        int initialized = 0;
+        input >> state.psi_ref
+              >> state.psi_rotor
+              >> state.phi_cmd
+              >> state.sensor_u_raw
+              >> state.sensor_v_raw
+              >> state.sensor_u_filtered
+              >> state.sensor_v_filtered
+              >> initialized;
+        state.sensor_initialized = (initialized != 0);
+    }
+    if (!input.good() && !input.eof()) {
+        Abort("Failed while reading ClassicADYawState");
+    }
+
+    synchronize_rotor_angles();
     return true;
 }
