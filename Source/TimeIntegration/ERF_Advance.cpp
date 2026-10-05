@@ -163,6 +163,31 @@ ERF::Advance (int lev, double time, double dt_lev, int iteration, int /*ncycle*/
                 classic_ad_ymom_src[lev].setVal(Real(0.0));
                 classic_ad_zmom_src[lev].setVal(Real(0.0));
             } else {
+                S_old.FillBoundary(Geom(lev).periodicity());
+                U_old.FillBoundary(Geom(lev).periodicity());
+                V_old.FillBoundary(Geom(lev).periodicity());
+                W_old.FillBoundary(Geom(lev).periodicity());
+
+                if (solverChoice.dynamic_yaw) {
+                    AMREX_ALWAYS_ASSERT(lev == 0);
+                    AMREX_ALWAYS_ASSERT(classic_ad_sensor_pc != nullptr);
+
+                    Vector<Real> sensor_u_raw;
+                    Vector<Real> sensor_v_raw;
+                    classic_ad_sensor_pc->sample_uv(
+                        lev, U_old, V_old, W_old,
+                        sensor_u_raw, sensor_v_raw);
+                    windfarm->classic_ad_model().update_dynamic_yaw(
+                        sensor_u_raw, sensor_v_raw, dt_lev);
+
+                    // Rotate both disks rigidly, then let AMReX update particle
+                    // ownership before sampling or depositing any actuator load.
+                    classic_ad_sensor_pc->update_positions();
+                    classic_ad_pc->update_positions();
+                    classic_ad_sensor_pc->Redistribute();
+                    classic_ad_pc->Redistribute();
+                }
+
                 classic_ad_pc->sample_disk_state(
                     lev, dt_lev, S_old, U_old, V_old, W_old);
 

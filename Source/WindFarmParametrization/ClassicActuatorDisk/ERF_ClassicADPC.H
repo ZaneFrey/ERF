@@ -32,6 +32,7 @@ public:
     {}
 
     void rebuild (const amrex::Vector<int>& owner_levels);
+    void update_positions ();
 
     void sample_disk_state (int lev,
                             amrex::Real dt,

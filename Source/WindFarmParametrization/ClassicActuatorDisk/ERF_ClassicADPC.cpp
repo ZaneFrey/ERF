@@ -170,6 +170,76 @@ ClassicADPC::rebuild (const Vector<int>& owner_levels)
 }
 
 void
+ClassicADPC::update_positions ()
+{
+    const int nturb = static_cast<int>(m_model.x_locations().size());
+    AMREX_ALWAYS_ASSERT(
+        static_cast<int>(m_model.y_locations().size()) == nturb);
+    AMREX_ALWAYS_ASSERT(
+        static_cast<int>(m_model.ground_elevations().size()) == nturb);
+    AMREX_ALWAYS_ASSERT(
+        static_cast<int>(m_model.disk_face_angles_deg().size()) == nturb);
+
+    Gpu::DeviceVector<Real> d_xloc(nturb);
+    Gpu::DeviceVector<Real> d_yloc(nturb);
+    Gpu::DeviceVector<Real> d_ground(nturb);
+    Gpu::DeviceVector<Real> d_face_angles(nturb);
+    Gpu::copyAsync(Gpu::hostToDevice,
+                   m_model.x_locations().begin(),
+                   m_model.x_locations().end(), d_xloc.begin());
+    Gpu::copyAsync(Gpu::hostToDevice,
+                   m_model.y_locations().begin(),
+                   m_model.y_locations().end(), d_yloc.begin());
+    Gpu::copyAsync(Gpu::hostToDevice,
+                   m_model.ground_elevations().begin(),
+                   m_model.ground_elevations().end(), d_ground.begin());
+    Gpu::copyAsync(Gpu::hostToDevice,
+                   m_model.disk_face_angles_deg().begin(),
+                   m_model.disk_face_angles_deg().end(),
+                   d_face_angles.begin());
+    const Real* xloc = d_xloc.data();
+    const Real* yloc = d_yloc.data();
+    const Real* ground = d_ground.data();
+    const Real* face_angles = d_face_angles.data();
+    const Real hub_height = m_model.hub_height();
+
+    for (int lev = 0; lev <= finestLevel(); ++lev) {
+        for (ParIterType pti(*this, lev); pti.isValid(); ++pti) {
+            auto& tile = ParticlesAt(lev, pti);
+            auto& aos = tile.GetArrayOfStructs();
+            auto& soa = tile.GetStructOfArrays();
+            const int np = aos.numParticles();
+            auto* particles = aos().data();
+            const auto* radius =
+                soa.GetRealData(ClassicADRealIdx::radius).data();
+            const auto* theta =
+                soa.GetRealData(ClassicADRealIdx::theta).data();
+            const auto* turbine =
+                soa.GetIntData(ClassicADIntIdx::turbine).data();
+
+            ParallelFor(np, [=] AMREX_GPU_DEVICE (int ip) noexcept {
+                const int turbine_id = turbine[ip];
+                Real nx;
+                Real ny;
+                Real e1x;
+                Real e1y;
+                rotor_basis(face_angles[turbine_id],
+                            nx, ny, e1x, e1y);
+                const Real radial_in_plane =
+                    radius[ip]*std::cos(theta[ip]);
+                particles[ip].pos(0) =
+                    xloc[turbine_id] + radial_in_plane*e1x;
+                particles[ip].pos(1) =
+                    yloc[turbine_id] + radial_in_plane*e1y;
+                particles[ip].pos(2) = ground[turbine_id] + hub_height +
+                    radius[ip]*std::sin(theta[ip]);
+            });
+        }
+    }
+    Gpu::streamSynchronize();
+}
+
+void
 ClassicADPC::sample_disk_state (int lev,
                                 Real dt,
                                 const MultiFab& cons,
