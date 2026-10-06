@@ -368,6 +368,42 @@ function(add_test_two_stream_noahmp_levels TEST_NAME)
         ATTACHED_FILES_ON_FAIL "${CURRENT_TEST_BINARY_DIR}/own/simulation.log;${CURRENT_TEST_BINARY_DIR}/own/checker.log;${CURRENT_TEST_BINARY_DIR}/nested/simulation.log;${CURRENT_TEST_BINARY_DIR}/nested/checker.log;${CURRENT_TEST_BINARY_DIR}/interp/simulation.log;${CURRENT_TEST_BINARY_DIR}/interp/checker.log;${CURRENT_TEST_BINARY_DIR}/regrid/simulation.log")
 endfunction(add_test_two_stream_noahmp_levels)
 
+# The two-stream balance's skin and soil moisture both coupled to the surface layer, on the
+# deck of TwoStream_SEBSurfaceLayerFluxes in eight legs: the linear soil-water factor at the
+# wilting point, at field capacity and in between; that soil as a Noah-MP soil type, bare
+# (the soil resistance and pore humidity), with grassland at fraction 0 (which must match
+# bare) and bare at the wilting point (which must not evaporate); under
+# grassland (canopy and soil resistances); and a one-step leg without erf.most.z0, whose
+# job_info must record the tables' roughness
+# (Tests/RunTwoStreamSEBMoisture.cmake, Tests/check_two_stream_seb_moisture.py).
+function(add_test_two_stream_seb_moisture TEST_NAME)
+    set(TEST_FILES_DIR "TwoStream_SEBSurfaceLayerFluxes")
+    setup_test()
+    resolve_test_exe("" "erf_exec" TEST_EXE)
+    add_test(NAME ${TEST_NAME} COMMAND ${CMAKE_COMMAND}
+        "-DMPIEXEC=${MPIEXEC_EXECUTABLE}"
+        "-DMPIEXEC_NUMPROC_FLAG=${MPIEXEC_NUMPROC_FLAG}"
+        "-DMPIEXEC_PREFLAGS=${MPIEXEC_PREFLAGS}"
+        "-DNRANKS=${NP}"
+        "-DTEST_EXE=${TEST_EXE}"
+        "-DCONFIG=$<CONFIG>"
+        "-DINPUT=${CURRENT_TEST_BINARY_DIR}/TwoStream_SEBSurfaceLayerFluxes.i"
+        "-DWORKING_DIRECTORY=${CURRENT_TEST_BINARY_DIR}"
+        "-DFEXTRACT=${FEXTRACT_EXE}"
+        "-DPYTHON_EXE=${ERF_TEST_PYTHON}"
+        "-DCHECKER=${TWO_STREAM_SEB_MOISTURE_CHECKER}"
+        "-DSTEPS=10"
+        "-DDT=1.0"
+        -P ${PROJECT_SOURCE_DIR}/Tests/RunTwoStreamSEBMoisture.cmake)
+    set_tests_properties(${TEST_NAME}
+        PROPERTIES
+        TIMEOUT 1200
+        PROCESSORS ${NP}
+        WORKING_DIRECTORY "${CURRENT_TEST_BINARY_DIR}/"
+        LABELS "regression;radiation"
+        ATTACHED_FILES_ON_FAIL "${CURRENT_TEST_BINARY_DIR}/dry/simulation.log;${CURRENT_TEST_BINARY_DIR}/wet/simulation.log;${CURRENT_TEST_BINARY_DIR}/mid/simulation.log;${CURRENT_TEST_BINARY_DIR}/veg/simulation.log;${CURRENT_TEST_BINARY_DIR}/bare/simulation.log;${CURRENT_TEST_BINARY_DIR}/bare_f0/simulation.log;${CURRENT_TEST_BINARY_DIR}/bare_dry/simulation.log;${CURRENT_TEST_BINARY_DIR}/tables/simulation.log;${CURRENT_TEST_BINARY_DIR}/checker.log")
+endfunction(add_test_two_stream_seb_moisture)
+
 function(add_test_cloud_chamber_parity TEST_NAME)
     set(TEST_FILES_DIR "CloudChamber_SatAdj")
     if (ARGC GREATER 1)
@@ -525,6 +561,21 @@ if(EXISTS "${ERF_NOAHMP_TABLE}")
       TIMEOUT 60
       PROCESSORS 1
       LABELS "unit;noahmp")
+
+  # The two-stream balance's copies of Noah-MP's soil and vegetation parameters
+  # (erf.radiation.seb_soil_type, seb_vegetation_type) against the same table. Plain Python, no ERF run: every build with the submodule has it.
+  if(ERF_TEST_PYTHON)
+    add_test(NAME NoahMPSoilTable_MatchesSubmodule
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_noahmp_soil_table.py
+                --table ${ERF_NOAHMP_TABLE}
+                --header ${PROJECT_SOURCE_DIR}/Source/Radiation/TwoStream/ERF_NoahMPSoilTable.H
+                --vegetation-header ${PROJECT_SOURCE_DIR}/Source/Radiation/TwoStream/ERF_NoahMPVegetationTable.H)
+    set_tests_properties(NoahMPSoilTable_MatchesSubmodule
+        PROPERTIES
+        TIMEOUT 60
+        PROCESSORS 1
+        LABELS "unit;radiation")
+  endif()
 endif()
 
 # Restart parity: run one deck straight, then to a checkpoint and on from it, and
@@ -1485,6 +1536,21 @@ if(ERF_ENABLE_MPI AND NOT WIN32)
   add_test_tiling_parity(ABL_YSU_Tiling      ABL_MRF_Tiling "00010" "00010"
       RUNTIME_OPTIONS "erf.pbl_type=YSU erf.most.pblh_calc=YSU erf.most.surf_temp_flux=-0.02 'erf.plot2d_vars_1=u_star t_star Olen'"
       VARYING_3D "Lturb Kmv" VARYING_2D "u_star")
+  # MYNN25 carries a prognostic TKE, and its source terms read the stage state with a
+  # VERTICAL stencil: AddTurbKESources forms d(theta_v)/dz from k-1 and k+1 while
+  # erf_slow_rhs_post writes that same state (new_cons = cur_cons) later in the same
+  # MFIter iteration.  Tiled, a tile's write landed before the next tile's read, so a
+  # cell beside a tile boundary saw the updated state on one side and the stage-entry
+  # state on the other and the answer depended on fabarray.mfiter_tile_size.  The
+  # harness tiles 1024000 8 8, which splits in z -- the direction this stencil reaches.
+  # The Closure_BoxParity entry for MYNN25 below does not cover it: that one splits
+  # 8 8 1024, so it tiles in x and y only and a k+-1 hazard is invisible to it.
+  # KE is added to the 3D plotfile because it is the field that breaks first: it moved
+  # by ~2e-3 relative after a single step, which the MYNN length scales then amplified
+  # into Kmv/Khv and from there into the solution.
+  add_test_tiling_parity(ABL_MYNN25_Tiling   ABL_MRF_Tiling "00010" "00010"
+      RUNTIME_OPTIONS "erf.pbl_type=MYNN25 erf.most.pblh_calc=MYNN25 'erf.plot_vars_1=density x_velocity y_velocity z_velocity pressure theta Kmv Khv Lturb KE'"
+      VARYING_3D "Lturb Kmv KE" VARYING_2D "pblh u_star")
   # The PBLH smoothing stencil reads a column its own tile does not own, so it
   # needs its own coverage: with the stencil reading off the end of the array the
   # MRF deck differed by 24.5 m in Lturb (12%) between the tiled and untiled runs.
@@ -1709,6 +1775,10 @@ if(ERF_ENABLE_MPI AND NOT WIN32)
     add_test_two_stream_seb_flux_source(TwoStream_SEBSurfaceLayerFluxesMultiLevel
                                         DT 0.5
                                         CHECKER_OPTIONS "--multilevel --min-spread 0.5")
+    # The same deck with the soil moisture coupled as well: the surface mixing ratio blends
+    # q_sat and the air's by beta, vegetation lowers the evaporation, and the balance's soil
+    # loses the water the air gains.
+    add_test_two_stream_seb_moisture(TwoStream_SEBSoilMoisture)
   endif()
 
   # Two-stream radiation feeding Noah-MP on two levels (see the function above). Noah-MP
@@ -1731,7 +1801,8 @@ add_test_plotfile_header(Plotfile3D_TwoStreamHeatingSelection "" "erf_exec" "plt
 
 # The two-stream radiation tests stay registered but do not run: DISABLED keeps
 # them listed by ctest (reported as "Not Run (Disabled)") without executing them.
-# Remove this block to re-enable them.
+# Remove this block to re-enable them. TwoStream_SEBSoilMoisture is not on the list:
+# its eight legs of 10 steps on a 4 x 4 x 16 grid take about a minute in Debug.
 foreach(_two_stream_test IN ITEMS
     TwoStream_ColumnHeating
     TwoStream_ColumnHeating_Terrain
