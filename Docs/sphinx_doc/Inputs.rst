@@ -2917,6 +2917,10 @@ List of Parameters
 |                                       | temperature, theta, scalar, qv, qc and ke. An unknown    |                    | variables)       |
 |                                       | name aborts at the first write                           |                    |                  |
 +---------------------------------------+----------------------------------------------------------+--------------------+------------------+
+| **erf.bndry_output_faces**            | Lateral faces to write                                   | Any subset of      | xlo xhi ylo yhi  |
+|                                       |                                                          | xlo, xhi, ylo,     |                  |
+|                                       |                                                          | and yhi            |                  |
++---------------------------------------+----------------------------------------------------------+--------------------+------------------+
 | **erf.bndry_file**                    | Input boundary-plane directory                           | String             | None             |
 +---------------------------------------+----------------------------------------------------------+--------------------+------------------+
 | **erf.bndry_input_var_names**         | Variables to read; any of velocity, density,             | List of strings    | None (no         |

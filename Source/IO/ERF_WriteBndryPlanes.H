@@ -7,6 +7,7 @@
 #include "AMReX_Gpu.H"
 #include "AMReX_AmrCore.H"
 #include <AMReX_BndryRegister.H>
+#include <array>
 
 
 /** Interface for writing boundary planes
@@ -40,6 +41,9 @@ private:
 
     //! Variables for IO
     amrex::Vector<std::string> m_var_names;
+
+    //! Lateral faces selected for output (z faces are never written)
+    std::array<bool,2*AMREX_SPACEDIM> m_output_faces{};
 
     //! Timestep and times to be stored in time.dat
     amrex::Vector<double> m_in_times;

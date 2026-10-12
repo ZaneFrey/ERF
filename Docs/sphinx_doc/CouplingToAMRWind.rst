@@ -98,10 +98,13 @@ the following (or similar) should be added to the input file:
   erf.bndry_output_start_time = 0.0
   erf.bndry_output_planes_file = "BndryFiles"
   erf.bndry_output_var_names = temperature velocity density
+  erf.bndry_output_faces = xlo xhi ylo yhi
   erf.bndry_output_box_lo = 256. 256.
   erf.bndry_output_box_hi = 768. 768.
 
-The above inputs will output boundary planes of data at x=xlo, x=xhi, y=ylo and y=yhi, where
+The above inputs will output boundary planes of data at x=xlo, x=xhi, y=ylo and y=yhi. A subset
+of these lateral faces can be selected with :cpp:`bndry_output_faces`; if that parameter is omitted,
+all four faces are written. Here,
 xlo and ylo are defined by :cpp:`bndry_output_box_lo` and
 xhi and yhi are defined by :cpp:`bndry_output_box_hi`. Note that the selected lo and hi values must
 be interior to the first and last cell centers on the coarse grid (i.e., at least one half cell width
@@ -140,4 +143,3 @@ from :cpp:`BndryFiles` will actually be used.
 
     xlo.type = "Inflow"
     xhi.type = "Outflow"
-

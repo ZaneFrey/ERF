@@ -5,11 +5,25 @@
 #include "AMReX_ParmParse.H"
 #include "AMReX_PlotFileUtil.H"
 #include "AMReX_MultiFabUtil.H"
+#include "AMReX_Utility.H"
 #include "ERF_WriteBndryPlanes.H"
 #include "ERF_IndexDefines.H"
 #include "ERF_Derive.H"
 
 using namespace amrex;
+
+namespace {
+
+int lateral_face_index (const std::string& name)
+{
+    if (name == "xlo") return int(Orientation(Direction::x, Orientation::low));
+    if (name == "xhi") return int(Orientation(Direction::x, Orientation::high));
+    if (name == "ylo") return int(Orientation(Direction::y, Orientation::low));
+    if (name == "yhi") return int(Orientation(Direction::y, Orientation::high));
+    return -1;
+}
+
+}
 
 /**
  * Copies the contents of one boundary register to another in either x or y dimensions.
@@ -123,6 +137,36 @@ WriteBndryPlanes::WriteBndryPlanes (Vector<BoxArray>& grids,
         int num_vars = pp.countval("bndry_output_var_names");
         m_var_names.resize(num_vars);
         pp.queryarr("bndry_output_var_names",m_var_names,0,num_vars);
+    }
+
+    // Preserve the historical behavior unless the user selects a subset.
+    for (OrientationIter oit; oit != nullptr; ++oit) {
+        if (oit().coordDir() < 2) {
+            m_output_faces[int(oit())] = true;
+        }
+    }
+
+    if (pp.contains("bndry_output_faces")) {
+        m_output_faces.fill(false);
+
+        const int nfaces = pp.countval("bndry_output_faces");
+        if (nfaces == 0) {
+            Error("erf.bndry_output_faces must contain at least one face");
+        }
+
+        Vector<std::string> face_names(nfaces);
+        pp.getarr("bndry_output_faces", face_names, 0, nfaces);
+        for (const auto& face_name : face_names) {
+            const int iface = lateral_face_index(amrex::toLower(face_name));
+            if (iface < 0) {
+                Error("Invalid erf.bndry_output_faces entry '" + face_name +
+                      "'; valid values are xlo xhi ylo yhi");
+            }
+            if (m_output_faces[iface]) {
+                Error("Duplicate erf.bndry_output_faces entry '" + face_name + "'");
+            }
+            m_output_faces[iface] = true;
+        }
     }
 }
 
@@ -256,7 +300,7 @@ void WriteBndryPlanes::write_planes (const int t_step, const double time_d,
 
         for (OrientationIter oit; oit != nullptr; ++oit) {
             auto ori = oit();
-            if (ori.coordDir() < 2) {
+            if (ori.coordDir() < 2 && m_output_faces[int(ori)]) {
                 std::string facename = Concatenate(filename + '_', ori, 1);
                 br_shift(oit, bndry, bndry_shifted);
                 bndry_shifted[ori].write(facename);
