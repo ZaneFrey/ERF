@@ -19,7 +19,8 @@ class WriteBndryPlanes
 {
 public:
     explicit WriteBndryPlanes (amrex::Vector<amrex::BoxArray>& grids,
-                               amrex::Vector<amrex::Geometry>& geom);
+                               amrex::Vector<amrex::Geometry>& geom,
+                               const amrex::Vector<std::unique_ptr<amrex::MultiFab>>& z_phys_nd);
 
     void write_planes (int t_step, double time,
                        amrex::Vector<amrex::Vector<amrex::MultiFab>>& vars_new,
@@ -57,6 +58,8 @@ private:
     int m_in_rad        = 1;
     const int m_out_rad = 1;
     const int m_extent_rad = 0;
+
+    void write_terrain_coordinates (const amrex::MultiFab& z_phys_nd);
 };
 
 #endif /* ERF_BOUNDARYPLANE_H */

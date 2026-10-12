@@ -6,6 +6,7 @@
 #include "AMReX_PlotFileUtil.H"
 #include "AMReX_MultiFabUtil.H"
 #include "AMReX_Utility.H"
+#include "AMReX_VisMF.H"
 #include "ERF_WriteBndryPlanes.H"
 #include "ERF_IndexDefines.H"
 #include "ERF_Derive.H"
@@ -14,6 +15,15 @@ using namespace amrex;
 
 namespace {
 
+std::string lateral_face_name (Orientation ori)
+{
+    if (ori == Orientation(Direction::x, Orientation::low )) return "xlo";
+    if (ori == Orientation(Direction::x, Orientation::high)) return "xhi";
+    if (ori == Orientation(Direction::y, Orientation::low )) return "ylo";
+    if (ori == Orientation(Direction::y, Orientation::high)) return "yhi";
+    return "invalid";
+}
+
 int lateral_face_index (const std::string& name)
 {
     if (name == "xlo") return int(Orientation(Direction::x, Orientation::low));
@@ -21,6 +31,39 @@ int lateral_face_index (const std::string& name)
     if (name == "ylo") return int(Orientation(Direction::y, Orientation::low));
     if (name == "yhi") return int(Orientation(Direction::y, Orientation::high));
     return -1;
+}
+
+MultiFab make_normalized_z_face (const MultiFab& z_phys_nd,
+                                 const Box& cell_box,
+                                 Orientation ori)
+{
+    Box source_box = surroundingNodes(cell_box);
+    const int normal = ori.coordDir();
+    const int face_index = ori.isLow() ? source_box.smallEnd(normal)
+                                       : source_box.bigEnd(normal);
+    source_box.setRange(normal, face_index, 1);
+
+    BoxArray source_ba(source_box);
+    DistributionMapping source_dm(source_ba);
+    MultiFab source(source_ba, source_dm, 1, 0);
+    source.ParallelCopy(z_phys_nd, 0, 0, 1);
+
+    Box normalized_box(source_box);
+    normalized_box.shift(-normalized_box.smallEnd());
+    BoxArray normalized_ba(normalized_box);
+    MultiFab normalized(normalized_ba, source.DistributionMap(), 1, 0);
+
+    for (MFIter mfi(normalized); mfi.isValid(); ++mfi) {
+        const Box& bx = mfi.validbox();
+        const auto dst = normalized.array(mfi);
+        const auto src = source.const_array(mfi);
+        const IntVect offset = source_box.smallEnd();
+        ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept {
+            dst(i,j,k) = src(i+offset[0],j+offset[1],k+offset[2]);
+        });
+    }
+
+    return normalized;
 }
 
 }
@@ -67,9 +110,12 @@ int WriteBndryPlanes::bndry_lev = 0;
  *
  * @param grids Vector of BoxArrays containing the grids at each level in the AMR
  * @param geom Vector of Geometry containing the geometry at each level in the AMR
+ * @param z_phys_nd Nodal physical-height data at each level in the AMR
  */
 WriteBndryPlanes::WriteBndryPlanes (Vector<BoxArray>& grids,
-                                    Vector<Geometry>& geom) : m_geom(geom)
+                                    Vector<Geometry>& geom,
+                                    const Vector<std::unique_ptr<MultiFab>>& z_phys_nd)
+    : m_geom(geom)
 {
     ParmParse pp("erf");
 
@@ -167,6 +213,29 @@ WriteBndryPlanes::WriteBndryPlanes (Vector<BoxArray>& grids,
             }
             m_output_faces[iface] = true;
         }
+    }
+
+    write_terrain_coordinates(*z_phys_nd[bndry_lev]);
+}
+
+void
+WriteBndryPlanes::write_terrain_coordinates (const MultiFab& z_phys_nd)
+{
+    if (ParallelDescriptor::IOProcessor()) {
+        if (!UtilCreateDirectory(m_filename, 0755)) {
+            CreateDirectoryFailed(m_filename);
+        }
+    }
+    ParallelDescriptor::Barrier();
+
+    for (OrientationIter oit; oit != nullptr; ++oit) {
+        const Orientation ori = oit();
+        if (ori.coordDir() >= 2 || !m_output_faces[int(ori)]) {
+            continue;
+        }
+
+        MultiFab z_face = make_normalized_z_face(z_phys_nd, target_box, ori);
+        VisMF::Write(z_face, m_filename + "/z_phys_nd_" + lateral_face_name(ori));
     }
 }
 

@@ -113,6 +113,9 @@ in that direction, any location up to and including the domain boundary may be c
 In this case the variables that are
 written are temperature, velocity and density, and they are written every 2 coarse time steps starting at
 :cpp:`bndry_output_start_time` which is 0 in this case.
+The nodal physical heights on every selected face are also written once in native AMReX format as
+:cpp:`z_phys_nd_xlo`, :cpp:`z_phys_nd_xhi`, :cpp:`z_phys_nd_ylo`, or :cpp:`z_phys_nd_yhi`.
+Only coordinate files for faces listed by :cpp:`bndry_output_faces` are created.
 
 We also have the functionality in ERF to read in these types of files;
 for this one would add the following (or similar) line to the inputs file:

@@ -2937,6 +2937,9 @@ Notes
 
 - If both interval controls are set, output occurs when either criterion is met.
 - Output is written for the finest level that fully contains the requested box.
+- For each selected output face, nodal physical heights are written once as an
+  AMReX dataset named ``z_phys_nd_<face>`` in the boundary-plane directory.
+  Boundary-plane output is not supported with moving fitted terrain.
 
 .. _sec:NumericalStability:
 
