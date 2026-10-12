@@ -189,21 +189,36 @@ realbdy_compute_interior_ghost_rhs (const double& time,
 
     // Get bndry data if we have it
     Vector<int>  bnd_map = {BCVars::xvel_bc, BCVars::yvel_bc, BCVars::RhoTheta_bc_comp};
-    Array4<Real> bdatxlo, bdatxhi, bdatylo, bdatyhi;
-    Array4<Real> btenxlo, btenxhi, btenylo, btenyhi;
+    Array4<const Real> bdatxlo, bdatxhi, bdatylo, bdatyhi;
+    Array4<const Real> btenxlo, btenxhi, btenylo, btenyhi;
     if (m_r2d) {
         // Index is [plane orientation] and [level]
-        Vector<std::unique_ptr<PlaneVector>>& bndry_data = m_r2d->interp_in_time(time);
-        bdatxlo = (*bndry_data[0])[0].array();
-        bdatylo = (*bndry_data[1])[0].array();
-        bdatxhi = (*bndry_data[3])[0].array();
-        bdatyhi = (*bndry_data[4])[0].array();
-
-        Vector<std::unique_ptr<PlaneVector>>& bndry_tend = m_r2d->get_tendency(time);
-        btenxlo = (*bndry_tend[0])[0].array();
-        btenylo = (*bndry_tend[1])[0].array();
-        btenxhi = (*bndry_tend[3])[0].array();
-        btenyhi = (*bndry_tend[4])[0].array();
+        m_r2d->interp_in_time(time);
+        m_r2d->get_tendency(time);
+        if (const auto* fab = m_r2d->interpolated_face(Orientation(Direction::x,Orientation::low))) {
+            bdatxlo = fab->const_array();
+        }
+        if (const auto* fab = m_r2d->interpolated_face(Orientation(Direction::x,Orientation::high))) {
+            bdatxhi = fab->const_array();
+        }
+        if (const auto* fab = m_r2d->interpolated_face(Orientation(Direction::y,Orientation::low))) {
+            bdatylo = fab->const_array();
+        }
+        if (const auto* fab = m_r2d->interpolated_face(Orientation(Direction::y,Orientation::high))) {
+            bdatyhi = fab->const_array();
+        }
+        if (const auto* fab = m_r2d->tendency_face(Orientation(Direction::x,Orientation::low))) {
+            btenxlo = fab->const_array();
+        }
+        if (const auto* fab = m_r2d->tendency_face(Orientation(Direction::x,Orientation::high))) {
+            btenxhi = fab->const_array();
+        }
+        if (const auto* fab = m_r2d->tendency_face(Orientation(Direction::y,Orientation::low))) {
+            btenylo = fab->const_array();
+        }
+        if (const auto* fab = m_r2d->tendency_face(Orientation(Direction::y,Orientation::high))) {
+            btenyhi = fab->const_array();
+        }
     }
 
     // Relaxation constants

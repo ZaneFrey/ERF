@@ -2939,7 +2939,11 @@ Notes
 - Output is written for the finest level that fully contains the requested box.
 - For each selected output face, nodal physical heights are written once as an
   AMReX dataset named ``z_phys_nd_<face>`` in the boundary-plane directory.
-  Boundary-plane output is not supported with moving fitted terrain.
+  Boundary-plane input and output are not supported with moving fitted terrain.
+- Boundary-plane input allocates and reads only lateral faces containing at
+  least one component with an ingested boundary condition. If terrain-coordinate
+  files are present, coordinates on every active face must match the input mesh.
+  Directories without coordinate files remain supported as legacy input.
 
 .. _sec:NumericalStability:
 

@@ -104,14 +104,22 @@ ERF::fill_from_realbdy (const Vector<MultiFab*>& mfs,
     bnd_ind_map.push_back( {BCVars::xvel_bc} ); // xvel
     bnd_ind_map.push_back( {BCVars::yvel_bc} ); // yvel
     bnd_ind_map.push_back( {0} );               // zvel
-    Array4<Real> bdatxlo, bdatxhi, bdatylo, bdatyhi;
+    Array4<const Real> bdatxlo, bdatxhi, bdatylo, bdatyhi;
     if (m_r2d) {
         // Index is [plane orientation] and [level]
-        Vector<std::unique_ptr<PlaneVector>>& bndry_data = m_r2d->interp_in_time(time_tot);
-        bdatxlo = (*bndry_data[0])[0].array();
-        bdatylo = (*bndry_data[1])[0].array();
-        bdatxhi = (*bndry_data[3])[0].array();
-        bdatyhi = (*bndry_data[4])[0].array();
+        m_r2d->interp_in_time(time_tot);
+        if (const auto* fab = m_r2d->interpolated_face(Orientation(Direction::x,Orientation::low))) {
+            bdatxlo = fab->const_array();
+        }
+        if (const auto* fab = m_r2d->interpolated_face(Orientation(Direction::x,Orientation::high))) {
+            bdatxhi = fab->const_array();
+        }
+        if (const auto* fab = m_r2d->interpolated_face(Orientation(Direction::y,Orientation::low))) {
+            bdatylo = fab->const_array();
+        }
+        if (const auto* fab = m_r2d->interpolated_face(Orientation(Direction::y,Orientation::high))) {
+            bdatyhi = fab->const_array();
+        }
     }
 
     // Nvars to loop over

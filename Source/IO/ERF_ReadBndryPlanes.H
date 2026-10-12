@@ -6,9 +6,11 @@
 
 #include "AMReX_Gpu.H"
 #include "AMReX_AmrCore.H"
+#include <AMReX_BCRec.H>
 #include <AMReX_BndryRegister.H>
 #include "ERF_IndexDefines.H"
 #include "ERF_DataStruct.H"
+#include <array>
 
 using PlaneVector = amrex::Vector<amrex::FArrayBox>;
 
@@ -23,6 +25,9 @@ class ReadBndryPlanes
 public:
     explicit ReadBndryPlanes (const amrex::Geometry& geom,
                               const amrex::Real& rdOcp_in);
+
+    void initialize_active_faces (const amrex::Vector<amrex::BCRec>& domain_bcs_type,
+                                  const amrex::MultiFab& z_phys_nd);
 
     void define_level_data (int lev);
 
@@ -51,6 +56,16 @@ public:
     [[nodiscard]] int ingested_q1 ()       const {return is_q1_read;}
     [[nodiscard]] int ingested_q2 ()       const {return is_q2_read;}
     [[nodiscard]] int ingested_KE ()       const {return is_KE_read;}
+
+    [[nodiscard]] bool face_is_active (amrex::Orientation ori) const {
+        return m_active_faces[static_cast<int>(ori)];
+    }
+
+    [[nodiscard]] const amrex::FArrayBox* interpolated_face (amrex::Orientation ori,
+                                                              int lev = 0) const;
+
+    [[nodiscard]] const amrex::FArrayBox* tendency_face (amrex::Orientation ori,
+                                                          int lev = 0) const;
 
 private:
 
@@ -93,6 +108,9 @@ private:
     //! Variables to be read in
     amrex::Vector<std::string> m_var_names;
 
+    //! Lateral faces that contain at least one ingested boundary component
+    std::array<bool,2*AMREX_SPACEDIM> m_active_faces{};
+
     //! Controls extents on native bndry output
     int m_in_rad        = 1;
     const int m_out_rad = 1;
@@ -114,6 +132,8 @@ private:
     int is_KE_read;
 
     int last_file_read;
+
+    void validate_terrain_coordinates (const amrex::MultiFab& z_phys_nd);
 };
 
 #endif /* ERF_BOUNDARYPLANE_H */

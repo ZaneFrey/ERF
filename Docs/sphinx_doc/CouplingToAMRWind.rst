@@ -139,6 +139,10 @@ abort with an error message.
 We note that the boundary plane data will only be used on faces identified in the inputs file as inflow faces, i.e. if
 we specific inflow/outflow in the x-direction, and periodic in the y-direction, as below, then only the "xlo" boundary data
 from :cpp:`BndryFiles` will actually be used.
+Only files for lateral faces that contain an ingested boundary component are read. If the boundary-plane directory
+contains :cpp:`z_phys_nd_<face>` datasets, ERF also verifies the terrain coordinates on each active face before reading
+the time-dependent data. Older directories without coordinate datasets remain supported, but their vertical coordinates
+cannot be verified.
 
 ::
 

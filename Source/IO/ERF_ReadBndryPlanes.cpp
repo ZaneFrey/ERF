@@ -8,9 +8,101 @@
 #include "ERF_ReadBndryPlanes.H"
 #include "ERF_IndexDefines.H"
 #include "AMReX_MultiFabUtil.H"
+#include "AMReX_Utility.H"
+#include "AMReX_VisMF.H"
 #include "ERF_EOS.H"
+#include <cmath>
+#include <limits>
 
 using namespace amrex;
+
+namespace {
+
+std::string lateral_face_name (Orientation ori)
+{
+    if (ori == Orientation(Direction::x, Orientation::low )) {
+        return "xlo";
+    }
+    if (ori == Orientation(Direction::x, Orientation::high)) {
+        return "xhi";
+    }
+    if (ori == Orientation(Direction::y, Orientation::low )) {
+        return "ylo";
+    }
+    if (ori == Orientation(Direction::y, Orientation::high)) {
+        return "yhi";
+    }
+    return "invalid";
+}
+
+MultiFab make_normalized_z_face (const MultiFab& z_phys_nd,
+                                 const Box& cell_box,
+                                 Orientation ori)
+{
+    Box source_box = surroundingNodes(cell_box);
+    const int normal = ori.coordDir();
+    const int face_index = ori.isLow() ? source_box.smallEnd(normal)
+                                       : source_box.bigEnd(normal);
+    source_box.setRange(normal, face_index, 1);
+
+    BoxArray source_ba(source_box);
+    DistributionMapping source_dm(source_ba);
+    MultiFab source(source_ba, source_dm, 1, 0);
+    source.ParallelCopy(z_phys_nd, 0, 0, 1);
+
+    Box normalized_box(source_box);
+    normalized_box.shift(-normalized_box.smallEnd());
+    BoxArray normalized_ba(normalized_box);
+    MultiFab normalized(normalized_ba, source.DistributionMap(), 1, 0);
+
+    for (MFIter mfi(normalized); mfi.isValid(); ++mfi) {
+        const Box& bx = mfi.validbox();
+        const auto dst = normalized.array(mfi);
+        const auto src = source.const_array(mfi);
+        const IntVect source_offset = source_box.smallEnd();
+        ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept {
+            dst(i,j,k) = src(i+source_offset[0],j+source_offset[1],k+source_offset[2]);
+        });
+    }
+
+    return normalized;
+}
+
+void read_and_align_face (MultiFab& mf,
+                          const std::string& filename,
+                          const Box& target_box,
+                          int expected_ncomp,
+                          const std::string& face_name)
+{
+    if (!FileExists(filename + "_H")) {
+        Error("Missing boundary-plane file for active face " + face_name + ": " + filename);
+    }
+
+    VisMF::Read(mf, filename);
+    if (mf.nComp() != expected_ncomp) {
+        Error("Boundary-plane component mismatch for active face " + face_name +
+              " in " + filename);
+    }
+    if (mf.boxArray().size() != 1) {
+        Error("Boundary-plane face file must contain exactly one box: " + filename);
+    }
+
+    const Box source_box = mf.boxArray().minimalBox();
+    if (source_box.ixType() != target_box.ixType()) {
+        Error("Boundary-plane index-type mismatch for active face " + face_name +
+              " in " + filename);
+    }
+    for (int dir = 0; dir < AMREX_SPACEDIM; ++dir) {
+        if (source_box.length(dir) != target_box.length(dir)) {
+            Error("Boundary-plane shape mismatch for active face " + face_name +
+                  " in " + filename);
+        }
+    }
+
+    mf.shift(target_box.smallEnd() - source_box.smallEnd());
+}
+
+}
 
 /**
  * Return closest index (from lower) of value in vector
@@ -54,7 +146,7 @@ void ReadBndryPlanes::define_level_data (int /*lev*/)
     const Box& domain = m_geom.Domain();
     for (OrientationIter oit; oit != nullptr; ++oit) {
         auto ori = oit();
-        if (ori.coordDir() < 2) {
+        if (ori.coordDir() < 2 && m_active_faces[int(ori)]) {
 
             m_data_n[ori]        = std::make_unique<PlaneVector>();
             m_data_np1[ori]      = std::make_unique<PlaneVector>();
@@ -111,7 +203,7 @@ ReadBndryPlanes::interp_in_time (const double& time_in)
         if (time < m_tnp1) {
             for (OrientationIter oit; oit != nullptr; ++oit) {
                 auto ori = oit();
-                if (ori.coordDir() < 2) {
+                if (ori.coordDir() < 2 && m_active_faces[int(ori)]) {
                     const int nlevels = static_cast<int>(m_data_n[ori]->size());
                     for (int lev = 0; lev < nlevels; ++lev) {
                         const auto& datn   = (*m_data_n[ori])[lev];
@@ -127,7 +219,7 @@ ReadBndryPlanes::interp_in_time (const double& time_in)
         } else {
             for (OrientationIter oit; oit != nullptr; ++oit) {
                 auto ori = oit();
-                if (ori.coordDir() < 2) {
+                if (ori.coordDir() < 2 && m_active_faces[int(ori)]) {
                     const int nlevels = static_cast<int>(m_data_n[ori]->size());
                     for (int lev = 0; lev < nlevels; ++lev) {
                         const auto& datnp1 = (*m_data_np1[ori])[lev];
@@ -165,7 +257,7 @@ ReadBndryPlanes::get_tendency (const double& time_in)
         Real idt = static_cast<Real>(1.0 / (m_tnp1 - m_tn));
         for (OrientationIter oit; oit != nullptr; ++oit) {
             auto ori = oit();
-            if (ori.coordDir() < 2) {
+            if (ori.coordDir() < 2 && m_active_faces[int(ori)]) {
                 const int nlevels = static_cast<int>(m_data_n[ori]->size());
                 for (int lev = 0; lev < nlevels; ++lev) {
                     auto& fabt = (*m_data_tendency[ori])[lev];
@@ -186,7 +278,7 @@ ReadBndryPlanes::get_tendency (const double& time_in)
         Real idt = static_cast<Real>(1.0 / (m_tnp2 - m_tnp1));
         for (OrientationIter oit; oit != nullptr; ++oit) {
             auto ori = oit();
-            if (ori.coordDir() < 2) {
+            if (ori.coordDir() < 2 && m_active_faces[int(ori)]) {
                 const int nlevels = static_cast<int>(m_data_n[ori]->size());
                 for (int lev = 0; lev < nlevels; ++lev) {
                     auto& fabt = (*m_data_tendency[ori])[lev];
@@ -206,6 +298,28 @@ ReadBndryPlanes::get_tendency (const double& time_in)
     }
 
     return m_data_tendency;
+}
+
+const FArrayBox*
+ReadBndryPlanes::interpolated_face (Orientation ori, int lev) const
+{
+    const int iface = int(ori);
+    if (!face_is_active(ori) || !m_data_interp[iface] ||
+        lev < 0 || lev >= static_cast<int>(m_data_interp[iface]->size())) {
+        return nullptr;
+    }
+    return &(*m_data_interp[iface])[lev];
+}
+
+const FArrayBox*
+ReadBndryPlanes::tendency_face (Orientation ori, int lev) const
+{
+    const int iface = int(ori);
+    if (!face_is_active(ori) || !m_data_tendency[iface] ||
+        lev < 0 || lev >= static_cast<int>(m_data_tendency[iface]->size())) {
+        return nullptr;
+    }
+    return &(*m_data_tendency[iface])[lev];
 }
 
 /**
@@ -281,6 +395,96 @@ ReadBndryPlanes::ReadBndryPlanes (const Geometry& geom, const Real& rdOcp_in)
     m_data_tendency.resize(size);
 }
 
+void
+ReadBndryPlanes::initialize_active_faces (const Vector<BCRec>& bcs,
+                                          const MultiFab& z_phys_nd)
+{
+    m_active_faces.fill(false);
+    int num_active = 0;
+
+    for (OrientationIter oit; oit != nullptr; ++oit) {
+        const Orientation ori = oit();
+        if (ori.coordDir() >= 2) {
+            continue;
+        }
+
+        const int dir = ori.coordDir();
+        for (const auto& bc : bcs) {
+            const int bc_type = ori.isLow() ? bc.lo(dir) : bc.hi(dir);
+            if (bc_type == ERFBCType::ext_dir_ingested) {
+                m_active_faces[int(ori)] = true;
+                ++num_active;
+                break;
+            }
+        }
+    }
+
+    if (num_active == 0) {
+        Error("erf.input_bndry_planes is enabled, but no lateral boundary uses ingested data");
+    }
+
+    validate_terrain_coordinates(z_phys_nd);
+}
+
+void
+ReadBndryPlanes::validate_terrain_coordinates (const MultiFab& z_phys_nd)
+{
+    bool any_coordinate_file = false;
+    for (OrientationIter oit; oit != nullptr; ++oit) {
+        const Orientation ori = oit();
+        if (ori.coordDir() < 2) {
+            const std::string z_name = m_filename + "/z_phys_nd_" + lateral_face_name(ori);
+            any_coordinate_file = any_coordinate_file || FileExists(z_name + "_H");
+        }
+    }
+
+    if (!any_coordinate_file) {
+        if (ParallelDescriptor::IOProcessor()) {
+            Warning("Boundary-plane directory has no terrain-coordinate files; active-face "
+                    "array shapes will be checked, but vertical coordinates are unverified.");
+        }
+        return;
+    }
+
+    const Box& domain = m_geom.Domain();
+    for (OrientationIter oit; oit != nullptr; ++oit) {
+        const Orientation ori = oit();
+        if (ori.coordDir() >= 2 || !m_active_faces[int(ori)]) {
+            continue;
+        }
+
+        const std::string face = lateral_face_name(ori);
+        const std::string z_name = m_filename + "/z_phys_nd_" + face;
+        if (!FileExists(z_name + "_H")) {
+            Error("Missing terrain-coordinate file for active face " + face + ": " + z_name);
+        }
+
+        MultiFab source_z;
+        VisMF::Read(source_z, z_name);
+        MultiFab target_z = make_normalized_z_face(z_phys_nd, domain, ori);
+        if (source_z.nComp() != 1 || source_z.boxArray().size() != 1 ||
+            !amrex::match(source_z.boxArray(), target_z.boxArray())) {
+            Error("Terrain-coordinate shape mismatch on active face " + face);
+        }
+
+        MultiFab source_on_target(target_z.boxArray(), target_z.DistributionMap(), 1, 0);
+        source_on_target.ParallelCopy(source_z, 0, 0, 1);
+        MultiFab diff(target_z.boxArray(), target_z.DistributionMap(), 1, 0);
+        MultiFab::Copy(diff, target_z, 0, 0, 1, 0);
+        MultiFab::Subtract(diff, source_on_target, 0, 0, 1, 0);
+        diff.abs(0, 1, 0);
+
+        const Real max_error = diff.norm0();
+        const Real vertical_extent = std::abs(m_geom.ProbHi(2) - m_geom.ProbLo(2));
+        const Real z_tol = 128.0 * std::numeric_limits<Real>::epsilon() *
+                           std::max(Real(1.0), vertical_extent);
+        if (max_error > z_tol) {
+            Error("Terrain-coordinate mismatch on active face " + face +
+                  "; maximum absolute difference is " + std::to_string(max_error));
+        }
+    }
+}
+
 /**
  * Function in ReadBndryPlanes class for reading the external file
  * specifying time data and broadcasting this data across MPI ranks.
@@ -341,6 +545,10 @@ void ReadBndryPlanes::read_time_file ()
         ParallelDescriptor::IOProcessorNumber(),
         ParallelDescriptor::Communicator());
 
+    if (time_file_length < 3) {
+        Error("Boundary-plane input requires at least three time records");
+    }
+
     // Allocate data we will need -- for now just at one level
     int lev = 0;
     define_level_data(lev);
@@ -365,14 +573,6 @@ void ReadBndryPlanes::read_input_files (double time,
     // of the data that we can read
     AMREX_ALWAYS_ASSERT((m_in_times[0] <= time) && (time <= m_in_times.back()));
     AMREX_ALWAYS_ASSERT((m_in_times[0] <= time+dt) && (time+dt <= m_in_times.back()));
-
-    int ncomp = 1;
-
-    const Box& domain = m_geom.Domain();
-    BoxArray ba(domain);
-    DistributionMapping dm{ba};
-    BndryRegister bndryn(ba, dm, m_in_rad, m_out_rad, m_extent_rad, ncomp);
-    bndryn.setVal(bogus_large_value);
 
     // The first time we enter this routine we read the first three files
     if (last_file_read == -1)
@@ -404,8 +604,10 @@ void ReadBndryPlanes::read_input_files (double time,
         // This doesn't actually move the data, just swaps the pointers
         for (OrientationIter oit; oit != nullptr; ++oit) {
             auto ori = oit();
-            std::swap(m_data_n[ori]  ,m_data_np1[ori]);
-            std::swap(m_data_np1[ori],m_data_np2[ori]);
+            if (ori.coordDir() < 2 && m_active_faces[int(ori)]) {
+                std::swap(m_data_n[ori]  ,m_data_np1[ori]);
+                std::swap(m_data_np1[ori],m_data_np2[ori]);
+            }
         }
 
         // Set the times corresponding to the post-swap pointers
@@ -444,8 +646,6 @@ void ReadBndryPlanes::read_file (const int idx,
     const int lev = 0;
 
     const Box& domain = m_geom.Domain();
-    BoxArray ba(domain);
-    DistributionMapping dm{ba};
 
     GpuArray<GpuArray<Real, AMREX_SPACEDIM*2>, AMREX_SPACEDIM+NBCVAR_max> l_bc_extdir_vals_d;
 
@@ -468,7 +668,7 @@ void ReadBndryPlanes::read_file (const int idx,
     int ncomp_for_bc = BCVars::NumTypes;
     for (OrientationIter oit; oit != nullptr; ++oit) {
         auto ori = oit();
-        if (ori.coordDir() < 2) {
+        if (ori.coordDir() < 2 && m_active_faces[int(ori)]) {
             FArrayBox& d = (*data_to_fill[ori])[lev];
             const auto& bx = d.box();
             Array4<Real> d_arr = d.array();
@@ -481,14 +681,16 @@ void ReadBndryPlanes::read_file (const int idx,
 
     // Read density for primitive to conserved conversions
     std::string filenamer = MultiFabFileFullPrefix(lev, chkname1, level_prefix, "density");
-    BndryRegister bndry_r(ba, dm, m_in_rad, m_out_rad, m_extent_rad, 1);
-    bndry_r.setVal(bogus_large_value);
+    std::array<std::unique_ptr<MultiFab>,2*AMREX_SPACEDIM> density_faces;
     for (OrientationIter oit; oit != nullptr; ++oit) {
-          auto ori = oit();
-          if (ori.coordDir() < 2) {
-              std::string facenamer = Concatenate(filenamer + '_', ori, 1);
-              bndry_r[ori].read(facenamer);
-          }
+        const Orientation ori = oit();
+        if (ori.coordDir() < 2 && m_active_faces[int(ori)]) {
+            const std::string facenamer = Concatenate(filenamer + '_', ori, 1);
+            density_faces[int(ori)] = std::make_unique<MultiFab>();
+            read_and_align_face(*density_faces[int(ori)], facenamer,
+                                (*data_to_fill[ori])[lev].box(), 1,
+                                lateral_face_name(ori));
+        }
     }
 
     // Expose for GPU
@@ -521,18 +723,18 @@ void ReadBndryPlanes::read_file (const int idx,
 
         // Print() << "Reading " << chkname1 << " for variable " << var_name << " with n_offset == " << n_offset << std::endl;
 
-        BndryRegister bndry(ba, dm, m_in_rad, m_out_rad, m_extent_rad, ncomp);
-        bndry.setVal(bogus_large_value);
-
         // *********************************************************
         // Read in the BndryReg for all non-z faces
         // *********************************************************
         for (OrientationIter oit; oit != nullptr; ++oit) {
           auto ori = oit();
-          if (ori.coordDir() < 2) {
+          if (ori.coordDir() < 2 && m_active_faces[int(ori)]) {
 
             std::string facename1 = Concatenate(filename1 + '_', ori, 1);
-            bndry[ori].read(facename1);
+            MultiFab bndry_read;
+            read_and_align_face(bndry_read, facename1,
+                                (*data_to_fill[ori])[lev].box(), ncomp,
+                                lateral_face_name(ori));
 
             int normal = ori.coordDir();
             IntVect v_offset = offset(ori.faceDir(), normal);
@@ -545,14 +747,14 @@ void ReadBndryPlanes::read_file (const int idx,
             //     to write from the MultiFab to a single FAB for each face
             // *********************************************************
             MultiFab bndryMF(
-                bndry[ori].boxArray(), bndry[ori].DistributionMap(),
+                bndry_read.boxArray(), bndry_read.DistributionMap(),
                 ncomp, 0, MFInfo());
 
             for (MFIter mfi(bndryMF); mfi.isValid(); ++mfi) {
 
                 const auto& vbx = mfi.validbox();
-                const auto& bndry_read_arr   = bndry[ori].array(mfi);
-                const auto& bndry_read_r_arr = bndry_r[ori].array(mfi);
+                const auto& bndry_read_arr   = bndry_read.const_array(mfi);
+                const auto& bndry_read_r_arr = density_faces[int(ori)]->const_array(mfi);
                 const auto& bndry_mf_arr     = bndryMF.array(mfi);
 
                 const auto& bx = bbx & vbx;

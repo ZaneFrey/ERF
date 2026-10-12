@@ -920,9 +920,9 @@ ERF::InitData_pre ()
 
     solverChoice.check_params(max_level,geom,phys_bc_type);
 
-    if (output_bndry_planes &&
+    if ((input_bndry_planes || output_bndry_planes) &&
         solverChoice.terrain_type == TerrainType::MovingFittedMesh) {
-        Abort("Boundary-plane terrain-coordinate output does not support moving terrain");
+        Abort("Boundary-plane input/output does not support moving terrain");
     }
 }
 
@@ -1206,6 +1206,10 @@ ERF::InitData_post ()
 #endif
 
     if (input_bndry_planes) {
+        // Physical BCs and terrain coordinates are now finalized. Select only
+        // the lateral faces that actually consume ingested boundary data.
+        m_r2d->initialize_active_faces(domain_bcs_type, *z_phys_nd[0]);
+
         // Read the "time.dat" file to know what data is available
         m_r2d->read_time_file();
 
