@@ -92,8 +92,9 @@ ERF::fill_from_bndryregs (const Vector<MultiFab*>& mfs, const double time)
 
             ParallelFor(
                 bx_xlo, ncomp, [=] AMREX_GPU_DEVICE (int i, int j, int k, int n) {
-                    int bc_comp = (icomp+n >= RhoScalar_comp && icomp+n < RhoScalar_comp+NSCALARS) ?
-                                   BCVars::RhoScalar_bc_comp : icomp+n;
+                    int bc_comp = (var_idx == Vars::cons) ?
+                        ((icomp+n >= RhoScalar_comp && icomp+n < RhoScalar_comp+NSCALARS) ?
+                         BCVars::RhoScalar_bc_comp : icomp+n) : bccomp+n;
                     if (use_xlo && bc_ptr[bc_comp].lo(0) == ERFBCType::ext_dir_ingested) {
                         int jb = std::min(std::max(j,dom_lo.y),dom_hi.y);
                         int kb = std::min(std::max(k,dom_lo.z),dom_hi.z);
@@ -101,8 +102,9 @@ ERF::fill_from_bndryregs (const Vector<MultiFab*>& mfs, const double time)
                     }
                 },
                 bx_xhi, ncomp, [=] AMREX_GPU_DEVICE (int i, int j, int k, int n) {
-                    int bc_comp = (icomp+n >= RhoScalar_comp && icomp+n < RhoScalar_comp+NSCALARS) ?
-                                   BCVars::RhoScalar_bc_comp : icomp+n;
+                    int bc_comp = (var_idx == Vars::cons) ?
+                        ((icomp+n >= RhoScalar_comp && icomp+n < RhoScalar_comp+NSCALARS) ?
+                         BCVars::RhoScalar_bc_comp : icomp+n) : bccomp+n;
                     if (use_xhi && bc_ptr[bc_comp].hi(0) == ERFBCType::ext_dir_ingested) {
                         int jb = std::min(std::max(j,dom_lo.y),dom_hi.y);
                         int kb = std::min(std::max(k,dom_lo.z),dom_hi.z);
@@ -121,8 +123,9 @@ ERF::fill_from_bndryregs (const Vector<MultiFab*>& mfs, const double time)
 
             ParallelFor(
                bx_ylo, ncomp, [=] AMREX_GPU_DEVICE (int i, int j, int k, int n) {
-                    int bc_comp = (icomp+n >= RhoScalar_comp && icomp+n < RhoScalar_comp+NSCALARS) ?
-                                   BCVars::RhoScalar_bc_comp : icomp+n;
+                    int bc_comp = (var_idx == Vars::cons) ?
+                        ((icomp+n >= RhoScalar_comp && icomp+n < RhoScalar_comp+NSCALARS) ?
+                         BCVars::RhoScalar_bc_comp : icomp+n) : bccomp+n;
                     if (use_ylo && bc_ptr[bc_comp].lo(1) == ERFBCType::ext_dir_ingested) {
                         int ib = std::min(std::max(i,dom_lo.x),dom_hi.x);
                         int kb = std::min(std::max(k,dom_lo.z),dom_hi.z);
@@ -130,8 +133,9 @@ ERF::fill_from_bndryregs (const Vector<MultiFab*>& mfs, const double time)
                     }
                 },
                 bx_yhi, ncomp, [=] AMREX_GPU_DEVICE (int i, int j, int k, int n) {
-                    int bc_comp = (icomp+n >= RhoScalar_comp && icomp+n < RhoScalar_comp+NSCALARS) ?
-                                   BCVars::RhoScalar_bc_comp : icomp+n;
+                    int bc_comp = (var_idx == Vars::cons) ?
+                        ((icomp+n >= RhoScalar_comp && icomp+n < RhoScalar_comp+NSCALARS) ?
+                         BCVars::RhoScalar_bc_comp : icomp+n) : bccomp+n;
                     if (use_yhi && bc_ptr[bc_comp].hi(1) == ERFBCType::ext_dir_ingested) {
                         int ib = std::min(std::max(i,dom_lo.x),dom_hi.x);
                         int kb = std::min(std::max(k,dom_lo.z),dom_hi.z);
