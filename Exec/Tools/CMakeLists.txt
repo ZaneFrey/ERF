@@ -1,4 +1,16 @@
 if(ERF_ENABLE_NETCDF)
+    # CUDA-enabled AMReX headers contain CUDA attributes and include CUB, so
+    # each tool translation unit that includes them must be compiled by NVCC.
+    if(ERF_ENABLE_CUDA)
+        set_source_files_properties(
+            ${PROJECT_SOURCE_DIR}/Source/Tools/ERF_PlotfileToNetCDF.cpp
+            ${PROJECT_SOURCE_DIR}/Source/Tools/ERF_CheckpointToNCInit.cpp
+            ${PROJECT_SOURCE_DIR}/Source/IO/ERF_NCPlotFile.cpp
+            ${PROJECT_SOURCE_DIR}/Source/IO/ERF_NCInterface.cpp
+            PROPERTIES LANGUAGE CUDA
+        )
+    endif()
+
     # PlotFile-NetCDF converter
     set(tool_exe erf_plt_to_nc)
     add_executable(${tool_exe}
@@ -40,8 +52,50 @@ if(ERF_ENABLE_NETCDF)
     set_erf_compile_flags(${tool_exe})
 
     target_compile_features(${tool_exe} PRIVATE cxx_std_17)
+    if(ERF_ENABLE_CUDA)
+        # Keep the final link under the MPI C++ wrapper, as for erf_exec.
+        set_target_properties(${tool_exe} PROPERTIES LINKER_LANGUAGE CXX)
+    endif()
 
     install(TARGETS ${tool_exe}
+        RUNTIME DESTINATION bin
+    )
+
+    # ERF checkpoint -> tiled idealized NetCDF initialization converter
+    set(chk_tool_exe erf_chk_to_nc_init)
+    add_executable(${chk_tool_exe}
+        ${PROJECT_SOURCE_DIR}/Source/Tools/ERF_CheckpointToNCInit.cpp
+        ${PROJECT_SOURCE_DIR}/Source/IO/ERF_NCInterface.cpp
+    )
+
+    target_include_directories(${chk_tool_exe}
+        PRIVATE
+        ${PROJECT_SOURCE_DIR}/Source
+        ${PROJECT_SOURCE_DIR}/Source/IO
+        ${AMREX_SUBMOD_LOCATION}/Src/Base
+        ${AMReX_BINARY_DIR}
+        ${NETCDF_INCLUDE_DIRS}
+    )
+
+    target_compile_definitions(${chk_tool_exe} PRIVATE ERF_USE_NETCDF)
+    target_link_libraries(${chk_tool_exe}
+        PUBLIC
+        AMReX::amrex
+        ${NETCDF_LINK_LIBRARIES}
+    )
+    if(ERF_ENABLE_MPI)
+        target_link_libraries(${chk_tool_exe} PUBLIC $<$<BOOL:${MPI_CXX_FOUND}>:MPI::MPI_CXX>)
+    endif()
+
+    include(${PROJECT_SOURCE_DIR}/CMake/SetERFCompileFlags.cmake)
+    set_erf_compile_flags(${chk_tool_exe})
+    target_compile_features(${chk_tool_exe} PRIVATE cxx_std_17)
+    if(ERF_ENABLE_CUDA)
+        # Keep the final link under the MPI C++ wrapper, as for erf_exec.
+        set_target_properties(${chk_tool_exe} PROPERTIES LINKER_LANGUAGE CXX)
+    endif()
+
+    install(TARGETS ${chk_tool_exe}
         RUNTIME DESTINATION bin
     )
 
