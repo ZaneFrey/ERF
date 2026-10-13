@@ -3713,7 +3713,11 @@ ERF::ReadParameters ()
                     amrex::Print() << "start_time should not be set from inputs file; we are reading SIMULATION START DATE from metgrid" << std::endl;
                     amrex::Abort();
                 }
+            } else {
+                pp_no_prefix.queryAdd("start_time", start_time);
             }
+#else
+            pp_no_prefix.queryAdd("start_time", start_time);
 #endif
         }
 
