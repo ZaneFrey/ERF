@@ -320,7 +320,9 @@ void ERF::MakeNewLevelFromScratch (int lev, Real time, const BoxArray& ba_in,
     // write out the vtk files for wind turbine location and/or
     // actuator disks
     #ifdef ERF_USE_WINDFARM
-        init_windfarm(lev);
+        if (solverChoice.windfarm_type != WindFarmType::None) {
+            init_windfarm(lev);
+        }
     #endif
 
     // ********************************************************************************************

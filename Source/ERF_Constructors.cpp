@@ -310,7 +310,9 @@ ERF::ERF_shared ()
     initializeMicrophysics(nlevs_max);
 
 #ifdef ERF_USE_WINDFARM
-    initializeWindFarm(nlevs_max);
+    if (solverChoice.windfarm_type != WindFarmType::None) {
+        initializeWindFarm(nlevs_max);
+    }
 #endif
 
 #ifdef ERF_USE_EAMXX_SHOC
