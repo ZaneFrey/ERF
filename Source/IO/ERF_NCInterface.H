@@ -10,14 +10,33 @@
 #define ERF_NC_INTERFACE_H
 
 #ifdef ERF_USE_NETCDF
+#include <AMReX_ccse-mpi.H>
+#include <AMReX_ParallelDescriptor.H>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 #include <netcdf.h>
+#include <netcdf_meta.h>
+#if NC_HAS_PARALLEL
 #include <netcdf_par.h>
+#else
+// Keep serial NetCDF builds source-compatible with call sites that select an
+// access mode.  NCVar::par_access is a no-op for a one-rank run and reports a
+// clear error if parallel access is actually attempted.
+static constexpr int NC_INDEPENDENT = 0;
+static constexpr int NC_COLLECTIVE = 1;
+#endif
 
 namespace ncutils {
+
+#ifdef BL_USE_MPI
+using NCComm = MPI_Comm;
+using NCInfo = MPI_Info;
+#else
+using NCComm = amrex::mpidatatypes::MPI_Comm;
+using NCInfo = int;
+#endif
 
 //! Wrapper around NetCDF data types
 struct NCDType
@@ -298,13 +317,13 @@ public:
 
     static NCFile create_par (const std::string& name,
                               const int cmode = NC_CLOBBER | NC_NETCDF4 | NC_MPIIO,
-                              MPI_Comm comm = MPI_COMM_WORLD,
-                              MPI_Info info = MPI_INFO_NULL);
+                              NCComm comm = amrex::ParallelDescriptor::Communicator(),
+                              NCInfo info = NCInfo{});
 
     static NCFile open_par (const std::string& name,
                             const int cmode = NC_NOWRITE,
-                            MPI_Comm comm = MPI_COMM_WORLD,
-                            MPI_Info info = MPI_INFO_NULL);
+                            NCComm comm = amrex::ParallelDescriptor::Communicator(),
+                            NCInfo info = NCInfo{});
 
     ~NCFile ();
 

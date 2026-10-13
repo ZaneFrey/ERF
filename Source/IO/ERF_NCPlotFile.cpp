@@ -48,7 +48,7 @@ writeNCPlotFile (int lev, int which_subdomain, const std::string& dir,
     // Open netcdf file to write data
     //
     auto ncf = ncutils::NCFile::create_par(FullPath, NC_NETCDF4 | NC_MPIIO,
-                                           amrex::ParallelContext::CommunicatorSub(), MPI_INFO_NULL);
+                                           amrex::ParallelContext::CommunicatorSub(), ncutils::NCInfo{});
 
     auto ba = plotMF[lev]->boxArray();
     auto dm = plotMF[lev]->DistributionMap();

@@ -492,7 +492,12 @@ void NCVar::get_attr (const std::string& name, std::vector<int>& values) const
 void NCVar::par_access (const int cmode) const
 {
     if (amrex::ParallelContext::NProcsAll() == 1) return;
+#if NC_HAS_PARALLEL
     check_nc_error(nc_var_par_access(ncid, varid, cmode));
+#else
+    (void) cmode;
+    abort_func("Parallel NetCDF access requested, but the linked NetCDF library has no parallel support");
+#endif
 }
 
 std::string NCGroup::name () const
@@ -748,11 +753,17 @@ NCFile NCFile::open (const std::string& name, const int cmode)
     return NCFile(ncid);
 }
 
-NCFile NCFile::create_par (const std::string& name, const int cmode, MPI_Comm comm, MPI_Info info)
+NCFile NCFile::create_par (const std::string& name, const int cmode, NCComm comm, NCInfo info)
 {
     int ncid;
     if (amrex::ParallelContext::NProcsAll() > 1) {
+#if NC_HAS_PARALLEL
         check_nc_file_error(nc_create_par(name.data(), cmode, comm, info, &ncid), name);
+#else
+        (void) comm;
+        (void) info;
+        abort_func("Parallel NetCDF file creation requested, but the linked NetCDF library has no parallel support");
+#endif
     } else {
         // revert to serial file with 1 rank
         check_nc_file_error(nc_create(name.data(), cmode, &ncid), name);
@@ -760,12 +771,18 @@ NCFile NCFile::create_par (const std::string& name, const int cmode, MPI_Comm co
     return NCFile(ncid);
 }
 
-NCFile NCFile::open_par (const std::string& name, const int cmode, MPI_Comm comm, MPI_Info info)
+NCFile NCFile::open_par (const std::string& name, const int cmode, NCComm comm, NCInfo info)
 {
     int ncid;
     check_nc_file_exists(name);
     if (amrex::ParallelContext::NProcsAll() > 1) {
+#if NC_HAS_PARALLEL
         check_nc_file_error(nc_open_par(name.data(), cmode, comm, info, &ncid), name);
+#else
+        (void) comm;
+        (void) info;
+        abort_func("Parallel NetCDF file open requested, but the linked NetCDF library has no parallel support");
+#endif
     } else {
         // revert to serial with 1 rank
         check_nc_file_error(nc_open(name.data(), cmode, &ncid), name);
