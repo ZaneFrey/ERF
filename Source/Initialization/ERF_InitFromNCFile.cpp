@@ -55,6 +55,7 @@ ERF::init_from_ncfile (int lev)
     FArrayBox NC_th_hse_fab;
 
     FArrayBox NC_qv_fab;
+    FArrayBox NC_rho_ke_fab;
 
     Print() << "Loading data from NetCDF file " << fname << " at level " << lev << std::endl;
 
@@ -74,6 +75,7 @@ ERF::init_from_ncfile (int lev)
     NC_fabs.push_back(&NC_th_hse_fab); NC_fnames.push_back("T_HSE")  ; NC_fdim_types.push_back(NC_Data_Dims_Type::Time_BT_SN_WE);   // 8
 
     NC_fabs.push_back(&NC_qv_fab)    ; NC_fnames.push_back("QV")  ; NC_fdim_types.push_back(NC_Data_Dims_Type::Time_BT_SN_WE);      // 9
+    NC_fabs.push_back(&NC_rho_ke_fab); NC_fnames.push_back("RHO_KE"); NC_fdim_types.push_back(NC_Data_Dims_Type::Time_BT_SN_WE);   // 10
 
     Vector<int> success; success.resize(NC_fabs.size());
 
@@ -81,6 +83,10 @@ ERF::init_from_ncfile (int lev)
 
     // Read the netcdf file and fill these FABs
     BuildFABsFromNetCDFFile<FArrayBox,Real>(geom[lev].Domain(), fname, NC_fnames, NC_fdim_types, NC_fabs, success);
+
+    if (solverChoice.turbChoice[lev].use_tke && !success[10]) {
+        Error("NetCDF initialization for a prognostic-TKE turbulence model requires RHO_KE");
+    }
 
     // ***********************************************************
 
@@ -191,6 +197,14 @@ ERF::init_from_ncfile (int lev)
             }
         } else {
             Print() << "QV not found, defaulting to dry" << std::endl;
+        }
+
+        // RHO_KE is already conserved SGS turbulent kinetic energy.  Reading
+        // the conserved quantity avoids ambiguity and exactly preserves the
+        // precursor checkpoint value.
+        if (success[10]) {
+            cons_fab.template copy<RunOn::Device>(NC_rho_ke_fab, src_comp,
+                                                   RhoKE_comp, num_comp);
         }
     } // mf
 

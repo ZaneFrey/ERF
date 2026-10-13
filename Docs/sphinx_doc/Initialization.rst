@@ -157,12 +157,16 @@ file **Exec/ERF_Prob.cpp** must still be present for the build.
 * **erf.init_type = NCFile**
 
   - In this case the base state defaults to zero and the full state is read in from
-    a much simplified NetCDF file.  Right now, only the density, horizontal and
-    vertical velocity components, potential temperature, and water vapor mixing ratio can be read in.
+    a much simplified NetCDF file.  Density, horizontal and vertical velocity
+    components, potential temperature, water vapor mixing ratio, and conserved
+    SGS turbulent kinetic energy can be read in.
     This case is designed for idealized problems and does not allow
     for terrain-fitted coordinates or map factors.
     The variables in the NC file should have dimensions of (Time, bottom_top, south_north, west_east).
-    Variable names include ``RHO``, ``U``, ``V``, ``W``, ``T``, and ``QV``.
+    Variable names include ``RHO``, ``U``, ``V``, ``W``, ``T``, ``QV``, and
+    ``RHO_KE``.  ``T`` is primitive potential temperature, while ``RHO_KE`` is
+    the conserved quantity rho times SGS kinetic energy and is required when a
+    prognostic-TKE turbulence model is active.
     Optional HSE variables include ``RHO_HSE``, ``T_HSE``, and ``P_HSE``; the base state will be
     calculated if it is not specified.
 

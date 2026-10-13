@@ -247,7 +247,7 @@ template<class FAB,typename DType>
 void
 fill_fab_from_arrays (int iv,
                       const amrex::Box& domain,
-                      amrex::Vector<NDArray<float>>& nc_arrays,
+                      amrex::Vector<NDArray<DType>>& nc_arrays,
                       const std::string& var_name,
                       NC_Data_Dims_Type& NC_dim_type,
                       FAB& temp)
@@ -363,7 +363,10 @@ BuildFABsFromNetCDFFile (const amrex::Box& domain,
 {
     int ioproc = amrex::ParallelDescriptor::IOProcessorNumber();  // I/O rank
 
-    amrex::Vector<NDArray<float>> nc_arrays(nc_var_names.size());
+    // Preserve the precision requested by the caller.  In particular, a
+    // double-precision ERF build must not funnel initialization data through a
+    // float buffer before copying it into a Real-valued FAB.
+    amrex::Vector<NDArray<DType>> nc_arrays(nc_var_names.size());
 
     if (amrex::ParallelDescriptor::IOProcessor())
     {
