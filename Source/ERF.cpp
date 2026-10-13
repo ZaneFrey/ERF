@@ -1373,18 +1373,25 @@ ERF::InitData_post ()
 
         int ncomp_cons = lev_new[Vars::cons].nComp();
         bool do_fb     = true;
+        Vector<MultiFab*> mfs_vec = {&lev_new[Vars::cons],&lev_new[Vars::xvel],
+                                     &lev_new[Vars::yvel],&lev_new[Vars::zvel]};
 
 #ifdef ERF_USE_NETCDF
         if (solverChoice.use_real_bcs && (lev==0)) {
             int icomp_cons = 0;
             bool cons_only = false;
-            Vector<MultiFab*> mfs_vec = {&lev_new[Vars::cons],&lev_new[Vars::xvel],
-                                         &lev_new[Vars::yvel],&lev_new[Vars::zvel]};
             fill_from_realbdy(mfs_vec,t_new[lev],cons_only,icomp_cons,
                               ncomp_cons,ngvect_cons,ngvect_vels);
             do_fb = false;
         }
 #endif
+
+        // The initial projection consumes the lateral ghost state below.  Populate
+        // ingested precursor planes here just as FillPatch does during time stepping,
+        // so the projection sees an xlo state consistent with the tiled interior.
+        if (m_r2d && (lev == 0) && !solverChoice.use_real_bcs) {
+            fill_from_bndryregs(mfs_vec,t_new[lev]);
+        }
 
         (*physbcs_cons[lev])(lev_new[Vars::cons],lev_new[Vars::xvel],lev_new[Vars::yvel],0,ncomp_cons,
                              ngvect_cons,t_new[lev],BCVars::cons_bc,do_fb);
