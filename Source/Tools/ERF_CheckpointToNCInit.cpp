@@ -1,6 +1,6 @@
 /**
  * Convert a level-0 ERF checkpoint into an idealized NCFile initialization
- * dataset, periodically tiled in x and/or y.
+ * dataset, periodically tiled and shifted in x and/or y.
  */
 
 #include <AMReX.H>
@@ -17,6 +17,8 @@
 #include <ERF_IndexDefines.H>
 #include <ERF_NCInterface.H>
 
+#include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <limits>
 #include <sstream>
@@ -103,18 +105,39 @@ read_base_layout (const std::string& checkpoint, int& ncomp, IntVect& ngrow)
 
 void
 tile_multifab (const MultiFab& source, MultiFab& target,
-               int tile_x, int tile_y, int source_nx, int source_ny)
+               int tile_x, int tile_y, int source_nx, int source_ny,
+               int shift_x, int shift_y)
 {
     target.setVal(0.0);
-    for (int jy = 0; jy < tile_y; ++jy) {
-        for (int ix = 0; ix < tile_x; ++ix) {
+    // Include one image beyond either end so a nonzero periodic shift still
+    // covers the complete target domain. ParallelCopy clips each image to it.
+    for (int jy = -1; jy <= tile_y; ++jy) {
+        for (int ix = -1; ix <= tile_x; ++ix) {
             MultiFab shifted(source.boxArray(), source.DistributionMap(),
                              source.nComp(), 0);
             MultiFab::Copy(shifted, source, 0, 0, source.nComp(), 0);
-            shifted.shift(IntVect(ix * source_nx, jy * source_ny, 0));
+            shifted.shift(IntVect(ix * source_nx + shift_x,
+                                  jy * source_ny + shift_y, 0));
             target.ParallelCopy(shifted, 0, 0, source.nComp(), 0, 0);
         }
     }
+}
+
+int
+fractional_shift_to_cells (Real fraction, int period, const std::string& name)
+{
+    const Real requested = fraction * static_cast<Real>(period);
+    const auto nearest = static_cast<long long>(std::llround(requested));
+    const Real tolerance = 128.0 * std::numeric_limits<Real>::epsilon() *
+                           std::max(Real(1.0), std::abs(requested));
+    if (std::abs(requested - static_cast<Real>(nearest)) > tolerance) {
+        Abort(name + " must correspond to an integer number of source cells; " +
+              std::to_string(fraction) + " periods gives " +
+              std::to_string(requested) + " cells");
+    }
+
+    const int unwrapped = static_cast<int>(nearest % period);
+    return unwrapped < 0 ? unwrapped + period : unwrapped;
 }
 
 Vector<Real>
@@ -144,15 +167,22 @@ main_main ()
     std::string output;
     int tile_x = 1;
     int tile_y = 1;
+    Real shift_x = 0.0;
+    Real shift_y = 0.0;
     int max_grid_size = 64;
     pp.get("checkpoint", checkpoint);
     pp.get("output", output);
     pp.query("tile_x", tile_x);
     pp.query("tile_y", tile_y);
+    pp.query("shift_x", shift_x);
+    pp.query("shift_y", shift_y);
     pp.query("max_grid_size", max_grid_size);
 
     if (tile_x < 1 || tile_y < 1 || max_grid_size < 1) {
         Abort("tile_x, tile_y, and max_grid_size must be positive");
+    }
+    if (!std::isfinite(shift_x) || !std::isfinite(shift_y)) {
+        Abort("shift_x and shift_y must be finite");
     }
     while (!checkpoint.empty() && checkpoint.back() == '/') {
         checkpoint.pop_back();
@@ -173,6 +203,8 @@ main_main ()
     const int source_nx = source_domain.length(0);
     const int source_ny = source_domain.length(1);
     const int source_nz = source_domain.length(2);
+    const int shift_x_cells = fractional_shift_to_cells(shift_x, source_nx, "shift_x");
+    const int shift_y_cells = fractional_shift_to_cells(shift_y, source_ny, "shift_y");
 
     Box target_domain = source_domain;
     target_domain.setBig(0, source_domain.smallEnd(0) + tile_x * source_nx - 1);
@@ -187,7 +219,8 @@ main_main ()
     VisMF::Read(source_cons,
         MultiFabFileFullPrefix(0, checkpoint, "Level_", "Cell"));
     MultiFab target_cons(target_cell_ba, target_dm, metadata.ncomp_cons, 0);
-    tile_multifab(source_cons, target_cons, tile_x, tile_y, source_nx, source_ny);
+    tile_multifab(source_cons, target_cons, tile_x, tile_y, source_nx, source_ny,
+                  shift_x_cells, shift_y_cells);
 
     Array<IntVect, AMREX_SPACEDIM> staggering{
         IntVect(1,0,0), IntVect(0,1,0), IntVect(0,0,1)};
@@ -205,7 +238,8 @@ main_main ()
         target_velocity[direction] =
             std::make_unique<MultiFab>(target_face_ba, target_dm, 1, 0);
         tile_multifab(source_velocity, *target_velocity[direction],
-                      tile_x, tile_y, source_nx, source_ny);
+                      tile_x, tile_y, source_nx, source_ny,
+                      shift_x_cells, shift_y_cells);
     }
 
     int ncomp_base = 0;
@@ -218,7 +252,8 @@ main_main ()
     VisMF::Read(source_base,
         MultiFabFileFullPrefix(0, checkpoint, "Level_", "BaseState"));
     MultiFab target_base(target_cell_ba, target_dm, ncomp_base, 0);
-    tile_multifab(source_base, target_base, tile_x, tile_y, source_nx, source_ny);
+    tile_multifab(source_base, target_base, tile_x, tile_y, source_nx, source_ny,
+                  shift_x_cells, shift_y_cells);
 
     const Box u_domain = convert(target_domain, staggering[0]);
     const Box v_domain = convert(target_domain, staggering[1]);
@@ -250,6 +285,10 @@ main_main ()
         file.put_attr("source_time", std::vector<double>{metadata.time});
         file.put_attr("tile_x", std::vector<int>{tile_x});
         file.put_attr("tile_y", std::vector<int>{tile_y});
+        file.put_attr("shift_x", std::vector<double>{shift_x});
+        file.put_attr("shift_y", std::vector<double>{shift_y});
+        file.put_attr("shift_x_cells", std::vector<int>{shift_x_cells});
+        file.put_attr("shift_y_cells", std::vector<int>{shift_y_cells});
 
         file.def_dim("Time", 1);
         file.def_dim("bottom_top", source_nz);
@@ -291,6 +330,9 @@ main_main ()
                 << " x " << source_nz << "\n"
                 << "  target cells: " << tile_x * source_nx << " x "
                 << tile_y * source_ny << " x " << source_nz << "\n"
+                << "  periodic shift: " << shift_x << ", " << shift_y
+                << " source periods (" << shift_x_cells << ", "
+                << shift_y_cells << " cells)\n"
                 << "  checkpoint time: " << metadata.time << std::endl;
     }
 
