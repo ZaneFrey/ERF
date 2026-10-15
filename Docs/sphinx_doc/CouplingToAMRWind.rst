@@ -125,6 +125,8 @@ for this one would add the following (or similar) line to the inputs file:
   erf.input_bndry_planes = 1
   erf.bndry_file = "BndryFiles"
   erf.bndry_input_var_names = density temperature velocity
+  erf.bndry_input_tile_y = 2
+  erf.bndry_input_shift_y = 0.5
 
 When run with these inputs, ERF will read in the time sequence of files contained in the folder :cpp:`BndryFiles`,
 and perform time interpolation as necessary. The only assumption about the times associated with the files
@@ -132,9 +134,18 @@ is that the start and end times of the current simulation
 lie in the time period covered by the files in :cpp:`BndryFiles`.  Within :cpp:`BndryFiles` there is an
 ascii file :cpp:`time.dat` which contains the (originating) timesteps and physical times associated with each of the files.
 
-It is assumed at this point that the physical domain of the simulation reading the files is exactly the physical
-domain specified by :cpp:`bndry_output_box_lo` and :cpp:`bndry_output_box_hi` when the files were written.  If not, ERF will
-abort with an error message.
+By default, the tangential extent of each input face must equal the extent that
+was written. A smaller periodic precursor face can be repeated an integer number
+of times with :cpp:`bndry_input_tile_y` for x-normal faces or
+:cpp:`bndry_input_tile_x` for y-normal faces. For example, the value 2 above
+repeats the precursor xlo plane twice across the target domain in y. The target
+extent must exactly equal the tiled source extent; ERF does not resample or crop
+the plane. Vertical extents must always match. The optional
+:cpp:`bndry_input_shift_y` above then moves that repeated pattern by half of one
+source-plane width in the positive y direction. Shift values are fractions of a
+source period, must correspond to an integer number of source cells, and wrap
+modulo one period. The analogous :cpp:`bndry_input_shift_x` applies to y-normal
+faces.
 
 We note that the boundary plane data will only be used on faces identified in the inputs file as inflow faces, i.e. if
 we specific inflow/outflow in the x-direction, and periodic in the y-direction, as below, then only the "xlo" boundary data

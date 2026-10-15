@@ -2927,6 +2927,18 @@ List of Parameters
 |                                       | temperature, theta, scalar, qv, qc and ke. An unknown    |                    | variables)       |
 |                                       | name aborts at start-up                                  |                    |                  |
 +---------------------------------------+----------------------------------------------------------+--------------------+------------------+
+| **erf.bndry_input_tile_x**            | Number of times to repeat an input plane in x; applies   | Integer >= 1       | 1                |
+|                                       | to y-normal input faces                                  |                    |                  |
++---------------------------------------+----------------------------------------------------------+--------------------+------------------+
+| **erf.bndry_input_tile_y**            | Number of times to repeat an input plane in y; applies   | Integer >= 1       | 1                |
+|                                       | to x-normal input faces                                  |                    |                  |
++---------------------------------------+----------------------------------------------------------+--------------------+------------------+
+| **erf.bndry_input_shift_x**           | Periodic shift in x as a fraction of one source-plane    | Real; must map to  | 0.0              |
+|                                       | width; applies to y-normal input faces                   | whole source cells |                  |
++---------------------------------------+----------------------------------------------------------+--------------------+------------------+
+| **erf.bndry_input_shift_y**           | Periodic shift in y as a fraction of one source-plane    | Real; must map to  | 0.0              |
+|                                       | width; applies to x-normal input faces                   | whole source cells |                  |
++---------------------------------------+----------------------------------------------------------+--------------------+------------------+
 | **erf.in_rad**                        | width, in cells, of the region inside the domain         | Integer >= 0       | 1                |
 |                                       | boundary from which the boundary planes are written and  |                    |                  |
 |                                       | into which they are read                                 |                    |                  |
@@ -2942,7 +2954,11 @@ Notes
   Boundary-plane input and output are not supported with moving fitted terrain.
 - Boundary-plane input allocates and reads only lateral faces containing at
   least one component with an ingested boundary condition. If terrain-coordinate
-  files are present, coordinates on every active face must match the input mesh.
+  files are present, coordinates on every active face must match the input mesh
+  after applying the requested tangential tiling.
+- Positive boundary-plane shifts move the periodic source pattern in the
+  positive target-coordinate direction. Shift values are fractions of one
+  source period and are wrapped modulo one period.
   Directories without coordinate files remain supported as legacy input.
 
 .. _sec:NumericalStability:
