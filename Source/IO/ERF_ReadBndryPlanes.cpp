@@ -68,38 +68,85 @@ MultiFab make_normalized_z_face (const MultiFab& z_phys_nd,
     return normalized;
 }
 
-void read_and_align_face (MultiFab& mf,
-                          const std::string& filename,
-                          const Box& target_box,
-                          int expected_ncomp,
-                          const std::string& face_name)
+void read_and_tile_face (MultiFab& mf,
+                         const std::string& filename,
+                         const Box& target_box,
+                         int expected_ncomp,
+                         Orientation ori,
+                         int tile_factor,
+                         Real shift_fraction)
 {
+    const std::string face_name = lateral_face_name(ori);
     if (!FileExists(filename + "_H")) {
         Error("Missing boundary-plane file for active face " + face_name + ": " + filename);
     }
 
-    VisMF::Read(mf, filename);
-    if (mf.nComp() != expected_ncomp) {
+    MultiFab source;
+    VisMF::Read(source, filename);
+    if (source.nComp() != expected_ncomp) {
         Error("Boundary-plane component mismatch for active face " + face_name +
               " in " + filename);
     }
-    if (mf.boxArray().size() != 1) {
+    if (source.boxArray().size() != 1) {
         Error("Boundary-plane face file must contain exactly one box: " + filename);
     }
 
-    const Box source_box = mf.boxArray().minimalBox();
+    const Box source_box = source.boxArray().minimalBox();
     if (source_box.ixType() != target_box.ixType()) {
         Error("Boundary-plane index-type mismatch for active face " + face_name +
               " in " + filename);
     }
+
+    const int normal = ori.coordDir();
+    const int tangent = 1 - normal;
     for (int dir = 0; dir < AMREX_SPACEDIM; ++dir) {
-        if (source_box.length(dir) != target_box.length(dir)) {
+        int expected_length = source_box.length(dir);
+        if (dir == tangent) {
+            // Nodal coordinate planes share one point at each tile seam.
+            const int is_nodal = source_box.ixType().nodeCentered(dir) ? 1 : 0;
+            const int source_period = source_box.length(dir) - is_nodal;
+            expected_length = tile_factor * source_period + is_nodal;
+        }
+        if (target_box.length(dir) != expected_length) {
             Error("Boundary-plane shape mismatch for active face " + face_name +
-                  " in " + filename);
+                  " in " + filename + "; target extent in direction " +
+                  std::to_string(dir) + " is " + std::to_string(target_box.length(dir)) +
+                  ", expected " + std::to_string(expected_length) +
+                  " with tile factor " + std::to_string(tile_factor));
         }
     }
 
-    mf.shift(target_box.smallEnd() - source_box.smallEnd());
+    BoxArray target_ba(target_box);
+    DistributionMapping target_dm(target_ba);
+    mf.define(target_ba, target_dm, expected_ncomp, 0);
+
+    const int is_nodal = source_box.ixType().nodeCentered(tangent) ? 1 : 0;
+    const int source_period = source_box.length(tangent) - is_nodal;
+    const Real requested_shift = shift_fraction * static_cast<Real>(source_period);
+    const auto nearest_shift = static_cast<long long>(std::llround(requested_shift));
+    const Real shift_tolerance = 128.0 * std::numeric_limits<Real>::epsilon() *
+                                 std::max(Real(1.0), std::abs(requested_shift));
+    if (std::abs(requested_shift - static_cast<Real>(nearest_shift)) > shift_tolerance) {
+        Error("erf.bndry_input_shift_" + std::string(tangent == 0 ? "x" : "y") +
+              " must correspond to an integer number of source cells; " +
+              std::to_string(shift_fraction) + " periods gives " +
+              std::to_string(requested_shift) + " cells on face " + face_name);
+    }
+    int shift_cells = static_cast<int>(nearest_shift % source_period);
+    if (shift_cells < 0) {
+        shift_cells += source_period;
+    }
+
+    const IntVect base_shift = target_box.smallEnd() - source_box.smallEnd();
+    // The extra images cover the ends after applying a nonzero periodic shift.
+    for (int tile = -1; tile <= tile_factor; ++tile) {
+        MultiFab shifted(source.boxArray(), source.DistributionMap(), expected_ncomp, 0);
+        MultiFab::Copy(shifted, source, 0, 0, expected_ncomp, 0);
+        IntVect shift = base_shift;
+        shift[tangent] += tile * source_period + shift_cells;
+        shifted.shift(shift);
+        mf.ParallelCopy(shifted, 0, 0, expected_ncomp, 0, 0);
+    }
 }
 
 }
@@ -338,6 +385,19 @@ ReadBndryPlanes::ReadBndryPlanes (const Geometry& geom, const Real& rdOcp_in)
     // Get the radius inside the domain
     pp.queryAdd("in_rad",m_in_rad);
 
+    // Optionally repeat a smaller precursor plane across the tangential
+    // horizontal extent of the target boundary.
+    pp.queryAdd("bndry_input_tile_x", m_tile_x);
+    pp.queryAdd("bndry_input_tile_y", m_tile_y);
+    pp.queryAdd("bndry_input_shift_x", m_shift_x);
+    pp.queryAdd("bndry_input_shift_y", m_shift_y);
+    if (m_tile_x < 1 || m_tile_y < 1) {
+        Error("erf.bndry_input_tile_x and erf.bndry_input_tile_y must be positive integers");
+    }
+    if (!std::isfinite(m_shift_x) || !std::isfinite(m_shift_y)) {
+        Error("erf.bndry_input_shift_x and erf.bndry_input_shift_y must be finite");
+    }
+
     // Are we using real bcs?
     pp.queryAdd("use_real_bcs", m_use_real_bcs);
 
@@ -393,6 +453,20 @@ ReadBndryPlanes::ReadBndryPlanes (const Geometry& geom, const Real& rdOcp_in)
     m_data_np2.resize(size);
     m_data_interp.resize(size);
     m_data_tendency.resize(size);
+}
+
+int
+ReadBndryPlanes::tangential_tile_factor (Orientation ori) const
+{
+    AMREX_ALWAYS_ASSERT(ori.coordDir() < 2);
+    return ori.coordDir() == 0 ? m_tile_y : m_tile_x;
+}
+
+Real
+ReadBndryPlanes::tangential_shift (Orientation ori) const
+{
+    AMREX_ALWAYS_ASSERT(ori.coordDir() < 2);
+    return ori.coordDir() == 0 ? m_shift_y : m_shift_x;
 }
 
 void
@@ -459,16 +533,13 @@ ReadBndryPlanes::validate_terrain_coordinates (const MultiFab& z_phys_nd)
             Error("Missing terrain-coordinate file for active face " + face + ": " + z_name);
         }
 
-        MultiFab source_z;
-        VisMF::Read(source_z, z_name);
         MultiFab target_z = make_normalized_z_face(z_phys_nd, domain, ori);
-        if (source_z.nComp() != 1 || source_z.boxArray().size() != 1 ||
-            !amrex::match(source_z.boxArray(), target_z.boxArray())) {
-            Error("Terrain-coordinate shape mismatch on active face " + face);
-        }
-
+        MultiFab tiled_source;
+        read_and_tile_face(tiled_source, z_name,
+                           target_z.boxArray().minimalBox(), 1, ori,
+                           tangential_tile_factor(ori), tangential_shift(ori));
         MultiFab source_on_target(target_z.boxArray(), target_z.DistributionMap(), 1, 0);
-        source_on_target.ParallelCopy(source_z, 0, 0, 1);
+        source_on_target.ParallelCopy(tiled_source, 0, 0, 1);
         MultiFab diff(target_z.boxArray(), target_z.DistributionMap(), 1, 0);
         MultiFab::Copy(diff, target_z, 0, 0, 1, 0);
         MultiFab::Subtract(diff, source_on_target, 0, 0, 1, 0);
@@ -687,9 +758,9 @@ void ReadBndryPlanes::read_file (const int idx,
         if (ori.coordDir() < 2 && m_active_faces[int(ori)]) {
             const std::string facenamer = Concatenate(filenamer + '_', ori, 1);
             density_faces[int(ori)] = std::make_unique<MultiFab>();
-            read_and_align_face(*density_faces[int(ori)], facenamer,
-                                (*data_to_fill[ori])[lev].box(), 1,
-                                lateral_face_name(ori));
+            read_and_tile_face(*density_faces[int(ori)], facenamer,
+                               (*data_to_fill[ori])[lev].box(), 1, ori,
+                               tangential_tile_factor(ori), tangential_shift(ori));
         }
     }
 
@@ -732,9 +803,9 @@ void ReadBndryPlanes::read_file (const int idx,
 
             std::string facename1 = Concatenate(filename1 + '_', ori, 1);
             MultiFab bndry_read;
-            read_and_align_face(bndry_read, facename1,
-                                (*data_to_fill[ori])[lev].box(), ncomp,
-                                lateral_face_name(ori));
+            read_and_tile_face(bndry_read, facename1,
+                               (*data_to_fill[ori])[lev].box(), ncomp, ori,
+                               tangential_tile_factor(ori), tangential_shift(ori));
 
             int normal = ori.coordDir();
             IntVect v_offset = offset(ori.faceDir(), normal);

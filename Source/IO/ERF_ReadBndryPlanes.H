@@ -116,6 +116,15 @@ private:
     const int m_out_rad = 1;
     const int m_extent_rad = 0;
 
+    //! Integer replication factors for the tangential horizontal extent.
+    //! x-normal faces use m_tile_y; y-normal faces use m_tile_x.
+    int m_tile_x = 1;
+    int m_tile_y = 1;
+
+    //! Periodic shifts as fractions of one source-plane period.
+    amrex::Real m_shift_x = 0.0;
+    amrex::Real m_shift_y = 0.0;
+
     //! Are real BCs being used?
     bool m_use_real_bcs = false;
 
@@ -132,6 +141,9 @@ private:
     int is_KE_read;
 
     int last_file_read;
+
+    [[nodiscard]] int tangential_tile_factor (amrex::Orientation ori) const;
+    [[nodiscard]] amrex::Real tangential_shift (amrex::Orientation ori) const;
 
     void validate_terrain_coordinates (const amrex::MultiFab& z_phys_nd);
 };
