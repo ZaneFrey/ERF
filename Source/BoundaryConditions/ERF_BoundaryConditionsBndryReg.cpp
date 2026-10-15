@@ -2,6 +2,26 @@
 
 using namespace amrex;
 
+namespace {
+
+AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+int
+map_tangential_index (int index, int lo, int hi, bool is_periodic) noexcept
+{
+    if (!is_periodic) {
+        return (index < lo) ? lo : ((index > hi) ? hi : index);
+    }
+
+    const int period = hi - lo + 1;
+    int offset = (index - lo) % period;
+    if (offset < 0) {
+        offset += period;
+    }
+    return lo + offset;
+}
+
+} // namespace
+
 /**
  * Impose boundary conditions using data read in as BndryRegisters from a previous ERF run
  *
@@ -19,6 +39,10 @@ ERF::fill_from_bndryregs (const Vector<MultiFab*>& mfs, const double time)
 
     const auto& dom_lo = lbound(domain);
     const auto& dom_hi = ubound(domain);
+
+    const bool periodic_x = geom[lev].isPeriodic(0);
+    const bool periodic_y = geom[lev].isPeriodic(1);
+    const bool periodic_z = geom[lev].isPeriodic(2);
 
     // Boundary-plane files are indexed by absolute simulation time.
     m_r2d->interp_in_time(time + start_time);
@@ -96,8 +120,8 @@ ERF::fill_from_bndryregs (const Vector<MultiFab*>& mfs, const double time)
                         ((icomp+n >= RhoScalar_comp && icomp+n < RhoScalar_comp+NSCALARS) ?
                          BCVars::RhoScalar_bc_comp : icomp+n) : bccomp+n;
                     if (use_xlo && bc_ptr[bc_comp].lo(0) == ERFBCType::ext_dir_ingested) {
-                        int jb = std::min(std::max(j,dom_lo.y),dom_hi.y);
-                        int kb = std::min(std::max(k,dom_lo.z),dom_hi.z);
+                        int jb = map_tangential_index(j,dom_lo.y,dom_hi.y,periodic_y);
+                        int kb = map_tangential_index(k,dom_lo.z,dom_hi.z,periodic_z);
                         dest_arr(i,j,k,icomp+n) = bdatxlo(dom_lo.x-1,jb,kb,bccomp+n);
                     }
                 },
@@ -106,8 +130,8 @@ ERF::fill_from_bndryregs (const Vector<MultiFab*>& mfs, const double time)
                         ((icomp+n >= RhoScalar_comp && icomp+n < RhoScalar_comp+NSCALARS) ?
                          BCVars::RhoScalar_bc_comp : icomp+n) : bccomp+n;
                     if (use_xhi && bc_ptr[bc_comp].hi(0) == ERFBCType::ext_dir_ingested) {
-                        int jb = std::min(std::max(j,dom_lo.y),dom_hi.y);
-                        int kb = std::min(std::max(k,dom_lo.z),dom_hi.z);
+                        int jb = map_tangential_index(j,dom_lo.y,dom_hi.y,periodic_y);
+                        int kb = map_tangential_index(k,dom_lo.z,dom_hi.z,periodic_z);
                         dest_arr(i,j,k,icomp+n) = bdatxhi(dom_hi.x+1,jb,kb,bccomp+n);
                     }
                 }
@@ -127,8 +151,8 @@ ERF::fill_from_bndryregs (const Vector<MultiFab*>& mfs, const double time)
                         ((icomp+n >= RhoScalar_comp && icomp+n < RhoScalar_comp+NSCALARS) ?
                          BCVars::RhoScalar_bc_comp : icomp+n) : bccomp+n;
                     if (use_ylo && bc_ptr[bc_comp].lo(1) == ERFBCType::ext_dir_ingested) {
-                        int ib = std::min(std::max(i,dom_lo.x),dom_hi.x);
-                        int kb = std::min(std::max(k,dom_lo.z),dom_hi.z);
+                        int ib = map_tangential_index(i,dom_lo.x,dom_hi.x,periodic_x);
+                        int kb = map_tangential_index(k,dom_lo.z,dom_hi.z,periodic_z);
                         dest_arr(i,j,k,icomp+n) = bdatylo(ib,dom_lo.y-1,kb,bccomp+n);
                     }
                 },
@@ -137,8 +161,8 @@ ERF::fill_from_bndryregs (const Vector<MultiFab*>& mfs, const double time)
                         ((icomp+n >= RhoScalar_comp && icomp+n < RhoScalar_comp+NSCALARS) ?
                          BCVars::RhoScalar_bc_comp : icomp+n) : bccomp+n;
                     if (use_yhi && bc_ptr[bc_comp].hi(1) == ERFBCType::ext_dir_ingested) {
-                        int ib = std::min(std::max(i,dom_lo.x),dom_hi.x);
-                        int kb = std::min(std::max(k,dom_lo.z),dom_hi.z);
+                        int ib = map_tangential_index(i,dom_lo.x,dom_hi.x,periodic_x);
+                        int kb = map_tangential_index(k,dom_lo.z,dom_hi.z,periodic_z);
                         dest_arr(i,j,k,icomp+n) = bdatyhi(ib,dom_hi.y+1,kb,bccomp+n);
                     }
                 }
