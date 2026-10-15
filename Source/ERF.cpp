@@ -3605,6 +3605,7 @@ ERF::ReadParameters ()
     // out: the grid generator merges the boxes it makes along z, so no two of them share
     // a face normal to z.  Refuse to run with any other value while a level substeps
     // implicitly.
+    pp_amr.query("no_box_split_dir", no_box_split_dir);
     for (int lev = 0; lev <= max_level; lev++) {
         if ( (solverChoice.substepping_type[lev] == SubsteppingType::Implicit) &&
              (no_box_split_dir != 2) )

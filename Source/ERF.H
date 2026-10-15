@@ -1620,6 +1620,9 @@ private:
     //    max_grid_size has changed?
     bool regrid_level_0_on_restart = false;
 
+    // Direction in which AMReX must not split boxes (-1 permits all directions).
+    int no_box_split_dir = 2;
+
     // plotfile prefix and frequency
     std::string plot3d_file_1 {"plt_1_"};
     std::string plot3d_file_2 {"plt_2_"};
