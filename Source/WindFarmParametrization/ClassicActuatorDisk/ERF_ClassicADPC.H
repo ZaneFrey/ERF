@@ -9,7 +9,8 @@
 
 struct ClassicADRealIdx
 {
-    enum { radius = 0, theta, area, force_x, force_y, force_z, ncomps };
+    enum { radius = 0, theta, area, physical_z,
+           force_x, force_y, force_z, ncomps };
 };
 
 struct ClassicADIntIdx

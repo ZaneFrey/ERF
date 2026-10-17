@@ -117,7 +117,9 @@ WindFarm::define_classic_ad_owner_levels (
 
     m_owner_level.assign(nturb, -1);
     m_turbines_on_level.assign(nlev, {});
-    zloc.assign(nturb, geom[0].ProbLo(2));
+    const auto& vertical_grid = classic_ad_model().vertical_grid();
+    zloc.assign(nturb, vertical_grid.stretched()
+        ? vertical_grid.ground() : geom[0].ProbLo(2));
     Vector<Real> face_angles(nturb, disk_face_angle_deg);
 #ifdef ERF_USE_PARTICLES
     if (classic_ad_model().dynamic_yaw_enabled()) {
@@ -135,6 +137,17 @@ WindFarm::define_classic_ad_owner_levels (
     }
 
     for (int it = 0; it < nturb; ++it) {
+        if (vertical_grid.stretched()) {
+            const Real zhub = zloc[it] + hub_height;
+            if (!vertical_grid.cell_center_stencil_in_domain(zhub-rotor_rad) ||
+                !vertical_grid.cell_center_stencil_in_domain(zhub+rotor_rad)) {
+                std::ostringstream message;
+                message << "ClassicAD turbine " << it
+                        << " rotor leaves the valid stretched-grid "
+                           "cell-centered interpolation region";
+                Abort(message.str());
+            }
+        }
         bool assigned = false;
         for (int lev = finest_level; lev >= 0; --lev) {
             const auto dx = geom[lev].CellSizeArray();
@@ -151,10 +164,12 @@ WindFarm::define_classic_ad_owner_levels (
                                         (e1y*dx[1])*(e1y*dx[1]));
             const Real hx = Real(3.0) * (std::abs(nx)*epsn + std::abs(e1x)*eps1);
             const Real hy = Real(3.0) * (std::abs(ny)*epsn + std::abs(e1y)*eps1);
-            const Real hz = Real(3.0) * dx[2];
+            const Real vertical_width = vertical_grid.stretched()
+                ? vertical_grid.hub_dz() : dx[2];
+            const Real hz = Real(3.0) * vertical_width;
             const Real xext = std::abs(e1x)*rotor_rad + hx;
             const Real yext = std::abs(e1y)*rotor_rad + hy;
-            const Real zhub = geom[0].ProbLo(2) + hub_height;
+            const Real zhub = zloc[it] + hub_height;
             const Real zext = rotor_rad + hz;
 
             IntVect lo(AMREX_D_DECL(
@@ -165,6 +180,14 @@ WindFarm::define_classic_ad_owner_levels (
                 static_cast<int>(std::floor((xloc[it]+xext-plo[0])/dx[0])),
                 static_cast<int>(std::floor((yloc[it]+yext-plo[1])/dx[1])),
                 static_cast<int>(std::floor((zhub+zext-plo[2])/dx[2]))));
+
+            if (vertical_grid.stretched()) {
+                lo[2] = vertical_grid.find_cell(zhub-zext);
+                hi[2] = vertical_grid.find_cell(zhub+zext);
+                if (lo[2] < 0 || hi[2] < 0) {
+                    continue;
+                }
+            }
 
             bool outside_nonperiodic = false;
             for (int dir = 0; dir < AMREX_SPACEDIM; ++dir) {

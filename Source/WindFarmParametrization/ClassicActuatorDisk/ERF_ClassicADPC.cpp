@@ -89,7 +89,9 @@ ClassicADPC::rebuild (const Vector<int>& owner_levels)
         if (ParallelDescriptor::IOProcessor()) {
             const Real target_spacing = m_model.spacing_was_supplied()
                 ? m_model.actuator_spacing()
-                : Geom(lev).CellSize(2);
+                : (m_model.vertical_grid().stretched()
+                    ? m_model.vertical_grid().hub_dz()
+                    : Geom(lev).CellSize(2));
             const int nr = amrex::max(
                 1, static_cast<int>(std::llround(rotor_radius / target_spacing)));
             const Real dr = rotor_radius / static_cast<Real>(nr);
@@ -129,12 +131,15 @@ ClassicADPC::rebuild (const Vector<int>& owner_levels)
                         particle.cpu() = ParallelDescriptor::MyProc();
                         particle.pos(0) = xloc[turbine_id] + radial_in_plane*e1x;
                         particle.pos(1) = yloc[turbine_id] + radial_in_plane*e1y;
-                        particle.pos(2) = zhub + radial_vertical;
+                        const Real physical_z = zhub + radial_vertical;
+                        particle.pos(2) =
+                            m_model.vertical_grid().physical_to_zeta(physical_z);
                         host_particles.push_back(particle);
 
                         host_real[ClassicADRealIdx::radius].push_back(radius);
                         host_real[ClassicADRealIdx::theta].push_back(theta);
                         host_real[ClassicADRealIdx::area].push_back(area);
+                        host_real[ClassicADRealIdx::physical_z].push_back(physical_z);
                         host_real[ClassicADRealIdx::force_x].push_back(Real(0.0));
                         host_real[ClassicADRealIdx::force_y].push_back(Real(0.0));
                         host_real[ClassicADRealIdx::force_z].push_back(Real(0.0));
@@ -182,7 +187,6 @@ ClassicADPC::update_positions ()
 
     Gpu::DeviceVector<Real> d_xloc(nturb);
     Gpu::DeviceVector<Real> d_yloc(nturb);
-    Gpu::DeviceVector<Real> d_ground(nturb);
     Gpu::DeviceVector<Real> d_face_angles(nturb);
     Gpu::copyAsync(Gpu::hostToDevice,
                    m_model.x_locations().begin(),
@@ -191,17 +195,12 @@ ClassicADPC::update_positions ()
                    m_model.y_locations().begin(),
                    m_model.y_locations().end(), d_yloc.begin());
     Gpu::copyAsync(Gpu::hostToDevice,
-                   m_model.ground_elevations().begin(),
-                   m_model.ground_elevations().end(), d_ground.begin());
-    Gpu::copyAsync(Gpu::hostToDevice,
                    m_model.disk_face_angles_deg().begin(),
                    m_model.disk_face_angles_deg().end(),
                    d_face_angles.begin());
     const Real* xloc = d_xloc.data();
     const Real* yloc = d_yloc.data();
-    const Real* ground = d_ground.data();
     const Real* face_angles = d_face_angles.data();
-    const Real hub_height = m_model.hub_height();
 
     for (int lev = 0; lev <= finestLevel(); ++lev) {
         for (ParIterType pti(*this, lev); pti.isValid(); ++pti) {
@@ -231,8 +230,6 @@ ClassicADPC::update_positions ()
                     xloc[turbine_id] + radial_in_plane*e1x;
                 particles[ip].pos(1) =
                     yloc[turbine_id] + radial_in_plane*e1y;
-                particles[ip].pos(2) = ground[turbine_id] + hub_height +
-                    radius[ip]*std::sin(theta[ip]);
             });
         }
     }
@@ -262,6 +259,13 @@ ClassicADPC::sample_disk_state (int lev,
     const Geometry& geom = Geom(lev);
     const auto plo = geom.ProbLoArray();
     const auto dxi = geom.InvCellSizeArray();
+    const bool stretched = m_model.vertical_grid().stretched();
+    const Real* z_faces = m_model.vertical_grid().faces_device();
+    const Real* z_centers = m_model.vertical_grid().centers_device();
+    const IntVect u_nodal(1,0,0);
+    const IntVect v_nodal(0,1,0);
+    const IntVect w_nodal(0,0,1);
+    const IntVect cc_nodal(0,0,0);
 
     Gpu::DeviceVector<Real> d_velocity_sum(nturb, Real(0.0));
     Gpu::DeviceVector<Real> d_density_sum(nturb, Real(0.0));
@@ -286,6 +290,8 @@ ClassicADPC::sample_disk_state (int lev,
         const int np = aos.numParticles();
         const auto* particles = aos().data();
         const auto* area = soa.GetRealData(ClassicADRealIdx::area).data();
+        const auto* physical_z =
+            soa.GetRealData(ClassicADRealIdx::physical_z).data();
         const auto* turbine = soa.GetIntData(ClassicADIntIdx::turbine).data();
 
         const GpuArray<Array4<const Real>, AMREX_SPACEDIM> velocity_arrays{{
@@ -297,10 +303,25 @@ ClassicADPC::sample_disk_state (int lev,
         ParallelFor(np, [=] AMREX_GPU_DEVICE (int ip) noexcept {
             ParticleReal velocity[AMREX_SPACEDIM];
             ParticleReal density[1];
-            mac_interpolate(particles[ip], plo, dxi,
-                            velocity_arrays, velocity);
-            cic_interpolate(particles[ip], plo, dxi,
-                            density_array, density, 1);
+            if (stretched) {
+                velocity[0] = classic_ad_interpolate_stretched(
+                    particles[ip], physical_z[ip], plo, dxi,
+                    velocity_arrays[0], u_nodal, z_faces, z_centers);
+                velocity[1] = classic_ad_interpolate_stretched(
+                    particles[ip], physical_z[ip], plo, dxi,
+                    velocity_arrays[1], v_nodal, z_faces, z_centers);
+                velocity[2] = classic_ad_interpolate_stretched(
+                    particles[ip], physical_z[ip], plo, dxi,
+                    velocity_arrays[2], w_nodal, z_faces, z_centers);
+                density[0] = classic_ad_interpolate_stretched(
+                    particles[ip], physical_z[ip], plo, dxi,
+                    density_array, cc_nodal, z_faces, z_centers);
+            } else {
+                mac_interpolate(particles[ip], plo, dxi,
+                                velocity_arrays, velocity);
+                cic_interpolate(particles[ip], plo, dxi,
+                                density_array, density, 1);
+            }
 
             Real nx;
             Real ny;
@@ -748,8 +769,19 @@ ClassicADPC::deposit_forces (int lev,
     const auto prob_lo = geom.ProbLoArray();
     const auto inverse_cell_size = geom.InvCellSizeArray();
     const auto cell_size = geom.CellSizeArray();
+    const bool stretched = m_model.vertical_grid().stretched();
+    const Real hub_dz = stretched
+        ? m_model.vertical_grid().hub_dz() : cell_size[2];
+    const Real* z_faces = m_model.vertical_grid().faces_device();
+    const Real* z_centers = m_model.vertical_grid().centers_device();
+    const int nz = geom.Domain().length(2);
+    // ClassicAD's initial stretched-grid contract assumes that dz is
+    // effectively uniform across the rotor and its force support.  Use the
+    // hub-layer thickness as the common reference measure so the uniform-grid
+    // normalization is retained exactly; this is intentionally not a
+    // physical-volume correction for strongly varying receiving layers.
     const Real cell_volume =
-        cell_size[0] * cell_size[1] * cell_size[2];
+        cell_size[0] * cell_size[1] * hub_dz;
 
     const auto& face_angles = m_model.disk_face_angles_deg();
     AMREX_ALWAYS_ASSERT(static_cast<int>(face_angles.size()) == nturb);
@@ -807,6 +839,8 @@ ClassicADPC::deposit_forces (int lev,
             soa.GetRealData(ClassicADRealIdx::force_y).data();
         const auto* force_z =
             soa.GetRealData(ClassicADRealIdx::force_z).data();
+        const auto* physical_z =
+            soa.GetRealData(ClassicADRealIdx::physical_z).data();
         const auto* turbine =
             soa.GetIntData(ClassicADIntIdx::turbine).data();
 
@@ -831,7 +865,7 @@ ClassicADPC::deposit_forces (int lev,
             const Real epsilon_in_plane = std::sqrt(
                 (e1x*cell_size[0])*(e1x*cell_size[0]) +
                 (e1y*cell_size[1])*(e1y*cell_size[1]));
-            const Real epsilon_vertical = cell_size[2];
+            const Real epsilon_vertical = hub_dz;
             const Real support_x = Real(3.0) *
                 (std::abs(nx)*epsilon_normal +
                  std::abs(e1x)*epsilon_in_plane);
@@ -841,7 +875,8 @@ ClassicADPC::deposit_forces (int lev,
             const Real support_z = Real(3.0) * epsilon_vertical;
             const Real particle_x = particles[ip].pos(0);
             const Real particle_y = particles[ip].pos(1);
-            const Real particle_z = particles[ip].pos(2);
+            const Real particle_z = stretched
+                ? physical_z[ip] : particles[ip].pos(2);
 
             const Real offsets[3][3] = {
                 {Real(0.0), Real(0.5), Real(0.5)},
@@ -873,12 +908,24 @@ ClassicADPC::deposit_forces (int lev,
                 int jhi = static_cast<int>(std::floor(
                     (particle_y+support_y-prob_lo[1])*
                     inverse_cell_size[1] - offsets[component][1]));
-                int klo = static_cast<int>(std::ceil(
-                    (particle_z-support_z-prob_lo[2])*
-                    inverse_cell_size[2] - offsets[component][2]));
-                int khi = static_cast<int>(std::floor(
-                    (particle_z+support_z-prob_lo[2])*
-                    inverse_cell_size[2] - offsets[component][2]));
+                int klo;
+                int khi;
+                if (stretched) {
+                    const bool z_nodal = (component == 2);
+                    const Real* z_coordinates = z_nodal ? z_faces : z_centers;
+                    const int coordinate_count = z_nodal ? nz+1 : nz;
+                    klo = classic_ad_first_at_or_above(
+                        z_coordinates, coordinate_count, particle_z-support_z);
+                    khi = classic_ad_last_at_or_below(
+                        z_coordinates, coordinate_count, particle_z+support_z);
+                } else {
+                    klo = static_cast<int>(std::ceil(
+                        (particle_z-support_z-prob_lo[2])*
+                        inverse_cell_size[2] - offsets[component][2]));
+                    khi = static_cast<int>(std::floor(
+                        (particle_z+support_z-prob_lo[2])*
+                        inverse_cell_size[2] - offsets[component][2]));
+                }
                 ilo = amrex::max(ilo, source_box.smallEnd(0));
                 ihi = amrex::min(ihi, source_box.bigEnd(0));
                 jlo = amrex::max(jlo, source_box.smallEnd(1));
@@ -896,9 +943,11 @@ ClassicADPC::deposit_forces (int lev,
                             const Real y = prob_lo[1] +
                                 (static_cast<Real>(j) +
                                  offsets[component][1]) * cell_size[1];
-                            const Real z = prob_lo[2] +
-                                (static_cast<Real>(k) +
-                                 offsets[component][2]) * cell_size[2];
+                            const Real z = stretched
+                                ? ((component == 2) ? z_faces[k] : z_centers[k])
+                                : prob_lo[2] +
+                                    (static_cast<Real>(k) +
+                                     offsets[component][2]) * cell_size[2];
                             weight_volume += gaussian_kernel(
                                 x, y, z,
                                 particle_x, particle_y, particle_z,
@@ -924,9 +973,11 @@ ClassicADPC::deposit_forces (int lev,
                             const Real y = prob_lo[1] +
                                 (static_cast<Real>(j) +
                                  offsets[component][1]) * cell_size[1];
-                            const Real z = prob_lo[2] +
-                                (static_cast<Real>(k) +
-                                 offsets[component][2]) * cell_size[2];
+                            const Real z = stretched
+                                ? ((component == 2) ? z_faces[k] : z_centers[k])
+                                : prob_lo[2] +
+                                    (static_cast<Real>(k) +
+                                     offsets[component][2]) * cell_size[2];
                             const Real value = forces[component] *
                                 gaussian_kernel(
                                     x, y, z,

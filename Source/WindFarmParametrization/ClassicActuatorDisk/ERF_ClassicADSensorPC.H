@@ -9,7 +9,7 @@
 
 struct ClassicADSensorRealIdx
 {
-    enum { radius = 0, theta, area, ncomps };
+    enum { radius = 0, theta, area, physical_z, ncomps };
 };
 
 struct ClassicADSensorIntIdx

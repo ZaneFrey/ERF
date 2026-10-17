@@ -6,6 +6,7 @@
  * Worker routines for filling data at new levels after initialization, restart or regridding
 */
 
+#include <algorithm>
 #include <cmath>
 #include <memory>
 #include "ERF_Constants.H"
@@ -427,12 +428,63 @@ ERF::init_stuff (int lev, const BoxArray& ba, const DistributionMapping& dm,
         const auto dx = geom[lev].CellSizeArray();
         const Real horizontal_diagonal =
             std::sqrt(dx[0]*dx[0] + dx[1]*dx[1]);
+        int vertical_ngrow = 5;
+        if (solverChoice.mesh_type == MeshType::StretchedDz) {
+            const auto& z_faces = zlevels_stag[lev];
+            const auto find_cell = [&z_faces] (Real z) {
+                if (z < z_faces.front() || z > z_faces.back()) {
+                    return -1;
+                }
+                if (z == z_faces.back()) {
+                    return static_cast<int>(z_faces.size()) - 2;
+                }
+                return static_cast<int>(std::upper_bound(
+                    z_faces.begin(), z_faces.end(), z) - z_faces.begin()) - 1;
+            };
+            const Real zhub = z_faces.front() +
+                solverChoice.classic_ad_hub_height;
+            const int hub_cell = find_cell(zhub);
+            if (hub_cell < 0) {
+                amrex::Error("ClassicAD hub height lies outside the prescribed "
+                             "vertical domain");
+            }
+            const Real hub_dz = z_faces[hub_cell+1] - z_faces[hub_cell];
+            const Real radius = Real(0.5) * solverChoice.classic_ad_diameter;
+            const int rotor_lo = find_cell(zhub-radius);
+            const int rotor_hi = find_cell(zhub+radius);
+            const int support_lo = find_cell(zhub-radius-Real(3.0)*hub_dz);
+            const int support_hi = find_cell(zhub+radius+Real(3.0)*hub_dz);
+            if (rotor_lo < 0 || rotor_hi < 0 ||
+                support_lo < 0 || support_hi < 0) {
+                amrex::Error("ClassicAD rotor and complete three-sigma force "
+                             "support must lie inside the prescribed vertical "
+                             "domain");
+            }
+            int max_layers_crossed = 0;
+            const Real support = Real(3.0)*hub_dz;
+            for (int k = rotor_lo; k <= rotor_hi; ++k) {
+                // Use both faces of every rotor-intersected layer.  This is
+                // conservative for an element anywhere in that layer and
+                // catches thin prescribed layers within the rotor span.
+                const int element_support_lo = amrex::max(
+                    0, find_cell(z_faces[k]-support));
+                const int element_support_hi_raw =
+                    find_cell(z_faces[k+1]+support);
+                const int element_support_hi = element_support_hi_raw < 0
+                    ? static_cast<int>(z_faces.size())-2
+                    : element_support_hi_raw;
+                max_layers_crossed = amrex::max(
+                    max_layers_crossed,
+                    amrex::max(k-element_support_lo, element_support_hi-k));
+            }
+            vertical_ngrow = amrex::max(5, max_layers_crossed + 2);
+        }
         const IntVect source_ngrow(AMREX_D_DECL(
             static_cast<int>(std::ceil(
                 Real(6.0)*horizontal_diagonal/dx[0])) + 2,
             static_cast<int>(std::ceil(
                 Real(6.0)*horizontal_diagonal/dx[1])) + 2,
-            5));
+            vertical_ngrow));
 
         classic_ad_xmom_src[lev].define(
             convert(ba, IntVect(1,0,0)), dm, 1, source_ngrow);

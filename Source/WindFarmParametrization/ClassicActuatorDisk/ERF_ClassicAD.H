@@ -2,6 +2,7 @@
 #define ERF_CLASSICAD_H
 
 #include <ERF_NullWindFarm.H>
+#include <ERF_ClassicADGrid.H>
 
 /**
  * @brief Per-turbine state retained by the classic actuator-disk model.
@@ -112,6 +113,15 @@ public:
     amrex::Vector<ClassicADTurbineState>& turbine_state () { return m_turbine_state; }
     const amrex::Vector<ClassicADTurbineState>& turbine_state () const { return m_turbine_state; }
 
+    void configure_vertical_grid (const amrex::Geometry& geom,
+                                  const amrex::Vector<amrex::Real>& z_faces,
+                                  bool stretched)
+    {
+        m_vertical_grid.configure(geom, z_faces, m_hub_height, stretched);
+    }
+    ClassicADVerticalGrid& vertical_grid () { return m_vertical_grid; }
+    const ClassicADVerticalGrid& vertical_grid () const { return m_vertical_grid; }
+
 private:
     void synchronize_rotor_angles ();
 
@@ -131,6 +141,7 @@ private:
     amrex::Real m_next_yaw_output_time{0.0};
     long m_yaw_active_step_count{0};
     amrex::Vector<ClassicADYawState> m_yaw_state;
+    ClassicADVerticalGrid m_vertical_grid;
 };
 
 #endif

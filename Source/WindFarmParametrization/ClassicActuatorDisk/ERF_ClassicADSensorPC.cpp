@@ -42,7 +42,9 @@ ClassicADSensorPC::rebuild ()
         const Real rotor_radius = m_model.rotor_radius();
         const Real target_spacing = m_model.spacing_was_supplied()
             ? m_model.actuator_spacing()
-            : Geom(0).CellSize(2);
+            : (m_model.vertical_grid().stretched()
+                ? m_model.vertical_grid().hub_dz()
+                : Geom(0).CellSize(2));
         const int nr = amrex::max(
             1, static_cast<int>(std::llround(
                 rotor_radius / target_spacing)));
@@ -88,12 +90,15 @@ ClassicADSensorPC::rebuild ()
                     particle.cpu() = ParallelDescriptor::MyProc();
                     particle.pos(0) = xcenter + radial_in_plane*e1x;
                     particle.pos(1) = ycenter + radial_in_plane*e1y;
-                    particle.pos(2) = zhub + radius*std::sin(theta);
+                    const Real physical_z = zhub + radius*std::sin(theta);
+                    particle.pos(2) =
+                        m_model.vertical_grid().physical_to_zeta(physical_z);
                     host_particles.push_back(particle);
 
                     host_real[ClassicADSensorRealIdx::radius].push_back(radius);
                     host_real[ClassicADSensorRealIdx::theta].push_back(theta);
                     host_real[ClassicADSensorRealIdx::area].push_back(area);
+                    host_real[ClassicADSensorRealIdx::physical_z].push_back(physical_z);
                     host_int[ClassicADSensorIntIdx::turbine].push_back(turbine_id);
                     host_int[ClassicADSensorIntIdx::ring].push_back(ring_id);
                     host_int[ClassicADSensorIntIdx::element].push_back(element_id);
@@ -141,7 +146,6 @@ ClassicADSensorPC::update_positions ()
 
     Gpu::DeviceVector<Real> d_xloc(nturb);
     Gpu::DeviceVector<Real> d_yloc(nturb);
-    Gpu::DeviceVector<Real> d_ground(nturb);
     Gpu::DeviceVector<Real> d_psi(nturb);
     Gpu::copyAsync(Gpu::hostToDevice,
                    m_model.x_locations().begin(),
@@ -150,17 +154,12 @@ ClassicADSensorPC::update_positions ()
                    m_model.y_locations().begin(),
                    m_model.y_locations().end(), d_yloc.begin());
     Gpu::copyAsync(Gpu::hostToDevice,
-                   m_model.ground_elevations().begin(),
-                   m_model.ground_elevations().end(), d_ground.begin());
-    Gpu::copyAsync(Gpu::hostToDevice,
                    psi_host.begin(), psi_host.end(), d_psi.begin());
     const Real* xloc = d_xloc.data();
     const Real* yloc = d_yloc.data();
-    const Real* ground = d_ground.data();
     const Real* psi = d_psi.data();
     const Real upstream_distance = Real(2.0)*m_model.rotor_radius() *
         m_model.yaw_sensor_distance_by_D();
-    const Real hub_height = m_model.hub_height();
 
     for (ParIterType pti(*this, 0); pti.isValid(); ++pti) {
         auto& tile = ParticlesAt(0, pti);
@@ -186,8 +185,6 @@ ClassicADSensorPC::update_positions ()
                 upstream_distance*nx + radial_in_plane*e1x;
             particles[ip].pos(1) = yloc[turbine_id] -
                 upstream_distance*ny + radial_in_plane*e1y;
-            particles[ip].pos(2) = ground[turbine_id] + hub_height +
-                radius[ip]*std::sin(theta[ip]);
         });
     }
     Gpu::streamSynchronize();
@@ -213,6 +210,12 @@ ClassicADSensorPC::sample_uv (int lev,
     const auto prob_lo = geom.ProbLoArray();
     const auto prob_hi = geom.ProbHiArray();
     const auto inverse_cell_size = geom.InvCellSizeArray();
+    const bool stretched = m_model.vertical_grid().stretched();
+    const Real* z_faces = m_model.vertical_grid().faces_device();
+    const Real* z_centers = m_model.vertical_grid().centers_device();
+    const IntVect u_nodal(1,0,0);
+    const IntVect v_nodal(0,1,0);
+    const IntVect w_nodal(0,0,1);
     const auto periodic = geom.isPeriodicArray();
     const GpuArray<Real,AMREX_SPACEDIM> domain_length{{
         AMREX_D_DECL(prob_hi[0]-prob_lo[0],
@@ -266,6 +269,8 @@ ClassicADSensorPC::sample_uv (int lev,
             soa.GetRealData(ClassicADSensorRealIdx::area).data();
         const auto* radius =
             soa.GetRealData(ClassicADSensorRealIdx::radius).data();
+        const auto* physical_z =
+            soa.GetRealData(ClassicADSensorRealIdx::physical_z).data();
         const auto* turbine =
             soa.GetIntData(ClassicADSensorIntIdx::turbine).data();
         const GpuArray<Array4<const Real>, AMREX_SPACEDIM> velocity_arrays{{
@@ -275,8 +280,20 @@ ClassicADSensorPC::sample_uv (int lev,
 
         ParallelFor(np, [=] AMREX_GPU_DEVICE (int ip) noexcept {
             ParticleReal velocity[AMREX_SPACEDIM];
-            mac_interpolate(particles[ip], prob_lo, inverse_cell_size,
-                            velocity_arrays, velocity);
+            if (stretched) {
+                velocity[0] = classic_ad_interpolate_stretched(
+                    particles[ip], physical_z[ip], prob_lo, inverse_cell_size,
+                    velocity_arrays[0], u_nodal, z_faces, z_centers);
+                velocity[1] = classic_ad_interpolate_stretched(
+                    particles[ip], physical_z[ip], prob_lo, inverse_cell_size,
+                    velocity_arrays[1], v_nodal, z_faces, z_centers);
+                velocity[2] = classic_ad_interpolate_stretched(
+                    particles[ip], physical_z[ip], prob_lo, inverse_cell_size,
+                    velocity_arrays[2], w_nodal, z_faces, z_centers);
+            } else {
+                mac_interpolate(particles[ip], prob_lo, inverse_cell_size,
+                                velocity_arrays, velocity);
+            }
             const int turbine_id = turbine[ip];
             Gpu::Atomic::Add(&u_sum_device[turbine_id],
                              velocity[0]*area[ip]);
@@ -290,7 +307,7 @@ ClassicADSensorPC::sample_uv (int lev,
                 (xloc[turbine_id] - upstream_distance*nx);
             Real ry = particles[ip].pos(1) -
                 (yloc[turbine_id] - upstream_distance*ny);
-            const Real rz = particles[ip].pos(2) -
+            const Real rz = physical_z[ip] -
                 (ground[turbine_id] + hub_height);
             if (periodic[0]) {
                 if (rx > Real(0.5)*domain_length[0]) {

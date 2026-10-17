@@ -87,6 +87,11 @@ ERF::rebuild_windfarm_hierarchy ()
     m_windfarm_hierarchy_initialized = false;
 
     if (solverChoice.windfarm_type == WindFarmType::ClassicAD) {
+        const bool stretched =
+            solverChoice.mesh_type == MeshType::StretchedDz;
+        windfarm->classic_ad_model().configure_vertical_grid(
+            geom[0], zlevels_stag[0], stretched);
+
         Vector<IntVect> active_ref_ratio;
         active_ref_ratio.reserve(finest_level);
         for (int lev = 0; lev < finest_level; ++lev) {

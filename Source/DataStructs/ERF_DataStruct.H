@@ -1827,8 +1827,35 @@ struct SolverChoice {
             amrex::Error("erf.windfarm_type = ClassicAD requires ERF particle support "
                          "(CMake: ERF_ENABLE_PARTICLES=ON; GNU Make: USE_PARTICLES=TRUE)");
 #endif
-            if (terrain_type != TerrainType::None) {
-                amrex::Error("ClassicAD supports flat terrain only (erf.terrain_type = None)");
+            const bool classic_ad_uniform_mesh =
+                terrain_type == TerrainType::None &&
+                mesh_type == MeshType::ConstantDz;
+            const bool classic_ad_stretched_mesh =
+                terrain_type == TerrainType::StaticFittedMesh &&
+                mesh_type == MeshType::StretchedDz;
+            if (terrain_type == TerrainType::MovingFittedMesh) {
+                amrex::Error("ClassicAD does not support moving terrain");
+            }
+            if (terrain_type == TerrainType::EB ||
+                terrain_type == TerrainType::ImmersedForcing) {
+                amrex::Error("ClassicAD does not support EB or immersed terrain");
+            }
+            if (mesh_type == MeshType::VariableDz) {
+                amrex::Error(
+                    "ClassicAD does not support horizontally varying VariableDz terrain");
+            }
+            if (!classic_ad_uniform_mesh && !classic_ad_stretched_mesh) {
+                amrex::Error(
+                    "ClassicAD supports either terrain_type=None with ConstantDz or "
+                    "flat, stationary StaticFittedMesh terrain with StretchedDz");
+            }
+            if (classic_ad_stretched_mesh && !flat_terrain) {
+                amrex::Error(
+                    "ClassicAD on StretchedDz requires erf.flat_terrain = true");
+            }
+            if (classic_ad_stretched_mesh && max_level != 0) {
+                amrex::Error(
+                    "ClassicAD on StretchedDz currently requires amr.max_level = 0");
             }
             if (dynamic_yaw && max_level != 0) {
                 amrex::Error("ClassicAD dynamic yaw currently requires amr.max_level = 0");
