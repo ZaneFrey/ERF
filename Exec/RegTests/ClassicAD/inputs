@@ -10,6 +10,10 @@ geometry.prob_hi = 400.0 200.0 200.0
 geometry.is_periodic = 1 1 0
 amr.n_cell = 40 20 20
 amr.max_grid_size = 10
+
+# This case deliberately decomposes boxes in z to exercise particle/source
+# ownership, so vertical diffusion must use the explicit path.
+erf.vert_implicit_fac = 0 0 0
 amr.max_level = 0
 
 zlo.type = "SlipWall"

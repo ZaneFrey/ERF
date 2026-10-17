@@ -62,8 +62,10 @@ def validate_rotation(run_directory: Path) -> None:
             raise AssertionError(f"non-finite diagnostic value in row {row_number}")
 
         time = row[index["time"]]
-        if time <= previous_time:
-            raise AssertionError("ClassicAD diagnostic times are not increasing")
+        # A restart appends to the existing file, and its first diagnostic may
+        # repeat the final pre-restart time.  A decrease is never valid.
+        if time < previous_time:
+            raise AssertionError("ClassicAD diagnostic times decrease")
         previous_time = time
 
         velocity = row[index["Ud_f_0"]]

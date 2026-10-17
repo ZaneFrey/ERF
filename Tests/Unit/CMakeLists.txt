@@ -300,6 +300,71 @@ erf_register_gtest_suite(${erf_exe_name}
   EXECUTION_TIMEOUT 600
 )
 
+if(TARGET erf_exec AND ERF_DIM STREQUAL "3" AND
+   ERF_ENABLE_PARTICLES AND ERF_ENABLE_WINDFARM)
+  set(_classic_ad_case_dir ${PROJECT_SOURCE_DIR}/Exec/RegTests/ClassicAD)
+  function(add_classic_ad_expected_failure_test test_name input_file override diagnostic)
+    add_test(NAME ${test_name}
+      COMMAND ${CMAKE_COMMAND}
+        -DERF_EXECUTABLE=$<TARGET_FILE:erf_exec>
+        -DINPUT_FILE=${_classic_ad_case_dir}/${input_file}
+        -DLOCATION_FILE=${_classic_ad_case_dir}/classic_ad_locations.txt
+        -DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}
+        "-DOVERRIDE=${override}"
+        "-DEXPECTED_DIAGNOSTIC=${diagnostic}"
+        -P ${_classic_ad_case_dir}/RunExpectedFailure.cmake)
+    set_tests_properties(${test_name} PROPERTIES
+      LABELS "integration;classic-ad;negative"
+      RUN_SERIAL TRUE
+      TIMEOUT 120)
+  endfunction()
+
+  add_classic_ad_expected_failure_test(
+    ClassicAD_Stretched_RequiresFlatTerrain inputs_stretched
+    "erf.flat_terrain=false"
+    "ClassicAD on StretchedDz requires erf.flat_terrain = true")
+  add_classic_ad_expected_failure_test(
+    ClassicAD_Stretched_RejectsAMR inputs_stretched
+    "amr.max_level=1"
+    "ClassicAD on StretchedDz currently requires amr.max_level = 0")
+  add_classic_ad_expected_failure_test(
+    ClassicAD_RejectsVariableTerrain inputs
+    "erf.terrain_type=StaticFittedMesh"
+    "ClassicAD does not support horizontally varying VariableDz terrain")
+  add_classic_ad_expected_failure_test(
+    ClassicAD_RejectsMovingTerrain inputs
+    "erf.terrain_type=MovingFittedMesh"
+    "ClassicAD does not support moving terrain")
+  add_classic_ad_expected_failure_test(
+    ClassicAD_RejectsEBTerrain inputs
+    "erf.terrain_type=EB"
+    "ClassicAD does not support EB or immersed terrain")
+
+  if(NOT ERF_ENABLE_CUDA AND NOT ERF_ENABLE_HIP AND NOT ERF_ENABLE_SYCL)
+    set(_classic_ad_mpi_arguments)
+    if(ERF_ENABLE_MPI)
+      list(APPEND _classic_ad_mpi_arguments
+        "-DMPIEXEC_EXECUTABLE=${MPIEXEC_EXECUTABLE}"
+        "-DMPIEXEC_NUMPROC_FLAG=${MPIEXEC_NUMPROC_FLAG}"
+        "-DMPIEXEC_PREFLAGS=${MPIEXEC_PREFLAGS}")
+    endif()
+    add_test(NAME ClassicAD_Stretched_SmokeRestart
+      COMMAND ${CMAKE_COMMAND}
+        -DERF_EXECUTABLE=$<TARGET_FILE:erf_exec>
+        -DINPUT_FILE=${_classic_ad_case_dir}/inputs_stretched
+        -DLOCATION_FILE=${_classic_ad_case_dir}/classic_ad_locations.txt
+        -DVALIDATOR=${_classic_ad_case_dir}/validate_checkpoint.py
+        -DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}
+        ${_classic_ad_mpi_arguments}
+        -P ${_classic_ad_case_dir}/RunStretchedSmoke.cmake)
+    set_tests_properties(ClassicAD_Stretched_SmokeRestart PROPERTIES
+      LABELS "integration;classic-ad;smoke;restart"
+      PROCESSORS 2
+      RUN_SERIAL TRUE
+      TIMEOUT 180)
+  endif()
+endif()
+
 add_test(NAME erf_unit_tests_shuffle_repeat
   COMMAND ${erf_exe_name}
     --gtest_shuffle

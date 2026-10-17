@@ -17,6 +17,16 @@ CASE_DIR=/path/to/ERF/Exec/RegTests/ClassicAD
 python3 "${CASE_DIR}/validate_checkpoint.py" .
 ```
 
+The same test on a horizontally flat prescribed-z mesh uses
+``inputs_stretched``.  Its levels remain uniform through the rotor and the
+three-sigma force support, then stretch above it:
+
+```bash
+"${ERF_EXE}" "${CASE_DIR}/inputs_stretched" \
+  erf.windfarm_loc_table="${CASE_DIR}/classic_ad_locations.txt"
+python3 "${CASE_DIR}/validate_checkpoint.py" .
+```
+
 The run should complete three time steps and create `chk00002` containing both
 `ClassicADMemoryState` and `ClassicADYawState`. To exercise restoration of
 both state files, continue that checkpoint for one additional step:
