@@ -279,6 +279,12 @@ if(ERF_ENABLE_PARTICLES)
   )
 endif()
 
+if(ERF_ENABLE_PARTICLES AND ERF_ENABLE_WINDFARM)
+  target_sources(${erf_exe_name} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/WindFarm/ERF_GTestClassicADGrid.cpp
+  )
+endif()
+
 if(ERF_ENABLE_NOAHMP)
   target_sources(${erf_exe_name} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/LandSurfaceModel/Noah-MP/ERF_GTestNoahMPResultPolicy.cpp
