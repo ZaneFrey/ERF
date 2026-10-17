@@ -939,10 +939,6 @@ struct SolverChoice {
             mesh_type = MeshType::VariableDz;
         }
 
-        if (flat_terrain && terrain_type != TerrainType::StaticFittedMesh) {
-            amrex::Error("erf.flat_terrain requires terrain_type = StaticFittedMesh");
-        }
-
         if ( (moisture_type == MoistureType::SAM                ||
               moisture_type == MoistureType::SAM_NoIce          ||
               moisture_type == MoistureType::SAM_NoPrecip_NoIce   ) &&
@@ -980,6 +976,13 @@ struct SolverChoice {
             if (mesh_type == MeshType::ConstantDz) {
                 mesh_type = MeshType::StretchedDz;
             }
+        }
+
+        // Grid stretching and prescribed z levels promote TerrainType::None
+        // to StaticFittedMesh above, so validate the flat-terrain contract only
+        // after those inputs have been applied.
+        if (flat_terrain && terrain_type != TerrainType::StaticFittedMesh) {
+            amrex::Error("erf.flat_terrain requires terrain_type = StaticFittedMesh");
         }
 
         // Use lagged_delta_rt in the fast integrator?
