@@ -417,6 +417,19 @@ Notes
   specified, the simple grid stretching will be ignored.
 - The number of input **erf.terrain_z_levels** must be equal **amr.n_cell** in
   the z direction + 1.
+- ``ClassicAD`` retains its ``terrain_type=None``/``ConstantDz`` support.
+  ``StretchedDz`` meshes created by ``erf.terrain_z_levels`` or
+  ``erf.grid_stretching_ratio`` are supported only with stationary,
+  horizontally flat ``StaticFittedMesh`` terrain and ``amr.max_level = 0``.
+  Set ``erf.flat_terrain = true``; moving, horizontally varying, and
+  embedded-boundary terrain remain unsupported.
+  ClassicAD uses the layer thickness at hub height for its default actuator
+  spacing, vertical Gaussian width, and reference deposition volume.  The
+  prescribed levels should therefore be effectively uniform throughout the
+  rotor and its three-sigma force-support region; stretching may begin above
+  that region.  Because deposition uses this constant reference volume, force
+  integrated with the mesh's varying physical cell volumes is not guaranteed
+  to be conserved when receiving-layer thicknesses differ from the hub layer.
 
 .. _examples-of-usage-3:
 
