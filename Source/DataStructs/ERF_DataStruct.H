@@ -2178,10 +2178,13 @@ struct SolverChoice {
         amrex::Print() << "Coriolis frequency, f = " << coriolis_factor * sinphi << " 1/s" << std::endl;
 
         if (abl_driver_type == ABLDriverType::GeostrophicWind) {
-            // Read in the geostrophic wind -- we only use this to construct
-            //     the forcing term so no need to keep it
-            amrex::Vector<amrex::Real> abl_geo_wind(3);
-            pp.queryarr("abl_geo_wind",abl_geo_wind);
+            // Retain the wind as well as its forcing.  Runtime controllers may
+            // rotate the geostrophic vector while preserving its magnitude.
+            amrex::Vector<amrex::Real> abl_geo_wind_in(3);
+            pp.queryarr("abl_geo_wind",abl_geo_wind_in);
+            for (int i = 0; i < AMREX_SPACEDIM; ++i) {
+                abl_geo_wind[i] = abl_geo_wind_in[i];
+            }
 
             if(!pp.queryAdd("abl_geo_wind_table",abl_geo_wind_table)) {
                 abl_geo_forcing = {
@@ -2573,6 +2576,7 @@ struct SolverChoice {
 
     ABLDriverType abl_driver_type;
     amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> abl_pressure_grad;
+    amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> abl_geo_wind{zero, zero, zero};
     amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> abl_geo_forcing;
     std::string abl_geo_wind_table;
     bool have_geo_wind_profile {false};

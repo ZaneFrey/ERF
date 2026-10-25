@@ -576,6 +576,7 @@ function(build_erf_lib erf_lib_name)
        ${SRC_DIR}/SourceTerms/ERF_MakeGradP.cpp
        ${SRC_DIR}/SourceTerms/ERF_MakeMomSources.cpp
        ${SRC_DIR}/SourceTerms/ERF_MakeSources.cpp
+       ${SRC_DIR}/SourceTerms/ERF_WindDirectionControl.cpp
        ${SRC_DIR}/SourceTerms/ERF_NumericalDiffusion.cpp
        ${SRC_DIR}/SourceTerms/ERF_ImmersedForcing.cpp
        ${SRC_DIR}/ObsNudging/ERF_ObsNudging.cpp

@@ -370,6 +370,11 @@ ERF::ERF_shared ()
                  solverChoice.zsurf,
                  solverChoice.dz0);
 
+    if (WindDirectionControl::enabled_in_inputs()) {
+        wind_direction_control = std::make_unique<WindDirectionControl>(
+            solverChoice, max_level, geom[0], zlevels_stag[0]);
+    }
+
     if (SolverChoice::mesh_type == MeshType::StretchedDz ||
         SolverChoice::mesh_type == MeshType::VariableDz) {
         int nz = geom[0].Domain().length(2) + 1; // staggered

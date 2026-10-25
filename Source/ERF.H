@@ -90,6 +90,7 @@
 
 #include "ERF_ShocDriver.H"
 #include "AuxiliaryState/ERF_AuxiliaryInertTracer.H"
+#include "ERF_WindDirectionControl.H"
 
 #include <iostream>
 
@@ -1743,6 +1744,8 @@ private:
 
     // algorithm choices
     static SolverChoice solverChoice;
+
+    std::unique_ptr<WindDirectionControl> wind_direction_control;
 
     // Turbulent perturbation structure
     TurbulentPerturbation turbPert;

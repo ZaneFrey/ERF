@@ -207,6 +207,10 @@
                          base_to_use, forest_drag, terrain_blank,
                          terrain_blank_xface, terrain_blank_yface, terrain_blank_zface,
                          cosPhi_m[level].get(), sinPhi_m[level].get(), fine_geom, solverChoice,
+                         (wind_direction_control ? wind_direction_control->geostrophic_forcing()
+                                                 : solverChoice.abl_geo_forcing),
+                         (wind_direction_control ? wind_direction_control->synthetic_coriolis()
+                                                 : amrex::Real(0.0)),
                          mapfac[level],
                          (solverChoice.have_geo_wind_profile) ? d_u_geos[level].data(): nullptr,
                          (solverChoice.have_geo_wind_profile) ? d_v_geos[level].data(): nullptr,
