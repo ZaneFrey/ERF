@@ -2307,6 +2307,65 @@ ABL Driver and Geostrophic Forcing
 |                             | ``add_custom_geostrophic_profile``                       |                    |                  |
 +-----------------------------+----------------------------------------------------------+--------------------+------------------+
 
+SM14 Wind-Direction Control
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The optional Sescu--Meneveau wind-direction controller rotates the resolved
+horizontal flow toward a requested mathematical direction (counterclockwise
+from ERF's positive x axis) and adjusts the direction, but not the magnitude,
+of ``erf.abl_geo_wind``.  It measures instantaneous horizontally averaged
+primitive velocity at a physical height above the lower boundary.  The
+measurement is not time filtered.
+
+The controller currently requires one AMR level, constant-latitude 2-D
+Coriolis forcing, a height-independent geostrophic wind, and either a
+``ConstantDz`` Cartesian mesh or a horizontally flat ``StretchedDz``
+``StaticFittedMesh``.  It cannot be combined with mass-flux control,
+large-scale forcing, or momentum nudging.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 44 38 18
+
+   * - Parameter
+     - Definition
+     - Default
+   * - ``erf.wind_direction_control.enabled``
+     - enable the controller
+     - false
+   * - ``erf.wind_direction_control.target_direction``
+     - target direction [degrees CCW from +x]
+     - required
+   * - ``erf.wind_direction_control.target_height``
+     - sampling height above lower boundary [m]
+     - required
+   * - ``erf.wind_direction_control.start_time``
+     - first eligible check time [s]
+     - 0
+   * - ``erf.wind_direction_control.check_interval``
+     - interval between controller checks [s]
+     - 60
+   * - ``erf.wind_direction_control.tolerance_on``
+     - error that arms correction [degrees]
+     - 2
+   * - ``erf.wind_direction_control.tolerance_off``
+     - error that clears correction [degrees]
+     - 1
+   * - ``erf.wind_direction_control.synthetic_rotation_rate``
+     - fixed synthetic rotation magnitude [deg/s]
+     - 0.0166666666667
+   * - ``erf.wind_direction_control.geostrophic_gain``
+     - geostrophic-angle proportional gain [1/s]
+     - 0.00166666666667
+   * - ``erf.wind_direction_control.diagnostics_file``
+     - controller CSV time-series path
+     - wind_direction_control.csv
+
+The CSV records every scheduled measurement and the controller state.  An
+active synthetic-rotation event always completes its latched angular
+correction, even if a later measurement enters the deadband.  Controller
+state is preserved in native checkpoints.
+
 .. _sec:WindFarmForcingInputs:
 
 Wind Farm Forcing
