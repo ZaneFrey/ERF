@@ -195,6 +195,10 @@ ERF::WriteCheckpointFile () const
         write_surface_temperature_contract(checkpointname);
     }
 
+    if (wind_direction_control) {
+        wind_direction_control->write_checkpoint(checkpointname);
+    }
+
     int ncomp_cons = vars_new[0][Vars::cons].nComp();
 
     // write Header file

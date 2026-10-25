@@ -2933,6 +2933,11 @@ ERF::restart ()
 
     ReadCheckpointFile();
 
+    if (wind_direction_control) {
+        wind_direction_control->update_vertical_grid(geom[0], zlevels_stag[0]);
+        wind_direction_control->read_checkpoint(restart_chkfile, t_new[0]);
+    }
+
 #ifdef ERF_USE_NETCDF
     //
     // The checkpoint carries every level's base state, but not the reference parameters
