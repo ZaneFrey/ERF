@@ -1974,6 +1974,12 @@ List of Parameters
 | **erf.Ri_crit**                        | critical Richardson number used by that correction       | Real               | 0.25             |
 |                                        | (per-level)                                              |                    |                  |
 +----------------------------------------+----------------------------------------------------------+--------------------+------------------+
+| **erf.use_mason_wall_damping**         | limit the Smagorinsky mixing length near a MOST lower    | Boolean            | false            |
+|                                        | boundary using the Mason--Thomson blend (per-level)      |                    |                  |
++----------------------------------------+----------------------------------------------------------+--------------------+------------------+
+| **erf.mason_wall_damping_exp**         | positive exponent in the Mason--Thomson mixing-length    | Real > 0           | 2.0              |
+|                                        | blend (per-level)                                        |                    |                  |
++----------------------------------------+----------------------------------------------------------+--------------------+------------------+
 | **erf.Cmu0**                           | k-equation RANS closure constant (per-level)             | Real               | 0.5562           |
 +----------------------------------------+----------------------------------------------------------+--------------------+------------------+
 | **erf.Cb**                             | k-equation buoyancy constant (per-level)                 | Real               | 0.35             |

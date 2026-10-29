@@ -109,6 +109,38 @@ where :math:`K = 2\mu_{t}`
 In the Smagorinsky model, modeling of :math:`\mu_{t}` does not account for the turbulent kinetic energy (TKE) corresponding to
 unresolved scales and no extra equation for TKE is solved.
 
+Mason--Thomson Wall Damping
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+For a Smagorinsky LES with a ``surface_layer`` lower boundary, the optional
+Mason--Thomson wall correction limits the grid mixing length
+:math:`\ell_0=C_s\Delta` by the rough-wall length
+:math:`\ell_w=\kappa(z+z_0)`:
+
+.. math::
+
+   \ell = \left(\ell_0^{-n} + \ell_w^{-n}\right)^{-1/n}.
+
+Here :math:`z` is physical cell-center height above the local lower surface,
+:math:`z_0` is the momentum roughness length used by the surface layer, and
+:math:`n=2` is the default used by Mason and Thomson (1992).  ERF applies the
+blend separately to the horizontal and vertical grid lengths when
+``erf.mix_isotropic = false``.  The wall limit is applied before the optional
+Richardson-number stability correction.  Enable it with
+
+.. code-block:: none
+
+   erf.use_mason_wall_damping = true
+   erf.mason_wall_damping_exp = 2.0
+
+The option changes interior SGS momentum and scalar diffusivities but does not
+alter the MOST boundary fluxes or numerical diffusion.  Embedded-boundary
+terrain is not currently supported.
+
+* Mason, P. J., and D. J. Thomson, 1992: Stochastic backscatter in
+  large-eddy simulations of boundary layers. *J. Fluid Mech.*, **242**,
+  51--78, https://doi.org/10.1017/S0022112092002271.
+
 Enhanced Smagorinsky Model with Moist Stratification
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
