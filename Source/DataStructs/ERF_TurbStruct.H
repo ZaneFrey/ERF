@@ -448,6 +448,8 @@ public:
     query_one_or_per_level(pp, "mix_isotropic", mix_isotropic, lev, max_level);
     query_one_or_per_level(pp, "use_Ri_correction", use_Ri_correction, lev, max_level);
     query_one_or_per_level(pp, "Ri_crit", Ri_crit, lev, max_level);
+    query_one_or_per_level(pp, "use_mason_wall_damping", use_mason_wall_damping, lev, max_level);
+    query_one_or_per_level(pp, "mason_wall_damping_exp", mason_wall_damping_exp, lev, max_level);
 
     // Set common flags
     use_kturb =
@@ -473,6 +475,11 @@ public:
         amrex::Print() << "Turning off mix_isotropic for 2-D Smagorinsky" << std::endl;
         mix_isotropic = false;
       }
+      if (mason_wall_damping_exp <= zero) {
+        amrex::Error("erf.mason_wall_damping_exp must be greater than zero");
+      }
+    } else if (use_mason_wall_damping) {
+      amrex::Error("erf.use_mason_wall_damping is supported only with Smagorinsky LES");
     }
   }
 
@@ -493,6 +500,11 @@ public:
            (phys_bc_type[amrex::Orientation(amrex::Direction::z,amrex::Orientation::low)] != ERF_BC::no_slip_wall) )
       {
           amrex::Warning("Deardorff LES assumes wall at zlo when applying Ce_wall");
+      }
+      if (use_mason_wall_damping &&
+          phys_bc_type[amrex::Orientation(amrex::Direction::z,amrex::Orientation::low)] != ERF_BC::surface_layer)
+      {
+          amrex::Abort("Mason wall damping requires zlo.type = surface_layer");
       }
   }
 
@@ -517,6 +529,10 @@ public:
       if (use_Ri_correction) {
         amrex::Print() << "    Smagorinsky uses Richardson number correction with Ri_crit = "
                        << Ri_crit << std::endl;
+      }
+      if (use_mason_wall_damping) {
+        amrex::Print() << "    Smagorinsky uses Mason-Thomson wall damping with exponent = "
+                       << mason_wall_damping_exp << std::endl;
       }
     } else if (les_type == LESType::Deardorff) {
       amrex::Print() << "    Using Deardorff LES model at level " << lev << std::endl;
@@ -722,6 +738,8 @@ public:
   // Smagorinsky
   amrex::Real Cs = zero;
   bool smag2d = false;
+  bool use_mason_wall_damping = false;
+  amrex::Real mason_wall_damping_exp = two;
 
   // Deardorff
   amrex::Real Ce = amrex::Real(0.93);
@@ -942,6 +960,10 @@ public:
  * @brief Smagorinsky model coefficient.
  * @var TurbChoice::smag2d
  * @brief Whether the 2-D Smagorinsky formulation is used.
+ * @var TurbChoice::use_mason_wall_damping
+ * @brief Whether the Mason--Thomson rough-wall mixing-length limit is applied.
+ * @var TurbChoice::mason_wall_damping_exp
+ * @brief Exponent in the Mason--Thomson mixing-length blend.
  * @var TurbChoice::Ce
  * @brief Deardorff dissipation coefficient.
  * @var TurbChoice::Ce_wall

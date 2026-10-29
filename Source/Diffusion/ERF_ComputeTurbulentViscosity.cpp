@@ -10,6 +10,7 @@
 #include "ERF_TerrainMetrics.H"
 #include "ERF_MoistUtils.H"
 #include "ERF_RichardsonNumber.H"
+#include "ERF_MasonWallDamping.H"
 
 using namespace amrex;
 
@@ -38,6 +39,7 @@ void ComputeTurbulentViscosityLES (Vector<std::unique_ptr<MultiFab>>& Tau_lev,
                                    const std::unique_ptr<MultiFab>& z_phys_nd,
                                    const TurbChoice& turbChoice, const Real const_grav,
                                    std::unique_ptr<SurfaceLayer>& /*SurfLayer*/,
+                                   const MultiFab* z_0,
                                    const MoistureComponentIndices& moisture_indices,
                                    const MultiFab* xvel,
                                    const MultiFab* yvel)
@@ -65,8 +67,14 @@ void ComputeTurbulentViscosityLES (Vector<std::unique_ptr<MultiFab>>& Tau_lev,
         Real l_abs_g = const_grav;
         Real l_Ri_crit = turbChoice.Ri_crit;
         bool l_use_Ri_corr = turbChoice.use_Ri_correction;
+        bool l_use_mason_wall_damping = turbChoice.use_mason_wall_damping;
+        Real l_mason_wall_damping_exp = turbChoice.mason_wall_damping_exp;
         bool l_has_xvel = (xvel != nullptr);
         bool l_has_yvel = (yvel != nullptr);
+
+        if (l_use_mason_wall_damping && z_0 == nullptr) {
+            amrex::Error("Mason wall damping requires a surface-layer roughness field");
+        }
 
 #ifdef _OPENMP
 #pragma omp parallel if (Gpu::notInLaunchRegion())
@@ -91,6 +99,9 @@ void ComputeTurbulentViscosityLES (Vector<std::unique_ptr<MultiFab>>& Tau_lev,
             Array4<Real const> mf_u = mapfac[MapFacType::u_x]->const_array(mfi);
             Array4<Real const> mf_v = mapfac[MapFacType::v_y]->const_array(mfi);
             Array4<Real const> z_nd_arr = z_phys_nd->const_array(mfi);
+            Array4<Real const> z0_arr = (l_use_mason_wall_damping)
+                                      ? z_0->const_array(mfi)
+                                      : Array4<Real const>{};
 
             Array4<Real const> u_arr = (l_has_xvel) ? xvel->const_array(mfi) : Array4<Real const>{};
             Array4<Real const> v_arr = (l_has_yvel) ? yvel->const_array(mfi) : Array4<Real const>{};
@@ -130,11 +141,20 @@ void ComputeTurbulentViscosityLES (Vector<std::unique_ptr<MultiFab>>& Tau_lev,
                 }
 
                 Real rho = cell_data(i, j, k, Rho_comp);
-                Real CsDeltaSqr_h = Cs * Cs * DeltaH * DeltaH;
-                Real CsDeltaSqr_v = Cs * Cs * Delta * Delta;
+                Real length_h = Cs * DeltaH;
+                Real length_v = Cs * Delta;
 
-                Real nu_turb_base_h = CsDeltaSqr_h * strain_rate_magnitude;
-                Real nu_turb_base_v = CsDeltaSqr_v * strain_rate_magnitude;
+                if (l_use_mason_wall_damping) {
+                    const Real z_agl = Compute_Zrel_AtCellCenter(i, j, k, z_nd_arr);
+                    const Real wall_length = KAPPA * (z_agl + z0_arr(i,j,0));
+                    length_h = mason_wall_damping::effective_length(
+                        length_h, wall_length, l_mason_wall_damping_exp);
+                    length_v = mason_wall_damping::effective_length(
+                        length_v, wall_length, l_mason_wall_damping_exp);
+                }
+
+                Real nu_turb_base_h = length_h * length_h * strain_rate_magnitude;
+                Real nu_turb_base_v = length_v * length_v * strain_rate_magnitude;
 
                 Real stability_factor = one;
 
@@ -875,6 +895,9 @@ void ComputeTurbulentViscosity (double dt,
 
     if (turbChoice.les_type != LESType::None) {
         if (solverChoice.terrain_type == TerrainType::EB) {
+            if (turbChoice.use_mason_wall_damping) {
+                amrex::Error("Mason wall damping is not yet supported with embedded-boundary terrain");
+            }
             ComputeTurbulentViscosityLES_EB(Tau_lev,
                                         cons_in, eddyViscosity,
                                         Hfx1, Hfx2, Hfx3,
@@ -889,7 +912,7 @@ void ComputeTurbulentViscosity (double dt,
                                         Diss,
                                         geom, use_terrain_fitted_coords,
                                         mapfac, z_phys_nd, turbChoice, const_grav,
-                                        SurfLayer, solverChoice.moisture_indices,
+                                        SurfLayer, z_0, solverChoice.moisture_indices,
                                         &xvel, &yvel);
         }
     }

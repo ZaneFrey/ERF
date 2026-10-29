@@ -61,6 +61,7 @@ ComputeTurbulentViscosityLES (amrex::Vector<std::unique_ptr<amrex::MultiFab>>& T
                               const TurbChoice& turbChoice,
                               const amrex::Real const_grav,
                               std::unique_ptr<SurfaceLayer>& SurfLayer,
+                              const amrex::MultiFab* z_0,
                               const MoistureComponentIndices& moisture_indices,
                               const amrex::MultiFab* xvel = nullptr,
                               const amrex::MultiFab* yvel = nullptr);
