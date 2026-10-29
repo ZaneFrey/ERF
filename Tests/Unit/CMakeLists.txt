@@ -153,6 +153,9 @@ target_sources(${erf_exe_name}
     # Motivation: the k-eqn RANS closure (AL01) must keep its stability
     # functions finite and its length-scale limits exact for any Rt.
     ${CMAKE_CURRENT_SOURCE_DIR}/Diffusion/ERF_GTestRANSClosure.cpp
+    # Motivation: the Mason--Thomson blend must recover the grid length aloft,
+    # approach the rough-wall length near the surface, and remain monotone.
+    ${CMAKE_CURRENT_SOURCE_DIR}/Diffusion/ERF_GTestMasonWallDamping.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Diagnostics/ERF_GTestSurfaceFluxDiagnostics.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Diagnostics/ERF_GTestSeaLevelPressure.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/SourceTerms/ERF_GTestCanopyBiophysics.cpp
