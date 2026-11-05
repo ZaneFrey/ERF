@@ -25,52 +25,135 @@ TEST(WindDirectionControl, WrapsAnglesAcrossBranchCut)
                 Real(0.0), Real(1.0e-14));
 }
 
-TEST(WindDirectionControl, HysteresisRetainsStateBetweenThresholds)
+TEST(WindDirectionControl, UsesSingleInclusiveEventThreshold)
 {
     constexpr Real deg = PI / Real(180.0);
-    EXPECT_TRUE(erf_wind_direction::update_correction_demand(
-        false, Real(2.0) * deg, Real(2.0) * deg, Real(1.0) * deg));
-    EXPECT_TRUE(erf_wind_direction::update_correction_demand(
-        true, Real(1.5) * deg, Real(2.0) * deg, Real(1.0) * deg));
-    EXPECT_FALSE(erf_wind_direction::update_correction_demand(
-        true, Real(1.0) * deg, Real(2.0) * deg, Real(1.0) * deg));
-    EXPECT_FALSE(erf_wind_direction::update_correction_demand(
-        false, Real(1.5) * deg, Real(2.0) * deg, Real(1.0) * deg));
+    EXPECT_FALSE(erf_wind_direction::event_requested(
+        Real(1.999) * deg, Real(2.0) * deg));
+    EXPECT_TRUE(erf_wind_direction::event_requested(
+        Real(2.0) * deg, Real(2.0) * deg));
+    EXPECT_TRUE(erf_wind_direction::event_requested(
+        Real(-2.0) * deg, Real(2.0) * deg));
 }
 
-TEST(WindDirectionControl, GeostrophicControllerUsesSM14Sign)
+TEST(WindDirectionControl, CoupledEpisodeUsesSM14SignsAndGain)
 {
     constexpr Real deg = PI / Real(180.0);
-    const Real updated = erf_wind_direction::update_geostrophic_angle(
-        Real(30.0) * deg, Real(10.0) * deg, Real(1.0 / 600.0), Real(60.0));
-    EXPECT_NEAR(updated, Real(29.0) * deg, Real(1.0e-14));
+    erf_wind_direction::EpisodeState episode;
+    episode.phase = erf_wind_direction::Phase::Idle;
+    erf_wind_direction::latch_episode(
+        episode, Real(10.0) * deg, Real(0.4), Real(120.0));
+
+    EXPECT_EQ(episode.phase, erf_wind_direction::Phase::Rotating);
+    EXPECT_NEAR(episode.latched_error, Real(10.0) * deg, Real(1.0e-14));
+    EXPECT_NEAR(episode.remaining_flow_angle, Real(-10.0) * deg, Real(1.0e-14));
+    EXPECT_NEAR(episode.remaining_geo_angle, Real(-4.0) * deg, Real(1.0e-14));
+    EXPECT_EQ(episode.event_start_time, Real(120.0));
 }
 
-TEST(WindDirectionControl, EventIsLatchedCappedAndCompleted)
+TEST(WindDirectionControl, EpisodeIsImmutableCappedAndSettles)
 {
     constexpr Real deg = PI / Real(180.0);
-    erf_wind_direction::EventState event;
-    erf_wind_direction::latch_event(event, Real(3.0) * deg);
-    ASSERT_TRUE(event.active);
-    EXPECT_NEAR(event.remaining_angle, Real(-3.0) * deg, Real(1.0e-14));
+    erf_wind_direction::EpisodeState episode;
+    episode.phase = erf_wind_direction::Phase::Idle;
+    erf_wind_direction::latch_episode(
+        episode, Real(3.0) * deg, Real(1.0), Real(100.0));
+    ASSERT_EQ(episode.phase, erf_wind_direction::Phase::Rotating);
+    EXPECT_NEAR(episode.remaining_flow_angle, Real(-3.0) * deg, Real(1.0e-14));
 
-    // A later error cannot replace an already active SM14 event.
-    erf_wind_direction::latch_event(event, Real(-20.0) * deg);
-    EXPECT_NEAR(event.remaining_angle, Real(-3.0) * deg, Real(1.0e-14));
+    // A later measurement cannot replace an already active episode.
+    erf_wind_direction::latch_episode(
+        episode, Real(-20.0) * deg, Real(1.0), Real(110.0));
+    EXPECT_NEAR(episode.remaining_flow_angle, Real(-3.0) * deg, Real(1.0e-14));
 
-    const Real first_rate = erf_wind_direction::event_angle_rate(
-        event, Real(1.0) * deg, Real(2.0));
+    const Real first_rate = erf_wind_direction::episode_flow_angle_rate(
+        episode, Real(1.0) * deg, Real(2.0));
     EXPECT_NEAR(first_rate, Real(-1.0) * deg, Real(1.0e-14));
-    erf_wind_direction::advance_event(event, first_rate, Real(2.0));
-    ASSERT_TRUE(event.active);
-    EXPECT_NEAR(event.remaining_angle, Real(-1.0) * deg, Real(1.0e-14));
+    EXPECT_GT(-first_rate, Real(0.0)); // positive omega_3 rotates clockwise
+    const Real first_flow = first_rate * Real(2.0);
+    const Real first_geo = erf_wind_direction::episode_geo_increment(
+        episode, first_flow);
+    erf_wind_direction::advance_episode(
+        episode, first_flow, first_geo, Real(102.0), Real(600.0));
+    ASSERT_EQ(episode.phase, erf_wind_direction::Phase::Rotating);
+    EXPECT_NEAR(episode.remaining_flow_angle, Real(-1.0) * deg, Real(1.0e-14));
+    EXPECT_NEAR(episode.remaining_geo_angle, Real(-1.0) * deg, Real(1.0e-14));
 
-    const Real final_rate = erf_wind_direction::event_angle_rate(
-        event, Real(1.0) * deg, Real(2.0));
+    const Real final_rate = erf_wind_direction::episode_flow_angle_rate(
+        episode, Real(1.0) * deg, Real(2.0));
     EXPECT_NEAR(final_rate, Real(-0.5) * deg, Real(1.0e-14));
-    erf_wind_direction::advance_event(event, final_rate, Real(2.0));
-    EXPECT_FALSE(event.active);
-    EXPECT_EQ(event.remaining_angle, Real(0.0));
+    EXPECT_NEAR(first_rate * Real(2.0) + final_rate * Real(2.0),
+                Real(-3.0) * deg, Real(1.0e-14));
+    const Real final_flow = final_rate * Real(2.0);
+    const Real final_geo = erf_wind_direction::episode_geo_increment(
+        episode, final_flow);
+    erf_wind_direction::advance_episode(
+        episode, final_flow, final_geo, Real(104.0), Real(600.0));
+    EXPECT_EQ(episode.phase, erf_wind_direction::Phase::Settling);
+    EXPECT_EQ(episode.remaining_flow_angle, Real(0.0));
+    EXPECT_EQ(episode.remaining_geo_angle, Real(0.0));
+    EXPECT_EQ(episode.settling_until, Real(704.0));
+}
+
+TEST(WindDirectionControl, ZeroGainKeepsGeostrophicDirectionFixed)
+{
+    constexpr Real deg = PI / Real(180.0);
+    erf_wind_direction::EpisodeState episode;
+    episode.phase = erf_wind_direction::Phase::Idle;
+    erf_wind_direction::latch_episode(
+        episode, Real(-5.0) * deg, Real(0.0), Real(0.0));
+    const Real flow_rate = erf_wind_direction::episode_flow_angle_rate(
+        episode, Real(1.0) * deg, Real(1.0));
+    EXPECT_GT(flow_rate, Real(0.0));
+    EXPECT_EQ(erf_wind_direction::episode_geo_increment(
+                  episode, flow_rate), Real(0.0));
+}
+
+TEST(WindDirectionControl, UnitGainKeepsFlowAndGeostrophicCommandsSynchronized)
+{
+    constexpr Real deg = PI / Real(180.0);
+    erf_wind_direction::EpisodeState episode;
+    episode.phase = erf_wind_direction::Phase::Idle;
+    erf_wind_direction::latch_episode(
+        episode, Real(5.0) * deg, Real(1.0), Real(0.0));
+
+    Real cumulative_flow = Real(0.0);
+    Real cumulative_geo = Real(0.0);
+    for (int step = 0; step < 3; ++step) {
+        const Real rate = erf_wind_direction::episode_flow_angle_rate(
+            episode, Real(2.0) * deg, Real(1.0));
+        const Real flow_increment = rate;
+        const Real geo_increment = erf_wind_direction::episode_geo_increment(
+            episode, flow_increment);
+        EXPECT_NEAR(flow_increment, geo_increment, Real(1.0e-14));
+        cumulative_flow += flow_increment;
+        cumulative_geo += geo_increment;
+        erf_wind_direction::advance_episode(
+            episode, flow_increment, geo_increment,
+            static_cast<Real>(step + 1), Real(600.0));
+    }
+
+    EXPECT_EQ(episode.phase, erf_wind_direction::Phase::Settling);
+    EXPECT_NEAR(cumulative_flow, Real(-5.0) * deg, Real(1.0e-14));
+    EXPECT_NEAR(cumulative_geo, cumulative_flow, Real(1.0e-14));
+
+    // Measurements cannot relatch a command during the settling hold.
+    erf_wind_direction::latch_episode(
+        episode, Real(-20.0) * deg, Real(1.0), Real(10.0));
+    EXPECT_EQ(episode.phase, erf_wind_direction::Phase::Settling);
+    EXPECT_EQ(episode.remaining_flow_angle, Real(0.0));
+}
+
+TEST(WindDirectionControl, TotalVelocityRotationIsEnergyNeutral)
+{
+    const Real u = Real(7.0);
+    const Real v = Real(-3.0);
+    const Real density = Real(1.2);
+    const Real omega3 = Real(2.5e-4);
+    const Real source_u = density * omega3 * v;
+    const Real source_v = -density * omega3 * u;
+
+    EXPECT_NEAR(u * source_u + v * source_v, Real(0.0), Real(1.0e-15));
 }
 
 TEST(WindDirectionControl, InterpolatesPrimitiveComponentsOnStretchedLevels)
