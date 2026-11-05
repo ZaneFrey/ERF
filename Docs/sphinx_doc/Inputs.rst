@@ -2323,6 +2323,23 @@ of ``erf.abl_geo_wind``.  It measures instantaneous horizontally averaged
 primitive velocity at a physical height above the lower boundary.  The
 measurement is not time filtered.
 
+When the direction error reaches the configured threshold, the controller
+latches one coupled Sescu--Meneveau control episode.  The flow correction is
+the negative of that error, while the geostrophic correction is the same
+command multiplied by a dimensionless proportional gain.  Both corrections
+are applied in the same fractional increments over the fixed-rate event; the
+geostrophic forcing for each coarse step uses the midpoint geostrophic angle.
+The event command is not changed by measurements made while it is active.
+
+The additional momentum source is ``du/dt = omega_3 v`` and
+``dv/dt = -omega_3 u``: it rotates the total instantaneous horizontal
+velocity and has no vertical component.  This source is kinetic-energy
+neutral in the continuous governing equations.  ERF applies it through the
+ordinary staggered slow momentum RHS, so discrete energy conservation is
+limited by staggered interpolation and time-integration truncation error.
+After an event, the controller imposes a settling interval during which it
+continues measuring and writing diagnostics but cannot start another event.
+
 The controller currently requires one AMR level, constant-latitude 2-D
 Coriolis forcing, a height-independent geostrophic wind, and either a
 ``ConstantDz`` Cartesian mesh or a horizontally flat ``StretchedDz``
@@ -2352,25 +2369,43 @@ large-scale forcing, or momentum nudging.
      - interval between controller checks [s]
      - 60
    * - ``erf.wind_direction_control.tolerance_on``
-     - error that arms correction [degrees]
+     - single error threshold that starts an event [degrees]
      - 2
-   * - ``erf.wind_direction_control.tolerance_off``
-     - error that clears correction [degrees]
-     - 1
    * - ``erf.wind_direction_control.synthetic_rotation_rate``
-     - fixed synthetic rotation magnitude [deg/s]
-     - 0.0166666666667
-   * - ``erf.wind_direction_control.geostrophic_gain``
-     - geostrophic-angle proportional gain [1/s]
-     - 0.00166666666667
+     - fixed magnitude of the event angular velocity [deg/s]
+     - 0.0005
+   * - ``erf.wind_direction_control.geostrophic_proportional_gain``
+     - dimensionless fraction of the latched error applied to the geostrophic direction
+     - 1
+   * - ``erf.wind_direction_control.post_event_settling_time``
+     - time after event completion before another event may start [s]
+     - 600
    * - ``erf.wind_direction_control.diagnostics_file``
      - controller CSV time-series path
      - wind_direction_control.csv
 
-The CSV records every scheduled measurement and the controller state.  An
-active synthetic-rotation event always completes its latched angular
-correction, even if a later measurement enters the deadband.  Controller
-state is preserved in native checkpoints.
+The CSV records every scheduled measurement, phase, latched command,
+committed and midpoint geostrophic directions, remaining flow and
+geostrophic corrections, and settling time.  The controller phases are
+``waiting``, ``idle``, ``rotating``, and ``settling``.  It remains armed
+indefinitely, but the rotation source is zero outside ``rotating``.  The
+coupled episode state is preserved in native checkpoints.  Checkpoints from
+older controller formulations are intentionally rejected because their state
+cannot be mapped unambiguously.  The obsolete ``geostrophic_gain``,
+``tolerance_off``, and ``synthetic_rotation_gain`` inputs are also rejected.
+
+For low-transient initialization, the initial sounding and
+``erf.abl_geo_wind`` may be constructed from the constant-eddy-viscosity
+Ekman spiral used by Sescu and Meneveau,
+
+.. math::
+
+   u = G[1-e^{-\gamma z}\cos(\gamma z)], \qquad
+   v = G e^{-\gamma z}\sin(\gamma z), \qquad
+   \gamma=\sqrt{f/(2K_M)}.
+
+This initialization is a case-preparation step and is not performed by the
+controller.
 
 .. _sec:WindFarmForcingInputs:
 
