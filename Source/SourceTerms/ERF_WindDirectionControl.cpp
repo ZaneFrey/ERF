@@ -17,6 +17,16 @@
 
 using namespace amrex;
 
+namespace
+{
+constexpr const char* diagnostic_header =
+    "time,phase,u_bar,v_bar,speed,measured_angle_deg,target_angle_deg,error_deg,"
+    "latched_error_deg,event_start_time,geostrophic_magnitude,"
+    "geostrophic_angle_deg,midpoint_geostrophic_angle_deg,geo_forcing_x,"
+    "geo_forcing_y,rotation_omega3,remaining_flow_angle_deg,"
+    "remaining_geo_angle_deg,settling_time_remaining,valid,event_initiated";
+}
+
 namespace erf_wind_direction
 {
 
@@ -29,52 +39,73 @@ wrap_angle (Real angle) noexcept
 }
 
 bool
-update_correction_demand (bool current, Real abs_error,
-                          Real tolerance_on, Real tolerance_off) noexcept
+event_requested (Real error, Real threshold) noexcept
 {
-    if (abs_error >= tolerance_on) return true;
-    if (abs_error <= tolerance_off) return false;
-    return current;
-}
-
-Real
-update_geostrophic_angle (Real angle, Real error, Real gain,
-                           Real control_interval) noexcept
-{
-    return wrap_angle(angle - gain * error * control_interval);
+    return std::abs(error) >= threshold;
 }
 
 void
-latch_event (EventState& state, Real error) noexcept
+latch_episode (EpisodeState& state, Real error, Real proportional_gain,
+               Real time) noexcept
 {
-    if (!state.active) {
-        state.remaining_angle = -error;
-        state.active = (state.remaining_angle != Real(0.0));
-    }
+    if (state.phase != Phase::Idle) return;
+    state.phase = Phase::Rotating;
+    state.latched_error = error;
+    state.event_start_time = time;
+    state.remaining_flow_angle = -error;
+    state.remaining_geo_angle = -proportional_gain * error;
+    state.settling_until = Real(0.0);
 }
 
 Real
-event_angle_rate (const EventState& state, Real rate_magnitude, Real dt) noexcept
+episode_flow_angle_rate (const EpisodeState& state, Real rate_magnitude,
+                         Real dt) noexcept
 {
-    if (!state.active || !(dt > Real(0.0))) return Real(0.0);
-    const Real uncapped = std::copysign(rate_magnitude, state.remaining_angle);
-    if (std::abs(state.remaining_angle) <= rate_magnitude * dt) {
-        return state.remaining_angle / dt;
+    if (state.phase != Phase::Rotating || !(dt > Real(0.0))) return Real(0.0);
+    if (std::abs(state.remaining_flow_angle) <= rate_magnitude * dt) {
+        return state.remaining_flow_angle / dt;
     }
-    return uncapped;
+    return std::copysign(rate_magnitude, state.remaining_flow_angle);
+}
+
+Real
+episode_geo_increment (const EpisodeState& state, Real flow_increment) noexcept
+{
+    if (state.phase != Phase::Rotating || state.remaining_flow_angle == Real(0.0)) {
+        return Real(0.0);
+    }
+    const Real fraction = flow_increment / state.remaining_flow_angle;
+    return fraction * state.remaining_geo_angle;
 }
 
 void
-advance_event (EventState& state, Real angle_rate, Real dt) noexcept
+advance_episode (EpisodeState& state, Real flow_increment, Real geo_increment,
+                 Real completion_time, Real settling_time) noexcept
 {
-    if (!state.active) return;
-    state.remaining_angle -= angle_rate * dt;
-    const Real scale = std::max(Real(1.0), std::abs(angle_rate * dt));
-    if (std::abs(state.remaining_angle) <=
-        Real(32.0) * std::numeric_limits<Real>::epsilon() * scale) {
-        state.remaining_angle = Real(0.0);
-        state.active = false;
+    if (state.phase != Phase::Rotating) return;
+    state.remaining_flow_angle -= flow_increment;
+    state.remaining_geo_angle -= geo_increment;
+
+    const Real flow_scale = std::max(Real(1.0), std::abs(flow_increment));
+    if (std::abs(state.remaining_flow_angle) <=
+        Real(32.0) * std::numeric_limits<Real>::epsilon() * flow_scale) {
+        state.remaining_flow_angle = Real(0.0);
+        state.remaining_geo_angle = Real(0.0);
+        state.phase = Phase::Settling;
+        state.settling_until = completion_time + settling_time;
     }
+}
+
+const char*
+phase_name (Phase phase) noexcept
+{
+    switch (phase) {
+    case Phase::Waiting:  return "waiting";
+    case Phase::Idle:     return "idle";
+    case Phase::Rotating: return "rotating";
+    case Phase::Settling: return "settling";
+    }
+    return "invalid";
 }
 
 Real
@@ -117,8 +148,7 @@ WindDirectionControl::WindDirectionControl (const SolverChoice& choice, int max_
     ParmParse pp("erf.wind_direction_control");
     Real target_direction_degrees = Real(0.0);
     Real tolerance_on_degrees = Real(2.0);
-    Real tolerance_off_degrees = Real(1.0);
-    Real rotation_rate_degrees = Real(1.0 / 60.0);
+    Real rotation_rate_degrees = Real(0.0005);
 
     if (!pp.query("target_direction", target_direction_degrees)) {
         Error("erf.wind_direction_control.target_direction is required when the controller is enabled");
@@ -129,14 +159,19 @@ WindDirectionControl::WindDirectionControl (const SolverChoice& choice, int max_
     pp.query("start_time", m_start_time);
     pp.query("check_interval", m_check_interval);
     pp.query("tolerance_on", tolerance_on_degrees);
-    pp.query("tolerance_off", tolerance_off_degrees);
     pp.query("synthetic_rotation_rate", rotation_rate_degrees);
-    m_geostrophic_gain = Real(1.0 / 600.0);
-    pp.query("geostrophic_gain", m_geostrophic_gain);
+    pp.query("geostrophic_proportional_gain", m_geostrophic_proportional_gain);
+    pp.query("post_event_settling_time", m_post_event_settling_time);
     pp.query("diagnostics_file", m_diagnostics_file);
 
-    if (!std::isfinite(target_direction_degrees) ||
-        !std::isfinite(m_target_height)) {
+    if (pp.contains("geostrophic_gain") || pp.contains("tolerance_off") ||
+        pp.contains("synthetic_rotation_gain")) {
+        Error("erf.wind_direction_control.geostrophic_gain, tolerance_off, and "
+              "synthetic_rotation_gain are obsolete; use the dimensionless "
+              "geostrophic_proportional_gain with the coupled SM14 controller");
+    }
+
+    if (!std::isfinite(target_direction_degrees) || !std::isfinite(m_target_height)) {
         Error("wind-direction target direction and height must be finite");
     }
     if (!(m_start_time >= Real(0.0)) || !std::isfinite(m_start_time)) {
@@ -150,7 +185,6 @@ WindDirectionControl::WindDirectionControl (const SolverChoice& choice, int max_
     m_target_direction = erf_wind_direction::wrap_angle(
         target_direction_degrees * degrees_to_radians);
     m_tolerance_on = tolerance_on_degrees * degrees_to_radians;
-    m_tolerance_off = tolerance_off_degrees * degrees_to_radians;
     m_rotation_rate = rotation_rate_degrees * degrees_to_radians;
     m_next_check_time = m_start_time;
 
@@ -160,12 +194,21 @@ WindDirectionControl::WindDirectionControl (const SolverChoice& choice, int max_
     if (!(m_rotation_rate > Real(0.0)) || !std::isfinite(m_rotation_rate)) {
         Error("erf.wind_direction_control.synthetic_rotation_rate must be positive");
     }
-    if (!(m_geostrophic_gain > Real(0.0)) || !std::isfinite(m_geostrophic_gain)) {
-        Error("erf.wind_direction_control.geostrophic_gain must be positive");
+    if (!(m_geostrophic_proportional_gain >= Real(0.0) &&
+          m_geostrophic_proportional_gain <= Real(1.0)) ||
+        !std::isfinite(m_geostrophic_proportional_gain)) {
+        Error("erf.wind_direction_control.geostrophic_proportional_gain must be between 0 and 1");
     }
-    if (!(m_tolerance_off >= Real(0.0) && m_tolerance_off < m_tolerance_on &&
-          m_tolerance_on < PI)) {
-        Error("wind-direction tolerances must satisfy 0 <= tolerance_off < tolerance_on < 180 degrees");
+    if (m_geostrophic_proportional_gain == Real(0.0)) {
+        Warning("Wind-direction control geostrophic_proportional_gain is zero; "
+                "the flow will rotate while the geostrophic direction remains fixed");
+    }
+    if (!(m_post_event_settling_time >= Real(0.0)) ||
+        !std::isfinite(m_post_event_settling_time)) {
+        Error("erf.wind_direction_control.post_event_settling_time must be finite and nonnegative");
+    }
+    if (!(m_tolerance_on > Real(0.0) && m_tolerance_on < PI)) {
+        Error("erf.wind_direction_control.tolerance_on must be between 0 and 180 degrees");
     }
     if (max_level != 0) {
         Error("the wind-direction controller currently requires amr.max_level = 0");
@@ -219,13 +262,16 @@ WindDirectionControl::WindDirectionControl (const SolverChoice& choice, int max_
         Error("the wind-direction controller requires a nonzero horizontal erf.abl_geo_wind");
     }
     m_geostrophic_angle = std::atan2(vg, ug);
-    regenerate_geostrophic_forcing();
+    m_step_midpoint_geo_angle = m_geostrophic_angle;
+    regenerate_geostrophic_forcing(m_geostrophic_angle);
 
     update_vertical_grid(geom, zlevels_stag);
 
     Print() << "Wind-direction controller: target=" << target_direction_degrees
             << " deg, height=" << m_target_height << " m, check interval="
-            << m_check_interval << " s\n";
+            << m_check_interval << " s, rotation rate=" << rotation_rate_degrees
+            << " deg/s, proportional gain=" << m_geostrophic_proportional_gain
+            << ", settling time=" << m_post_event_settling_time << " s\n";
 }
 
 void
@@ -303,86 +349,118 @@ WindDirectionControl::begin_step (Real time, Real dt, const MultiFab& xvel,
                                   const MultiFab& yvel, const Geometry& geom)
 {
     Measurement measurement;
+    bool event_initiated = false;
     const bool checked = control_due(time);
     if (checked) {
         measurement = measure(xvel, yvel, geom);
-        if (measurement.valid) {
-            m_correction_demand = erf_wind_direction::update_correction_demand(
-                m_correction_demand, std::abs(measurement.error),
-                m_tolerance_on, m_tolerance_off);
-            if (m_correction_demand) {
-                m_geostrophic_angle = erf_wind_direction::update_geostrophic_angle(
-                    m_geostrophic_angle, measurement.error,
-                    m_geostrophic_gain, m_check_interval);
-                regenerate_geostrophic_forcing();
-            }
-            if (!m_event.active && std::abs(measurement.error) >= m_tolerance_on) {
-                erf_wind_direction::latch_event(m_event, measurement.error);
-            }
+
+        if (m_episode.phase == erf_wind_direction::Phase::Waiting && time >= m_start_time) {
+            m_episode.phase = erf_wind_direction::Phase::Idle;
+        }
+        if (m_episode.phase == erf_wind_direction::Phase::Settling &&
+            time >= m_episode.settling_until) {
+            m_episode.phase = erf_wind_direction::Phase::Idle;
+        }
+        if (m_episode.phase == erf_wind_direction::Phase::Idle && measurement.valid &&
+            erf_wind_direction::event_requested(measurement.error, m_tolerance_on)) {
+            erf_wind_direction::latch_episode(
+                m_episode, measurement.error, m_geostrophic_proportional_gain, time);
+            event_initiated = true;
         }
         advance_check_time(time);
     }
 
-    m_step_angle_rate = erf_wind_direction::event_angle_rate(m_event, m_rotation_rate, dt);
-    m_synthetic_coriolis = -m_step_angle_rate;
+    const Real step_flow_rate = erf_wind_direction::episode_flow_angle_rate(
+        m_episode, m_rotation_rate, dt);
+    m_step_flow_increment = step_flow_rate * dt;
+    m_step_geo_increment = erf_wind_direction::episode_geo_increment(
+        m_episode, m_step_flow_increment);
+    m_rotation_omega3 = -step_flow_rate;
+    m_step_midpoint_geo_angle = erf_wind_direction::wrap_angle(
+        m_geostrophic_angle + Real(0.5) * m_step_geo_increment);
+    regenerate_geostrophic_forcing(m_step_midpoint_geo_angle);
 
     if (checked) {
-        write_diagnostic(time, measurement);
+        write_diagnostic(time, measurement, event_initiated);
         constexpr Real radians_to_degrees = Real(180.0) / PI;
         Print() << "Wind-direction control t=" << time
+                << " phase=" << erf_wind_direction::phase_name(m_episode.phase)
                 << " valid=" << static_cast<int>(measurement.valid)
                 << " angle=" << measurement.angle * radians_to_degrees
                 << " deg error=" << measurement.error * radians_to_degrees
-                << " deg active=" << static_cast<int>(m_event.active) << "\n";
+                << " deg omega3=" << m_rotation_omega3 << " 1/s"
+                << " remaining flow="
+                << m_episode.remaining_flow_angle * radians_to_degrees << " deg\n";
     }
 }
 
 void
-WindDirectionControl::end_step (Real dt) noexcept
+WindDirectionControl::end_step (Real time, Real dt) noexcept
 {
-    erf_wind_direction::advance_event(m_event, m_step_angle_rate, dt);
-    m_step_angle_rate = Real(0.0);
-    m_synthetic_coriolis = Real(0.0);
+    m_geostrophic_angle = erf_wind_direction::wrap_angle(
+        m_geostrophic_angle + m_step_geo_increment);
+    erf_wind_direction::advance_episode(
+        m_episode, m_step_flow_increment, m_step_geo_increment,
+        time + dt, m_post_event_settling_time);
+
+    m_step_flow_increment = Real(0.0);
+    m_step_geo_increment = Real(0.0);
+    m_rotation_omega3 = Real(0.0);
+    m_step_midpoint_geo_angle = m_geostrophic_angle;
+    regenerate_geostrophic_forcing(m_geostrophic_angle);
 }
 
 void
-WindDirectionControl::regenerate_geostrophic_forcing () noexcept
+WindDirectionControl::regenerate_geostrophic_forcing (Real angle) noexcept
 {
-    const Real ug = m_geostrophic_magnitude * std::cos(m_geostrophic_angle);
-    const Real vg = m_geostrophic_magnitude * std::sin(m_geostrophic_angle);
+    const Real ug = m_geostrophic_magnitude * std::cos(angle);
+    const Real vg = m_geostrophic_magnitude * std::sin(angle);
     m_geo_forcing = {-m_planetary_f * vg, m_planetary_f * ug, Real(0.0)};
 }
 
 void
-WindDirectionControl::write_diagnostic (Real time, const Measurement& m) const
+WindDirectionControl::write_diagnostic (Real time, const Measurement& m,
+                                        bool event_initiated) const
 {
     if (!ParallelDescriptor::IOProcessor()) return;
     bool write_header = !FileExists(m_diagnostics_file);
     if (!write_header) {
-        std::ifstream existing(m_diagnostics_file, std::ios::binary | std::ios::ate);
-        write_header = existing.good() && existing.tellg() == std::streampos(0);
+        std::ifstream existing(m_diagnostics_file);
+        std::string header;
+        if (!std::getline(existing, header)) {
+            write_header = true;
+        } else if (header != diagnostic_header) {
+            Error("Existing wind-direction diagnostics file has an incompatible header; "
+                  "choose a new erf.wind_direction_control.diagnostics_file");
+        }
     }
     std::ofstream output(m_diagnostics_file, std::ios::out | std::ios::app);
     if (!output.good()) FileOpenFailed(m_diagnostics_file);
-    if (write_header) {
-        output << "time,u_bar,v_bar,speed,measured_angle_deg,target_angle_deg,error_deg,"
-                  "geostrophic_magnitude,geostrophic_angle_deg,geo_forcing_x,geo_forcing_y,"
-                  "synthetic_coriolis,remaining_angle_deg,active,correction_demand,valid\n";
-    }
+    if (write_header) output << diagnostic_header << '\n';
+
     constexpr Real radians_to_degrees = Real(180.0) / PI;
+    const Real settling_remaining =
+        m_episode.phase == erf_wind_direction::Phase::Settling
+            ? std::max(Real(0.0), m_episode.settling_until - time)
+            : Real(0.0);
     output << std::setprecision(17)
-           << time << ',' << m.u << ',' << m.v << ',' << m.speed << ','
+           << time << ',' << erf_wind_direction::phase_name(m_episode.phase) << ','
+           << m.u << ',' << m.v << ',' << m.speed << ','
            << m.angle * radians_to_degrees << ','
            << m_target_direction * radians_to_degrees << ','
            << m.error * radians_to_degrees << ','
+           << m_episode.latched_error * radians_to_degrees << ','
+           << m_episode.event_start_time << ','
            << m_geostrophic_magnitude << ','
            << m_geostrophic_angle * radians_to_degrees << ','
+           << m_step_midpoint_geo_angle * radians_to_degrees << ','
            << m_geo_forcing[0] << ',' << m_geo_forcing[1] << ','
-           << m_synthetic_coriolis << ','
-           << m_event.remaining_angle * radians_to_degrees << ','
-           << static_cast<int>(m_event.active) << ','
-           << static_cast<int>(m_correction_demand) << ','
-           << static_cast<int>(m.valid) << '\n';
+           << m_rotation_omega3 << ','
+           << m_episode.remaining_flow_angle * radians_to_degrees << ','
+           << m_episode.remaining_geo_angle * radians_to_degrees << ','
+           << settling_remaining << ','
+           << static_cast<int>(m.valid) << ','
+           << static_cast<int>(event_initiated) << '\n';
 }
 
 void
@@ -392,11 +470,13 @@ WindDirectionControl::write_checkpoint (const std::string& checkpoint_name) cons
     const std::string filename = checkpoint_name + "/WindDirectionControl";
     std::ofstream output(filename, std::ios::out | std::ios::trunc);
     if (!output.good()) FileOpenFailed(filename);
-    output << "ERF wind direction control state\n1\n" << std::setprecision(17)
+    output << "ERF wind direction control state\n4\n" << std::setprecision(17)
+           << static_cast<int>(m_episode.phase) << '\n'
            << m_geostrophic_magnitude << ' ' << m_geostrophic_angle << '\n'
-           << static_cast<int>(m_event.active) << ' ' << m_event.remaining_angle << '\n'
-           << m_next_check_time << '\n'
-           << static_cast<int>(m_correction_demand) << '\n';
+           << m_episode.latched_error << ' ' << m_episode.event_start_time << '\n'
+           << m_episode.remaining_flow_angle << ' '
+           << m_episode.remaining_geo_angle << '\n'
+           << m_next_check_time << ' ' << m_episode.settling_until << '\n';
 }
 
 void
@@ -408,6 +488,9 @@ WindDirectionControl::read_checkpoint (const std::string& checkpoint_name,
         Warning("Restart checkpoint has no WindDirectionControl state; initializing the "
                 "enabled controller at the restart time");
         m_next_check_time = std::max(m_start_time, restart_time);
+        m_episode.phase = restart_time >= m_start_time
+                              ? erf_wind_direction::Phase::Idle
+                              : erf_wind_direction::Phase::Waiting;
         return;
     }
 
@@ -416,29 +499,56 @@ WindDirectionControl::read_checkpoint (const std::string& checkpoint_name,
     std::istringstream input(std::string(chars.dataPtr(), chars.size()));
     std::string title;
     int version = 0;
-    int active = 0;
-    int demand = 0;
+    int phase_value = 0;
     std::getline(input, title);
     input >> version;
-    if (title != "ERF wind direction control state" || version != 1) {
+    if (title != "ERF wind direction control state") {
         Error("Unsupported or malformed WindDirectionControl checkpoint record in '" +
               filename + "'");
     }
+    if (version >= 1 && version <= 3) {
+        Error("WindDirectionControl checkpoint versions 1-3 contain an incompatible "
+              "controller state; remove the controller record to initialize a fresh "
+              "coupled SM14 controller");
+    }
+    if (version != 4) {
+        Error("Unsupported WindDirectionControl checkpoint version in '" + filename + "'");
+    }
+
+    input >> phase_value;
     input >> m_geostrophic_magnitude >> m_geostrophic_angle;
-    input >> active >> m_event.remaining_angle;
-    input >> m_next_check_time;
-    input >> demand;
-    if (!input || !(m_geostrophic_magnitude > Real(0.0)) ||
+    input >> m_episode.latched_error >> m_episode.event_start_time;
+    input >> m_episode.remaining_flow_angle >> m_episode.remaining_geo_angle;
+    input >> m_next_check_time >> m_episode.settling_until;
+
+    const bool phase_valid =
+        phase_value >= static_cast<int>(erf_wind_direction::Phase::Waiting) &&
+        phase_value <= static_cast<int>(erf_wind_direction::Phase::Settling);
+    if (phase_valid) {
+        m_episode.phase = static_cast<erf_wind_direction::Phase>(phase_value);
+    }
+    const bool rotating = phase_valid &&
+        m_episode.phase == erf_wind_direction::Phase::Rotating;
+    const bool inactive_angles_zero =
+        m_episode.remaining_flow_angle == Real(0.0) &&
+        m_episode.remaining_geo_angle == Real(0.0);
+    if (!input || !phase_valid || !(m_geostrophic_magnitude > Real(0.0)) ||
         !std::isfinite(m_geostrophic_magnitude) ||
-        (active != 0 && active != 1) || (demand != 0 && demand != 1) ||
         !std::isfinite(m_geostrophic_angle) ||
-        !std::isfinite(m_event.remaining_angle) ||
+        !std::isfinite(m_episode.latched_error) ||
+        !std::isfinite(m_episode.event_start_time) ||
+        !std::isfinite(m_episode.remaining_flow_angle) ||
+        !std::isfinite(m_episode.remaining_geo_angle) ||
         !std::isfinite(m_next_check_time) ||
-        (active != 0 && m_event.remaining_angle == Real(0.0))) {
+        !std::isfinite(m_episode.settling_until) ||
+        (rotating && m_episode.remaining_flow_angle == Real(0.0)) ||
+        (!rotating && !inactive_angles_zero)) {
         Error("Malformed WindDirectionControl checkpoint record in '" + filename + "'");
     }
-    m_event.active = active != 0;
-    m_correction_demand = demand != 0;
-    if (!m_event.active) m_event.remaining_angle = Real(0.0);
-    regenerate_geostrophic_forcing();
+
+    m_rotation_omega3 = Real(0.0);
+    m_step_flow_increment = Real(0.0);
+    m_step_geo_increment = Real(0.0);
+    m_step_midpoint_geo_angle = m_geostrophic_angle;
+    regenerate_geostrophic_forcing(m_geostrophic_angle);
 }

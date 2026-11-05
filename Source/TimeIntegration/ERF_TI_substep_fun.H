@@ -118,7 +118,7 @@ auto acoustic_substepping_fun = [&,one_d=one,zero_d=zero](int fast_step, int n_s
                          cosPhi_m[level].get(), sinPhi_m[level].get(), fine_geom, solverChoice,
                          (wind_direction_control ? wind_direction_control->geostrophic_forcing()
                                                  : solverChoice.abl_geo_forcing),
-                         (wind_direction_control ? wind_direction_control->synthetic_coriolis()
+                         (wind_direction_control ? wind_direction_control->rotation_omega3()
                                                  : amrex::Real(0.0)),
                          mapfac[level],
                          (solverChoice.have_geo_wind_profile) ? d_u_geos[level].data() : nullptr,

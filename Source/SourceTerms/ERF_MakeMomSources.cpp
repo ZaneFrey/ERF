@@ -58,7 +58,7 @@ void make_mom_sources (double time_d,
                        const Geometry geom,
                        const SolverChoice& solverChoice,
                        const GpuArray<Real, AMREX_SPACEDIM>& controller_geo_forcing,
-                       Real synthetic_coriolis,
+                       Real rotation_omega3,
                              Vector<std::unique_ptr<MultiFab>>& /*mapfac*/,
                        const Real* dptr_u_geos,
                        const Real* dptr_v_geos,
@@ -466,9 +466,12 @@ void make_mom_sources (double time_d,
         } // use_coriolis
 
         // Synthetic horizontal rotation used by the SM14 wind-direction
-        // controller.  It deliberately follows the existing staggered
-        // constant-latitude Coriolis interpolation but has no vertical term.
-        if (synthetic_coriolis != Real(0.0) && is_slow_step) {
+        // controller.  SM14 rotates the total instantaneous velocity:
+        // du/dt = omega_3 v and dv/dt = -omega_3 u.  The cross-product
+        // source does no continuous kinetic-energy work.  It follows the
+        // existing staggered constant-latitude Coriolis interpolation and
+        // has no vertical term.
+        if (rotation_omega3 != Real(0.0) && is_slow_step) {
             ParallelFor(tbx, tby,
             [=] AMREX_GPU_DEVICE (int i, int j, int k)
             {
@@ -476,7 +479,7 @@ void make_mom_sources (double time_d,
                     (v(i,j+1,k) + v(i,j,k) + v(i-1,j+1,k) + v(i-1,j,k));
                 const Real rho_on_u_face = myhalf *
                     (cell_data(i,j,k,Rho_comp) + cell_data(i-1,j,k,Rho_comp));
-                xmom_src_arr(i,j,k) += rho_on_u_face * synthetic_coriolis * v_loc;
+                xmom_src_arr(i,j,k) += rho_on_u_face * rotation_omega3 * v_loc;
             },
             [=] AMREX_GPU_DEVICE (int i, int j, int k)
             {
@@ -484,7 +487,7 @@ void make_mom_sources (double time_d,
                     (u(i+1,j,k) + u(i,j,k) + u(i+1,j-1,k) + u(i,j-1,k));
                 const Real rho_on_v_face = myhalf *
                     (cell_data(i,j,k,Rho_comp) + cell_data(i,j-1,k,Rho_comp));
-                ymom_src_arr(i,j,k) -= rho_on_v_face * synthetic_coriolis * u_loc;
+                ymom_src_arr(i,j,k) -= rho_on_v_face * rotation_omega3 * u_loc;
             });
         }
 

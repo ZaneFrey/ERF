@@ -298,7 +298,8 @@ ERF::timeStep (int lev, double time, int /*iteration*/)
     Advance(lev, time, dt[lev], istep[lev], nsubsteps[lev]);
 
     if (lev == 0 && wind_direction_control) {
-        wind_direction_control->end_step(static_cast<amrex::Real>(dt[lev]));
+        wind_direction_control->end_step(static_cast<amrex::Real>(time),
+                                         static_cast<amrex::Real>(dt[lev]));
     }
 
     ++istep[lev];
