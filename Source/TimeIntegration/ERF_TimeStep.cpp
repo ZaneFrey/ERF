@@ -268,8 +268,8 @@ ERF::timeStep (int lev, double time, int /*iteration*/)
     }
 
     if (lev == 0 && wind_direction_control) {
-        wind_direction_control->begin_step(
-            static_cast<amrex::Real>(time), static_cast<amrex::Real>(dt[lev]),
+        wind_direction_control->update(
+            static_cast<amrex::Real>(time),
             vars_new[lev][Vars::xvel], vars_new[lev][Vars::yvel], geom[lev]);
     }
 
@@ -296,11 +296,6 @@ ERF::timeStep (int lev, double time, int /*iteration*/)
 
     // Advance a single level for a single time step
     Advance(lev, time, dt[lev], istep[lev], nsubsteps[lev]);
-
-    if (lev == 0 && wind_direction_control) {
-        wind_direction_control->end_step(static_cast<amrex::Real>(time),
-                                         static_cast<amrex::Real>(dt[lev]));
-    }
 
     ++istep[lev];
 

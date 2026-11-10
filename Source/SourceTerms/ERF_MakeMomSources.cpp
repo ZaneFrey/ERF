@@ -465,8 +465,8 @@ void make_mom_sources (double time_d,
             } // var_coriolis
         } // use_coriolis
 
-        // Synthetic horizontal rotation used by the SM14 wind-direction
-        // controller.  SM14 rotates the total instantaneous velocity:
+        // Continuous horizontal rotation used by the TOSCA-like
+        // wind-direction controller.  It rotates the total instantaneous velocity:
         // du/dt = omega_3 v and dv/dt = -omega_3 u.  The cross-product
         // source does no continuous kinetic-energy work.  It follows the
         // existing staggered constant-latitude Coriolis interpolation and
