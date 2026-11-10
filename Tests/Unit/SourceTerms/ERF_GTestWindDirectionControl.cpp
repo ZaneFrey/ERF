@@ -14,6 +14,29 @@
 
 using amrex::Real;
 
+namespace
+{
+void
+fill_linear_velocity_profiles (amrex::MultiFab& u, amrex::MultiFab& v)
+{
+    for (amrex::MFIter mfi(u); mfi.isValid(); ++mfi) {
+        const auto array = u.array(mfi);
+        amrex::ParallelFor(mfi.validbox(), [=] AMREX_GPU_DEVICE
+                           (int i, int j, int k) noexcept {
+            array(i,j,k) = Real(2.0) + Real(3.0) * static_cast<Real>(k);
+        });
+    }
+    for (amrex::MFIter mfi(v); mfi.isValid(); ++mfi) {
+        const auto array = v.array(mfi);
+        amrex::ParallelFor(mfi.validbox(), [=] AMREX_GPU_DEVICE
+                           (int i, int j, int k) noexcept {
+            array(i,j,k) = Real(-1.0) + Real(4.0) * static_cast<Real>(k);
+        });
+    }
+    amrex::Gpu::streamSynchronize();
+}
+}
+
 TEST(WindDirectionControl, WrapsAnglesAcrossBranchCut)
 {
     constexpr Real deg = PI / Real(180.0);
@@ -25,123 +48,76 @@ TEST(WindDirectionControl, WrapsAnglesAcrossBranchCut)
                 Real(0.0), Real(1.0e-14));
 }
 
-TEST(WindDirectionControl, UsesSingleInclusiveEventThreshold)
+TEST(WindDirectionControl, RotationRateIsContinuousAndProportional)
 {
     constexpr Real deg = PI / Real(180.0);
-    EXPECT_FALSE(erf_wind_direction::event_requested(
-        Real(1.999) * deg, Real(2.0) * deg));
-    EXPECT_TRUE(erf_wind_direction::event_requested(
-        Real(2.0) * deg, Real(2.0) * deg));
-    EXPECT_TRUE(erf_wind_direction::event_requested(
-        Real(-2.0) * deg, Real(2.0) * deg));
+    constexpr Real gain = Real(1.0e-4);
+
+    EXPECT_NEAR(erf_wind_direction::continuous_rotation_rate(
+                    Real(10.0) * deg, gain),
+                Real(0.001) * deg, Real(1.0e-16));
+    EXPECT_NEAR(erf_wind_direction::continuous_rotation_rate(
+                    Real(2.0) * deg, gain),
+                Real(0.0002) * deg, Real(1.0e-16));
+    EXPECT_NEAR(erf_wind_direction::continuous_rotation_rate(
+                    Real(-3.0) * deg, gain),
+                Real(-0.0003) * deg, Real(1.0e-16));
+    EXPECT_EQ(erf_wind_direction::continuous_rotation_rate(
+                  Real(0.0), gain), Real(0.0));
 }
 
-TEST(WindDirectionControl, CoupledEpisodeUsesSM14SignsAndGain)
+TEST(WindDirectionControl, HasNoDeadband)
 {
     constexpr Real deg = PI / Real(180.0);
-    erf_wind_direction::EpisodeState episode;
-    episode.phase = erf_wind_direction::Phase::Idle;
-    erf_wind_direction::latch_episode(
-        episode, Real(10.0) * deg, Real(0.4), Real(120.0));
-
-    EXPECT_EQ(episode.phase, erf_wind_direction::Phase::Rotating);
-    EXPECT_NEAR(episode.latched_error, Real(10.0) * deg, Real(1.0e-14));
-    EXPECT_NEAR(episode.remaining_flow_angle, Real(-10.0) * deg, Real(1.0e-14));
-    EXPECT_NEAR(episode.remaining_geo_angle, Real(-4.0) * deg, Real(1.0e-14));
-    EXPECT_EQ(episode.event_start_time, Real(120.0));
+    const Real rate = erf_wind_direction::continuous_rotation_rate(
+        Real(1.0e-9) * deg, Real(1.0e-4));
+    EXPECT_GT(rate, Real(0.0));
 }
 
-TEST(WindDirectionControl, EpisodeIsImmutableCappedAndSettles)
+TEST(WindDirectionControl, PositiveErrorCommandsClockwiseRotation)
 {
     constexpr Real deg = PI / Real(180.0);
-    erf_wind_direction::EpisodeState episode;
-    episode.phase = erf_wind_direction::Phase::Idle;
-    erf_wind_direction::latch_episode(
-        episode, Real(3.0) * deg, Real(1.0), Real(100.0));
-    ASSERT_EQ(episode.phase, erf_wind_direction::Phase::Rotating);
-    EXPECT_NEAR(episode.remaining_flow_angle, Real(-3.0) * deg, Real(1.0e-14));
+    const Real omega3 = erf_wind_direction::continuous_rotation_rate(
+        Real(5.0) * deg, Real(1.0e-4));
+    const Real u = Real(10.0);
+    const Real v = Real(0.0);
+    const Real source_u = omega3 * v;
+    const Real source_v = -omega3 * u;
 
-    // A later measurement cannot replace an already active episode.
-    erf_wind_direction::latch_episode(
-        episode, Real(-20.0) * deg, Real(1.0), Real(110.0));
-    EXPECT_NEAR(episode.remaining_flow_angle, Real(-3.0) * deg, Real(1.0e-14));
-
-    const Real first_rate = erf_wind_direction::episode_flow_angle_rate(
-        episode, Real(1.0) * deg, Real(2.0));
-    EXPECT_NEAR(first_rate, Real(-1.0) * deg, Real(1.0e-14));
-    EXPECT_GT(-first_rate, Real(0.0)); // positive omega_3 rotates clockwise
-    const Real first_flow = first_rate * Real(2.0);
-    const Real first_geo = erf_wind_direction::episode_geo_increment(
-        episode, first_flow);
-    erf_wind_direction::advance_episode(
-        episode, first_flow, first_geo, Real(102.0), Real(600.0));
-    ASSERT_EQ(episode.phase, erf_wind_direction::Phase::Rotating);
-    EXPECT_NEAR(episode.remaining_flow_angle, Real(-1.0) * deg, Real(1.0e-14));
-    EXPECT_NEAR(episode.remaining_geo_angle, Real(-1.0) * deg, Real(1.0e-14));
-
-    const Real final_rate = erf_wind_direction::episode_flow_angle_rate(
-        episode, Real(1.0) * deg, Real(2.0));
-    EXPECT_NEAR(final_rate, Real(-0.5) * deg, Real(1.0e-14));
-    EXPECT_NEAR(first_rate * Real(2.0) + final_rate * Real(2.0),
-                Real(-3.0) * deg, Real(1.0e-14));
-    const Real final_flow = final_rate * Real(2.0);
-    const Real final_geo = erf_wind_direction::episode_geo_increment(
-        episode, final_flow);
-    erf_wind_direction::advance_episode(
-        episode, final_flow, final_geo, Real(104.0), Real(600.0));
-    EXPECT_EQ(episode.phase, erf_wind_direction::Phase::Settling);
-    EXPECT_EQ(episode.remaining_flow_angle, Real(0.0));
-    EXPECT_EQ(episode.remaining_geo_angle, Real(0.0));
-    EXPECT_EQ(episode.settling_until, Real(704.0));
+    EXPECT_EQ(source_u, Real(0.0));
+    EXPECT_LT(source_v, Real(0.0));
 }
 
-TEST(WindDirectionControl, ZeroGainKeepsGeostrophicDirectionFixed)
+TEST(WindDirectionControl, GeostrophicForcingPreservesMagnitudeAndDirection)
 {
     constexpr Real deg = PI / Real(180.0);
-    erf_wind_direction::EpisodeState episode;
-    episode.phase = erf_wind_direction::Phase::Idle;
-    erf_wind_direction::latch_episode(
-        episode, Real(-5.0) * deg, Real(0.0), Real(0.0));
-    const Real flow_rate = erf_wind_direction::episode_flow_angle_rate(
-        episode, Real(1.0) * deg, Real(1.0));
-    EXPECT_GT(flow_rate, Real(0.0));
-    EXPECT_EQ(erf_wind_direction::episode_geo_increment(
-                  episode, flow_rate), Real(0.0));
+    const Real f = Real(1.0e-4);
+    const Real magnitude = Real(12.0);
+    const Real angle = Real(30.0) * deg;
+    const auto forcing = erf_wind_direction::geostrophic_forcing(
+        f, magnitude, angle);
+
+    EXPECT_NEAR(forcing[0], -f * magnitude * std::sin(angle), Real(1.0e-16));
+    EXPECT_NEAR(forcing[1],  f * magnitude * std::cos(angle), Real(1.0e-16));
+    EXPECT_EQ(forcing[2], Real(0.0));
+    EXPECT_NEAR(std::hypot(forcing[0], forcing[1]),
+                f * magnitude, Real(1.0e-16));
 }
 
-TEST(WindDirectionControl, UnitGainKeepsFlowAndGeostrophicCommandsSynchronized)
+TEST(WindDirectionControl, TargetAndGeostrophicHeightsInterpolateIndependently)
 {
-    constexpr Real deg = PI / Real(180.0);
-    erf_wind_direction::EpisodeState episode;
-    episode.phase = erf_wind_direction::Phase::Idle;
-    erf_wind_direction::latch_episode(
-        episode, Real(5.0) * deg, Real(1.0), Real(0.0));
+    const std::vector<Real> heights{Real(15.0), Real(45.0), Real(100.0)};
+    amrex::Gpu::HostVector<Real> values{Real(2.0), Real(8.0), Real(19.0)};
 
-    Real cumulative_flow = Real(0.0);
-    Real cumulative_geo = Real(0.0);
-    for (int step = 0; step < 3; ++step) {
-        const Real rate = erf_wind_direction::episode_flow_angle_rate(
-            episode, Real(2.0) * deg, Real(1.0));
-        const Real flow_increment = rate;
-        const Real geo_increment = erf_wind_direction::episode_geo_increment(
-            episode, flow_increment);
-        EXPECT_NEAR(flow_increment, geo_increment, Real(1.0e-14));
-        cumulative_flow += flow_increment;
-        cumulative_geo += geo_increment;
-        erf_wind_direction::advance_episode(
-            episode, flow_increment, geo_increment,
-            static_cast<Real>(step + 1), Real(600.0));
-    }
+    const Real target_value = erf_wind_direction::interpolate_profile(
+        heights, values, Real(30.0));
+    const Real geostrophic_value = erf_wind_direction::interpolate_profile(
+        heights, values, Real(80.0));
 
-    EXPECT_EQ(episode.phase, erf_wind_direction::Phase::Settling);
-    EXPECT_NEAR(cumulative_flow, Real(-5.0) * deg, Real(1.0e-14));
-    EXPECT_NEAR(cumulative_geo, cumulative_flow, Real(1.0e-14));
-
-    // Measurements cannot relatch a command during the settling hold.
-    erf_wind_direction::latch_episode(
-        episode, Real(-20.0) * deg, Real(1.0), Real(10.0));
-    EXPECT_EQ(episode.phase, erf_wind_direction::Phase::Settling);
-    EXPECT_EQ(episode.remaining_flow_angle, Real(0.0));
+    EXPECT_NEAR(target_value, Real(5.0), Real(1.0e-14));
+    EXPECT_NEAR(geostrophic_value, Real(15.0), Real(1.0e-14));
+    EXPECT_EQ(erf_wind_direction::interpolate_profile(
+                  heights, values, Real(100.0)), Real(19.0));
 }
 
 TEST(WindDirectionControl, TotalVelocityRotationIsEnergyNeutral)
@@ -154,18 +130,6 @@ TEST(WindDirectionControl, TotalVelocityRotationIsEnergyNeutral)
     const Real source_v = -density * omega3 * u;
 
     EXPECT_NEAR(u * source_u + v * source_v, Real(0.0), Real(1.0e-15));
-}
-
-TEST(WindDirectionControl, InterpolatesPrimitiveComponentsOnStretchedLevels)
-{
-    const std::vector<Real> heights{Real(15.0), Real(45.0), Real(100.0)};
-    amrex::Gpu::HostVector<Real> values{Real(2.0), Real(8.0), Real(19.0)};
-    EXPECT_NEAR(erf_wind_direction::interpolate_profile(
-                    heights, values, Real(30.0)),
-                Real(5.0), Real(1.0e-14));
-    EXPECT_EQ(erf_wind_direction::interpolate_profile(
-                  heights, values, Real(100.0)),
-              Real(19.0));
 }
 
 TEST(WindDirectionControl, FaceVelocityPlaneAveragesSupportLateralBoundaryTypes)
@@ -184,21 +148,7 @@ TEST(WindDirectionControl, FaceVelocityPlaneAveragesSupportLateralBoundaryTypes)
                           dm, 1, 0);
         amrex::MultiFab v(amrex::convert(cell_boxes, amrex::IntVect(0, 1, 0)),
                           dm, 1, 0);
-        for (amrex::MFIter mfi(u); mfi.isValid(); ++mfi) {
-            const auto array = u.array(mfi);
-            amrex::ParallelFor(mfi.validbox(), [=] AMREX_GPU_DEVICE
-                               (int i, int j, int k) noexcept {
-                array(i,j,k) = Real(2.0) + Real(3.0) * static_cast<Real>(k);
-            });
-        }
-        for (amrex::MFIter mfi(v); mfi.isValid(); ++mfi) {
-            const auto array = v.array(mfi);
-            amrex::ParallelFor(mfi.validbox(), [=] AMREX_GPU_DEVICE
-                               (int i, int j, int k) noexcept {
-                array(i,j,k) = Real(-1.0) + Real(4.0) * static_cast<Real>(k);
-            });
-        }
-        amrex::Gpu::streamSynchronize();
+        fill_linear_velocity_profiles(u, v);
 
         PlaneAverage u_average(&u, geom, 2);
         PlaneAverage v_average(&v, geom, 2);
