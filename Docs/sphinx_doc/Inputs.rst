@@ -2313,32 +2313,54 @@ ABL Driver and Geostrophic Forcing
 |                             | ``add_custom_geostrophic_profile``                       |                    |                  |
 +-----------------------------+----------------------------------------------------------+--------------------+------------------+
 
-SM14 Wind-Direction Control
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Continuous Wind-Direction Control
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The optional Sescu--Meneveau wind-direction controller rotates the resolved
-horizontal flow toward a requested mathematical direction (counterclockwise
-from ERF's positive x axis) and adjusts the direction, but not the magnitude,
-of ``erf.abl_geo_wind``.  It measures instantaneous horizontally averaged
-primitive velocity at a physical height above the lower boundary.  The
-measurement is not time filtered.
+The optional wind-direction controller follows TOSCA's continuous
+``geostrophic`` controller formulation.  At every coarse timestep it computes
+one instantaneous horizontally averaged primitive-velocity profile and
+interpolates that profile to a controlled height and a geostrophic sampling
+height.  Angles are mathematical directions measured counterclockwise from
+ERF's positive x axis.  The measurements are not time filtered.
+The implementation uses ``atan2`` directly and does not substitute or retain
+an earlier direction when a planar-mean speed is zero.
 
-When the direction error reaches the configured threshold, the controller
-latches one coupled Sescu--Meneveau control episode.  The flow correction is
-the negative of that error, while the geostrophic correction is the same
-command multiplied by a dimensionless proportional gain.  Both corrections
-are applied in the same fractional increments over the fixed-rate event; the
-geostrophic forcing for each coarse step uses the midpoint geostrophic angle.
-The event command is not changed by measurements made while it is active.
+At the controlled height, the wrapped direction error and rotation rate are
 
-The additional momentum source is ``du/dt = omega_3 v`` and
-``dv/dt = -omega_3 u``: it rotates the total instantaneous horizontal
-velocity and has no vertical component.  This source is kinetic-energy
-neutral in the continuous governing equations.  ERF applies it through the
-ordinary staggered slow momentum RHS, so discrete energy conservation is
-limited by staggered interpolation and time-integration truncation error.
-After an event, the controller imposes a settling interval during which it
-continues measuring and writing diagnostics but cannot start another event.
+.. math::
+
+   e(t) = \operatorname{wrap}[\theta_h(t)-\theta_{\rm target}], \qquad
+   \omega_3(t) = K_\theta e(t).
+
+There is no threshold, event, fixed-rate interval, or settling lockout.  The
+rate decreases continuously with the instantaneous error.  The additional
+momentum source is
+
+.. math::
+
+   \partial_t u = \omega_3 v, \qquad
+   \partial_t v = -\omega_3 u, \qquad
+   \partial_t w = 0.
+
+It rotates the total instantaneous horizontal velocity and is kinetic-energy
+neutral in the continuous equations.  ERF applies it through the ordinary
+staggered slow momentum RHS, so discrete conservation is limited by staggered
+interpolation and time-integration truncation error.
+
+The geostrophic pressure-gradient direction is reconstructed every timestep
+from the measured direction at ``geostrophic_height``.  If
+``G = |erf.abl_geo_wind|`` and
+``theta_geo = atan2(v_bar, u_bar)`` at that height, ERF applies
+
+.. math::
+
+   F_{g,x}=-fG\sin\theta_{\rm geo}, \qquad
+   F_{g,y}= fG\cos\theta_{\rm geo}.
+
+Thus, ``erf.abl_geo_wind`` supplies the constant magnitude and initial
+direction; its direction is replaced by the instantaneous upper-level
+measurement before each advance.  ``geostrophic_height`` should be above the
+boundary layer and below any strongly damped region.
 
 The controller currently requires one AMR level, constant-latitude 2-D
 Coriolis forcing, a height-independent geostrophic wind, and either a
@@ -2360,39 +2382,33 @@ large-scale forcing, or momentum nudging.
      - target direction [degrees CCW from +x]
      - required
    * - ``erf.wind_direction_control.target_height``
-     - sampling height above lower boundary [m]
+     - controlled sampling height above the lower boundary [m]
      - required
-   * - ``erf.wind_direction_control.start_time``
-     - first eligible check time [s]
-     - 0
-   * - ``erf.wind_direction_control.check_interval``
-     - interval between controller checks [s]
+   * - ``erf.wind_direction_control.geostrophic_height``
+     - height used to diagnose the geostrophic forcing direction [m]
+     - required
+   * - ``erf.wind_direction_control.relaxation_gain``
+     - continuous proportional angular gain :math:`K_\theta` [1/s]
+     - 1.0e-4
+   * - ``erf.wind_direction_control.diagnostics_interval``
+     - interval between CSV and console diagnostics [s]
      - 60
-   * - ``erf.wind_direction_control.tolerance_on``
-     - single error threshold that starts an event [degrees]
-     - 2
-   * - ``erf.wind_direction_control.synthetic_rotation_rate``
-     - fixed magnitude of the event angular velocity [deg/s]
-     - 0.0005
-   * - ``erf.wind_direction_control.geostrophic_proportional_gain``
-     - dimensionless fraction of the latched error applied to the geostrophic direction
-     - 1
-   * - ``erf.wind_direction_control.post_event_settling_time``
-     - time after event completion before another event may start [s]
-     - 600
    * - ``erf.wind_direction_control.diagnostics_file``
      - controller CSV time-series path
      - wind_direction_control.csv
 
-The CSV records every scheduled measurement, phase, latched command,
-committed and midpoint geostrophic directions, remaining flow and
-geostrophic corrections, and settling time.  The controller phases are
-``waiting``, ``idle``, ``rotating``, and ``settling``.  It remains armed
-indefinitely, but the rotation source is zero outside ``rotating``.  The
-coupled episode state is preserved in native checkpoints.  Checkpoints from
-older controller formulations are intentionally rejected because their state
-cannot be mapped unambiguously.  The obsolete ``geostrophic_gain``,
-``tolerance_off``, and ``synthetic_rotation_gain`` inputs are also rejected.
+The CSV records both measurements, the wrapped target error, commanded
+``omega_3``, constant geostrophic magnitude, reconstructed geostrophic vector,
+and generated forcing.  Diagnostic frequency does not change controller
+evaluation frequency.  No controller state is stored in checkpoints; all
+coefficients are reconstructed from the restarted flow before its first
+advance.  Checkpoint records written by older controller versions are ignored.
+
+Event-controller inputs such as ``start_time``, ``check_interval``,
+``tolerance_on``, ``synthetic_rotation_rate``,
+``geostrophic_proportional_gain``, ``post_event_settling_time``,
+``ramp_enabled``, and ``ramp_duration`` are rejected rather than silently
+reinterpreted.
 
 For low-transient initialization, the initial sounding and
 ``erf.abl_geo_wind`` may be constructed from the constant-eddy-viscosity
