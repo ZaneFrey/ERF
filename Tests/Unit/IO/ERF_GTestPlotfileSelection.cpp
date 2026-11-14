@@ -460,6 +460,8 @@ TEST(Plotfile3DSelection, OptionalStorageGroupsAreExplicit)
     auto caps = make_capabilities(MoistureType::None);
     EXPECT_FALSE(erf_plotfile::plot3d_fixed_variable_available("u_t_avg", caps));
     EXPECT_FALSE(erf_plotfile::plot3d_fixed_variable_available("u_mean", caps));
+    EXPECT_FALSE(erf_plotfile::plot3d_fixed_variable_available("uv_mean", caps));
+    EXPECT_FALSE(erf_plotfile::plot3d_fixed_variable_available("uv_fluct", caps));
     EXPECT_FALSE(erf_plotfile::plot3d_fixed_variable_available("wtheta_fluct", caps));
     EXPECT_FALSE(erf_plotfile::plot3d_fixed_variable_available("tke_resolved", caps));
     EXPECT_FALSE(erf_plotfile::plot3d_fixed_variable_available("qsrc_sw", caps));
@@ -475,6 +477,8 @@ TEST(Plotfile3DSelection, OptionalStorageGroupsAreExplicit)
     caps.wall_distance_storage = true;
     EXPECT_TRUE(erf_plotfile::plot3d_fixed_variable_available("u_t_avg", caps));
     EXPECT_TRUE(erf_plotfile::plot3d_fixed_variable_available("u_mean", caps));
+    EXPECT_TRUE(erf_plotfile::plot3d_fixed_variable_available("uv_mean", caps));
+    EXPECT_TRUE(erf_plotfile::plot3d_fixed_variable_available("uv_fluct", caps));
     EXPECT_TRUE(erf_plotfile::plot3d_fixed_variable_available("wtheta_fluct", caps));
     EXPECT_TRUE(erf_plotfile::plot3d_fixed_variable_available("tke_resolved", caps));
     EXPECT_TRUE(erf_plotfile::plot3d_fixed_variable_available("qsrc_lw", caps));
@@ -560,4 +564,8 @@ TEST(Plotfile3DSelection, IntervalMeansResetOncePerCompleted3DBatch)
         {"density", "u"}));
     EXPECT_TRUE(erf_plotfile::plot3d_selection_has_interval_mean_diagnostic(
         {"density", "u_mean"}));
+    EXPECT_TRUE(erf_plotfile::plot3d_selection_has_interval_mean_diagnostic(
+        {"density", "uv_mean"}));
+    EXPECT_TRUE(erf_plotfile::plot3d_selection_has_interval_mean_diagnostic(
+        {"density", "uv_fluct"}));
 }

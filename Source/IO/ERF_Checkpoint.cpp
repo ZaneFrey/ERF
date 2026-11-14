@@ -16,6 +16,7 @@
 #include "ERF_ReadFromERFBdy.H"
 #include "ERF_Provenance.H"
 #include "ERF_IntervalMeansCheckpoint.H"
+#include "ERF_IntervalMeans.H"
 #include "ERF_CheckpointSurfaceTemperature.H"
 #include "ERF_SBMStateManager.H"
 #include "ERF_SBMRestart.H"
@@ -365,8 +366,9 @@ ERF::WriteCheckpointFile () const
             FileOpenFailed(metadata_name);
         }
         metadata.precision(17);
-        metadata << "ERF interval means checkpoint v1\n";
-        metadata << finest_level + 1 << " " << 10 << "\n";
+        metadata << "ERF interval means checkpoint v2\n";
+        metadata << finest_level + 1 << " "
+                 << erf_interval_means::NumIntervalMoments << "\n";
         for (int lev = 0; lev <= finest_level; ++lev) {
             metadata << lev << " " << t_mean_cnt[lev] << " "
                      << mean_vars_time_reset_done << "\n";
@@ -474,6 +476,8 @@ ERF::WriteCheckpointFile () const
 
         if (solverChoice.compute_mean_vars) {
             AMREX_ALWAYS_ASSERT(interval_means[lev] != nullptr);
+            AMREX_ALWAYS_ASSERT(interval_means[lev]->nComp() ==
+                                erf_interval_means::NumIntervalMoments);
             VisMF::Write(*interval_means[lev],
                          MultiFabFileFullPrefix(lev, checkpointname, "Level_", "IntervalMeans"));
         }
@@ -1111,24 +1115,41 @@ ERF::ReadCheckpointFile ()
                       "': " + metadata_error);
             }
             const std::string validation_error = erf_interval_means::validate_metadata(
-                parsed_metadata, finest_level + 1, 10, grids);
+                parsed_metadata, finest_level + 1,
+                parsed_metadata.version == 1
+                    ? erf_interval_means::LegacyNumIntervalMoments
+                    : erf_interval_means::NumIntervalMoments,
+                grids);
             if (!validation_error.empty()) {
                 Abort(validation_error + " in '" + metadata_name + "'");
             }
 
             mean_vars_time_reset_done = erf_interval_means::global_reset_done(parsed_metadata);
-            for (int lev = 0; lev <= finest_level; ++lev) {
-                const auto& level_metadata = parsed_metadata.level[lev];
-
-                const std::string mf_name =
-                    MultiFabFileFullPrefix(lev, restart_chkfile, "Level_", "IntervalMeans");
-                if (!amrex::FileExists(mf_name + "_H")) {
-                    Abort("Interval-mean metadata exists but data is missing for level " +
-                          std::to_string(lev));
+            if (erf_interval_means::restart_resets_window(parsed_metadata)) {
+                for (int lev = 0; lev <= finest_level; ++lev) {
+                    AMREX_ALWAYS_ASSERT(interval_means[lev] != nullptr);
+                    interval_means[lev]->setVal(zero);
+                    t_mean_cnt[lev] = 0.0;
                 }
-                AMREX_ALWAYS_ASSERT(interval_means[lev] != nullptr);
-                VisMF::Read(*interval_means[lev], mf_name);
-                t_mean_cnt[lev] = level_metadata.accumulation_count;
+                if (ParallelDescriptor::IOProcessor()) {
+                    amrex::Print()
+                        << "WARNING: interval-mean checkpoint v1 predates the uv moment; "
+                           "the complete interval-statistics window starts empty.\n";
+                }
+            } else {
+                for (int lev = 0; lev <= finest_level; ++lev) {
+                    const auto& level_metadata = parsed_metadata.level[lev];
+
+                    const std::string mf_name =
+                        MultiFabFileFullPrefix(lev, restart_chkfile, "Level_", "IntervalMeans");
+                    if (!amrex::FileExists(mf_name + "_H")) {
+                        Abort("Interval-mean metadata exists but data is missing for level " +
+                              std::to_string(lev));
+                    }
+                    AMREX_ALWAYS_ASSERT(interval_means[lev] != nullptr);
+                    VisMF::Read(*interval_means[lev], mf_name);
+                    t_mean_cnt[lev] = level_metadata.accumulation_count;
+                }
             }
         }
     }

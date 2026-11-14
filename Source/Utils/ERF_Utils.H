@@ -288,7 +288,7 @@ Time_Avg_Vel_atCC (double dt,
  * Accumulate time-weighted cell-centered velocity/theta first and second moments.
  * @param[in] dt accumulation interval
  * @param[in,out] t_mean_cnt accumulated time
- * @param[in,out] interval_means ten-component moment storage
+ * @param[in,out] interval_means moment storage described by ERF_IntervalMeans.H
  * @param[in] xvel x-face velocity
  * @param[in] yvel y-face velocity
  * @param[in] zvel z-face velocity

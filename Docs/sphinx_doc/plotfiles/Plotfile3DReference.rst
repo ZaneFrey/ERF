@@ -256,6 +256,10 @@ The default subvolume inventory is documented on :ref:`sec:Plotfiles`.
 |                             | w times theta    |
 |                             | [K m/s]          |
 +-----------------------------+------------------+
+| **uv_mean**                 | interval mean of |
+|                             | u times v        |
+|                             | [m^2/s^2]        |
++-----------------------------+------------------+
 | **uu_fluct**                | resolved u       |
 |                             | variance         |
 |                             | [m^2/s^2]        |
@@ -279,6 +283,10 @@ The default subvolume inventory is documented on :ref:`sec:Plotfiles`.
 | **wtheta_fluct**            | resolved w-theta |
 |                             | covariance       |
 |                             | [K m/s]          |
++-----------------------------+------------------+
+| **uv_fluct**                | resolved u-v     |
+|                             | covariance       |
+|                             | [m^2/s^2]        |
 +-----------------------------+------------------+
 | **tke_resolved**            | resolved TKE     |
 |                             | [m^2/s^2]        |
@@ -967,8 +975,14 @@ every AMR level in the plotfile:
   moments, all ``*_fluct`` resolved variances/covariances, and ``tke_resolved`` require
   ``erf.compute_mean_vars = true``. For example,
   ``uw_fluct = uw_mean - u_mean*w_mean`` and
+  ``uv_fluct = uv_mean - u_mean*v_mean`` and
   ``tke_resolved = 0.5*(uu_fluct + vv_fluct + ww_fluct)``. These fields are also zero
   before the first sample is accumulated.
+
+  New checkpoints preserve all eleven interval moments across restart. When
+  restarting from the older ten-component interval-statistics schema, ERF
+  warns and starts the complete interval-statistics window empty so that
+  ``uv_mean``, ``u_mean``, and ``v_mean`` always cover the same samples.
 
   Note that the accumulator for a given level is rebuilt when that level is
   regridded, so a regrid restarts the averaging window on the regridded level

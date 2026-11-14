@@ -4,6 +4,7 @@
 #include "ERF.H"
 #include "ERF_Constants.H"
 #include "ERF_EpochTime.H"
+#include "ERF_IntervalMeans.H"
 #include "ERF_NCPlotFile.H"
 #include "ERF_PlotfileSelection.H"
 #include "ERF_SrcHeaders.H"
@@ -1236,9 +1237,12 @@ ERF::FillPlot3DVars (int lev,
 
         static constexpr const char* mean_names[] = {
             "u_mean", "v_mean", "w_mean", "theta_mean",
-            "uu_mean", "vv_mean", "ww_mean", "uw_mean", "vw_mean", "wtheta_mean"
+            "uu_mean", "vv_mean", "ww_mean", "uw_mean", "vw_mean", "wtheta_mean", "uv_mean"
         };
-        for (int source_comp = 0; source_comp < 10; ++source_comp) {
+        static_assert(sizeof(mean_names) / sizeof(mean_names[0]) ==
+                      erf_interval_means::NumIntervalMoments);
+        for (int source_comp = 0;
+             source_comp < erf_interval_means::NumIntervalMoments; ++source_comp) {
             if (containerHasElement(plot_var_names, mean_names[source_comp])) {
                 copy_interval_mean(source_comp);
             }
@@ -1268,12 +1272,20 @@ ERF::FillPlot3DVars (int lev,
             }
         };
 
-        if (containerHasElement(plot_var_names, "uu_fluct")) copy_fluctuation(4, 0, 0);
-        if (containerHasElement(plot_var_names, "vv_fluct")) copy_fluctuation(5, 1, 1);
-        if (containerHasElement(plot_var_names, "ww_fluct")) copy_fluctuation(6, 2, 2);
-        if (containerHasElement(plot_var_names, "uw_fluct")) copy_fluctuation(7, 0, 2);
-        if (containerHasElement(plot_var_names, "vw_fluct")) copy_fluctuation(8, 1, 2);
-        if (containerHasElement(plot_var_names, "wtheta_fluct")) copy_fluctuation(9, 2, 3);
+        if (containerHasElement(plot_var_names, "uu_fluct"))
+            copy_fluctuation(erf_interval_means::UU, erf_interval_means::U, erf_interval_means::U);
+        if (containerHasElement(plot_var_names, "vv_fluct"))
+            copy_fluctuation(erf_interval_means::VV, erf_interval_means::V, erf_interval_means::V);
+        if (containerHasElement(plot_var_names, "ww_fluct"))
+            copy_fluctuation(erf_interval_means::WW, erf_interval_means::W, erf_interval_means::W);
+        if (containerHasElement(plot_var_names, "uw_fluct"))
+            copy_fluctuation(erf_interval_means::UW, erf_interval_means::U, erf_interval_means::W);
+        if (containerHasElement(plot_var_names, "vw_fluct"))
+            copy_fluctuation(erf_interval_means::VW, erf_interval_means::V, erf_interval_means::W);
+        if (containerHasElement(plot_var_names, "wtheta_fluct"))
+            copy_fluctuation(erf_interval_means::WTheta, erf_interval_means::W, erf_interval_means::Theta);
+        if (containerHasElement(plot_var_names, "uv_fluct"))
+            copy_fluctuation(erf_interval_means::UV, erf_interval_means::U, erf_interval_means::V);
 
         if (containerHasElement(plot_var_names, "tke_resolved")) {
             const int dest_comp = mf_comp++;
@@ -1288,12 +1300,12 @@ ERF::FillPlot3DVars (int lev,
                     const Array4<Real>& out = mf_dst.array(mfi);
                     const Array4<const Real>& moments = interval_means[lev]->const_array(mfi);
                     ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept {
-                        const Real u_mean = moments(i,j,k,0) * inv_norm;
-                        const Real v_mean = moments(i,j,k,1) * inv_norm;
-                        const Real w_mean = moments(i,j,k,2) * inv_norm;
-                        const Real uu_fluct = moments(i,j,k,4) * inv_norm - u_mean * u_mean;
-                        const Real vv_fluct = moments(i,j,k,5) * inv_norm - v_mean * v_mean;
-                        const Real ww_fluct = moments(i,j,k,6) * inv_norm - w_mean * w_mean;
+                        const Real u_mean = moments(i,j,k,erf_interval_means::U) * inv_norm;
+                        const Real v_mean = moments(i,j,k,erf_interval_means::V) * inv_norm;
+                        const Real w_mean = moments(i,j,k,erf_interval_means::W) * inv_norm;
+                        const Real uu_fluct = moments(i,j,k,erf_interval_means::UU) * inv_norm - u_mean * u_mean;
+                        const Real vv_fluct = moments(i,j,k,erf_interval_means::VV) * inv_norm - v_mean * v_mean;
+                        const Real ww_fluct = moments(i,j,k,erf_interval_means::WW) * inv_norm - w_mean * w_mean;
                         out(i,j,k,dest_comp) = Real(0.5) * (uu_fluct + vv_fluct + ww_fluct);
                     });
                 }

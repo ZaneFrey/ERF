@@ -3,21 +3,27 @@
 
 #include <AMReX_Box.H>
 #include <AMReX_BoxArray.H>
+#include <AMReX_DistributionMapping.H>
+#include <AMReX_MultiFab.H>
 
 #include <gtest/gtest.h>
 
 #include "ERF_IntervalMeansCheckpoint.H"
+#include "ERF_IndexDefines.H"
+#include "ERF_Utils.H"
 
 namespace {
 
 std::string
 make_metadata (const amrex::Vector<amrex::BoxArray>& boxes,
                const amrex::Vector<double>& counts,
-               const amrex::Vector<int>& reset_flags)
+               const amrex::Vector<int>& reset_flags,
+               int version = 2,
+               int components = erf_interval_means::NumIntervalMoments)
 {
     std::ostringstream output;
-    output << "ERF interval means checkpoint v1\n";
-    output << boxes.size() << " 10\n";
+    output << "ERF interval means checkpoint v" << version << "\n";
+    output << boxes.size() << " " << components << "\n";
     for (int lev = 0; lev < static_cast<int>(boxes.size()); ++lev) {
         output << lev << " " << counts[lev] << " " << reset_flags[lev] << "\n";
         boxes[lev].writeOn(output);
@@ -44,7 +50,7 @@ make_boxes ()
 
 } // namespace
 
-TEST(IntervalMeansRestart, ParsesVersionCountsBoxesAndProcessorMaps)
+TEST(IntervalMeansRestart, ParsesCurrentVersionCountsBoxesAndProcessorMaps)
 {
     const auto boxes = make_boxes();
     const std::string text = make_metadata(boxes, {3.5, 8.25}, {0, 1});
@@ -52,14 +58,17 @@ TEST(IntervalMeansRestart, ParsesVersionCountsBoxesAndProcessorMaps)
     std::string error;
     std::istringstream input(text);
     ASSERT_TRUE(erf_interval_means::parse_metadata(input, metadata, error)) << error;
+    EXPECT_EQ(metadata.version, 2);
     EXPECT_EQ(metadata.levels, 2);
-    EXPECT_EQ(metadata.components, 10);
+    EXPECT_EQ(metadata.components, erf_interval_means::NumIntervalMoments);
     EXPECT_DOUBLE_EQ(metadata.level[0].accumulation_count, 3.5);
     EXPECT_DOUBLE_EQ(metadata.level[1].accumulation_count, 8.25);
     EXPECT_EQ(metadata.level[0].processor_map[0], 0);
     EXPECT_EQ(metadata.level[1].processor_map[0], 1);
     EXPECT_EQ(erf_interval_means::global_reset_done(metadata), 1);
-    EXPECT_TRUE(erf_interval_means::validate_metadata(metadata, 2, 10, boxes).empty());
+    EXPECT_TRUE(erf_interval_means::validate_metadata(
+        metadata, 2, erf_interval_means::NumIntervalMoments, boxes).empty());
+    EXPECT_FALSE(erf_interval_means::restart_resets_window(metadata));
 }
 
 TEST(IntervalMeansRestart, BoxArrayMismatchIsRejectedButProcessorMapIsNotAConstraint)
@@ -74,15 +83,35 @@ TEST(IntervalMeansRestart, BoxArrayMismatchIsRejectedButProcessorMapIsNotAConstr
     changed_boxes[0] = amrex::BoxArray(
         amrex::Box(amrex::IntVect(0, 0, 0), amrex::IntVect(4, 3, 1)));
     const auto mismatch = erf_interval_means::validate_metadata(
-        metadata, 2, 10, changed_boxes);
+        metadata, 2, erf_interval_means::NumIntervalMoments, changed_boxes);
     EXPECT_NE(mismatch.find("BoxArray"), std::string::npos);
-    EXPECT_TRUE(erf_interval_means::validate_metadata(metadata, 2, 10, boxes).empty());
+    EXPECT_TRUE(erf_interval_means::validate_metadata(
+        metadata, 2, erf_interval_means::NumIntervalMoments, boxes).empty());
+}
+
+TEST(IntervalMeansRestart, AcceptsV1MetadataAndRequiresAnEmptyMigratedWindow)
+{
+    const auto boxes = make_boxes();
+    erf_interval_means::Metadata metadata;
+    std::string error;
+    std::istringstream input(make_metadata(
+        boxes, {3.5, 8.25}, {0, 1}, 1,
+        erf_interval_means::LegacyNumIntervalMoments));
+    ASSERT_TRUE(erf_interval_means::parse_metadata(input, metadata, error)) << error;
+    EXPECT_EQ(metadata.version, 1);
+    EXPECT_EQ(metadata.components, erf_interval_means::LegacyNumIntervalMoments);
+    EXPECT_TRUE(erf_interval_means::validate_metadata(
+        metadata, 2, erf_interval_means::LegacyNumIntervalMoments, boxes).empty());
+    EXPECT_TRUE(erf_interval_means::restart_resets_window(metadata));
+    EXPECT_EQ(erf_interval_means::global_reset_done(metadata), 1);
 }
 
 TEST(IntervalMeansRestart, RejectsMalformedAndTruncatedHeaders)
 {
     for (const std::string& text : {
              std::string("ERF interval means checkpoint v0\n1 10\n"),
+             std::string("ERF interval means checkpoint v1\n1 11\n"),
+             std::string("ERF interval means checkpoint v2\n1 10\n"),
              std::string("ERF interval means checkpoint v1\n1 10\n0 1.0 0\n"),
              std::string("ERF interval means checkpoint v1\n1 10\n0 -1.0 0\n")}) {
         erf_interval_means::Metadata metadata;
@@ -91,6 +120,46 @@ TEST(IntervalMeansRestart, RejectsMalformedAndTruncatedHeaders)
         EXPECT_FALSE(erf_interval_means::parse_metadata(input, metadata, error));
         EXPECT_FALSE(error.empty());
     }
+}
+
+TEST(IntervalMeansAccumulation, TimeWeightsHorizontalVelocityCovariance)
+{
+    using namespace amrex;
+
+    const Box cell_box(IntVect(0, 0, 0), IntVect(0, 0, 0));
+    const BoxArray cells(cell_box);
+    const DistributionMapping dm(cells);
+    MultiFab xvel(convert(cells, IntVect(1, 0, 0)), dm, 1, 0);
+    MultiFab yvel(convert(cells, IntVect(0, 1, 0)), dm, 1, 0);
+    MultiFab zvel(convert(cells, IntVect(0, 0, 1)), dm, 1, 0);
+    MultiFab cons(cells, dm, RhoTheta_comp + 1, 0);
+    MultiFab moments(cells, dm, erf_interval_means::NumIntervalMoments, 0);
+
+    cons.setVal(Real(0.0));
+    cons.setVal(Real(2.0), Rho_comp, 1, 0);
+    cons.setVal(Real(600.0), RhoTheta_comp, 1, 0);
+    zvel.setVal(Real(0.0));
+    moments.setVal(Real(0.0));
+
+    double accumulated_time = 0.0;
+    xvel.setVal(Real(2.0));
+    yvel.setVal(Real(3.0));
+    Accumulate_Interval_Means(
+        1.0, accumulated_time, &moments, xvel, yvel, zvel, cons);
+
+    xvel.setVal(Real(4.0));
+    yvel.setVal(Real(1.0));
+    Accumulate_Interval_Means(
+        3.0, accumulated_time, &moments, xvel, yvel, zvel, cons);
+
+    EXPECT_DOUBLE_EQ(accumulated_time, 4.0);
+    const Real u_mean = moments.sum(erf_interval_means::U) / accumulated_time;
+    const Real v_mean = moments.sum(erf_interval_means::V) / accumulated_time;
+    const Real uv_mean = moments.sum(erf_interval_means::UV) / accumulated_time;
+    EXPECT_DOUBLE_EQ(u_mean, Real(3.5));
+    EXPECT_DOUBLE_EQ(v_mean, Real(1.5));
+    EXPECT_DOUBLE_EQ(uv_mean, Real(4.5));
+    EXPECT_DOUBLE_EQ(uv_mean - u_mean * v_mean, Real(-0.75));
 }
 
 TEST(IntervalMeansRestart, LegacyCheckpointFallbackPreservesTimeResetSemantics)

@@ -1137,7 +1137,8 @@ List of Parameters
 
 When ``erf.compute_mean_vars = true``, ERF makes the interval fields
 ``u_mean``, ``v_mean``, ``w_mean``, ``theta_mean``, the corresponding second
-moments, resolved variances/covariances, and resolved ``tke_resolved`` available to
+moments (including ``uv_mean``), resolved variances/covariances (including
+``uv_fluct``), and resolved ``tke_resolved`` available to
 ``erf.plot_vars_1`` and ``erf.plot_vars_2``. See
 :ref:`sec:Plotfile3DReference` for definitions. In ``time`` reset mode, the
 accumulator is reset once, at the first step whose start time is at or beyond
@@ -1146,6 +1147,11 @@ In ``plotfile`` mode, a reset occurs only after all 3-D streams due at the
 same output event have been written and at least one emitted stream contains
 an interval diagnostic; a density-only stream does not close the shared
 averaging window.
+The horizontal covariance is defined using the same time window as its first
+moments: ``uv_fluct = uv_mean - u_mean*v_mean``. Checkpoints written with the
+older ten-component interval-statistics schema remain restartable, but the
+complete interval-statistics window starts empty after such a restart so that
+all moments remain synchronized.
 In either mode, regridding a level rebuilds that level's accumulator, so the
 averaging window restarts on the regridded level while the other levels keep
 accumulating. A plotfile written shortly after a regrid can therefore mix

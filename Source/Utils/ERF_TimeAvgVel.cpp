@@ -1,5 +1,6 @@
 #include <ERF_Utils.H>
 #include <ERF_IndexDefines.H>
+#include <ERF_IntervalMeans.H>
 
 using namespace amrex;
 
@@ -82,16 +83,17 @@ Accumulate_Interval_Means (double dt_d,
             const Real w_cc = Real(0.5) * (w(i,j,k) + w(i,j,k+1));
             const Real theta = state(i,j,k,RhoTheta_comp) / state(i,j,k,Rho_comp);
 
-            mean(i,j,k,0) += u_cc * dt;
-            mean(i,j,k,1) += v_cc * dt;
-            mean(i,j,k,2) += w_cc * dt;
-            mean(i,j,k,3) += theta * dt;
-            mean(i,j,k,4) += u_cc * u_cc * dt;
-            mean(i,j,k,5) += v_cc * v_cc * dt;
-            mean(i,j,k,6) += w_cc * w_cc * dt;
-            mean(i,j,k,7) += u_cc * w_cc * dt;
-            mean(i,j,k,8) += v_cc * w_cc * dt;
-            mean(i,j,k,9) += w_cc * theta * dt;
+            mean(i,j,k,erf_interval_means::U) += u_cc * dt;
+            mean(i,j,k,erf_interval_means::V) += v_cc * dt;
+            mean(i,j,k,erf_interval_means::W) += w_cc * dt;
+            mean(i,j,k,erf_interval_means::Theta) += theta * dt;
+            mean(i,j,k,erf_interval_means::UU) += u_cc * u_cc * dt;
+            mean(i,j,k,erf_interval_means::VV) += v_cc * v_cc * dt;
+            mean(i,j,k,erf_interval_means::WW) += w_cc * w_cc * dt;
+            mean(i,j,k,erf_interval_means::UW) += u_cc * w_cc * dt;
+            mean(i,j,k,erf_interval_means::VW) += v_cc * w_cc * dt;
+            mean(i,j,k,erf_interval_means::WTheta) += w_cc * theta * dt;
+            mean(i,j,k,erf_interval_means::UV) += u_cc * v_cc * dt;
         });
     }
 }

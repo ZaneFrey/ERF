@@ -12,6 +12,8 @@
 #include <AMReX_IntVect.H>
 #include <AMReX_Vector.H>
 
+#include "ERF_IntervalMeans.H"
+
 namespace erf_interval_means {
 
 namespace detail {
@@ -76,6 +78,7 @@ struct LevelMetadata
 
 struct Metadata
 {
+    int version{0};
     int levels{0};
     int components{0};
     amrex::Vector<LevelMetadata> level;
@@ -85,13 +88,28 @@ inline bool
 parse_metadata (std::istream& input, Metadata& result, std::string& error)
 {
     std::string title;
-    if (!std::getline(input, title) || title != "ERF interval means checkpoint v1") {
-        error = "expected ERF interval means checkpoint v1 title";
+    if (!std::getline(input, title)) {
+        error = "missing interval-mean checkpoint title";
+        return false;
+    }
+    if (title == "ERF interval means checkpoint v1") {
+        result.version = 1;
+    } else if (title == "ERF interval means checkpoint v2") {
+        result.version = 2;
+    } else {
+        error = "unsupported interval-mean checkpoint title '" + title + "'";
         return false;
     }
     if (!(input >> result.levels >> result.components) || result.levels < 0 ||
         result.components < 0) {
         error = "missing or invalid interval-mean level/component counts";
+        return false;
+    }
+    const int schema_components = result.version == 1
+        ? LegacyNumIntervalMoments : NumIntervalMoments;
+    if (result.components != schema_components) {
+        error = "interval-mean checkpoint v" + std::to_string(result.version) +
+                " requires " + std::to_string(schema_components) + " components";
         return false;
     }
 
@@ -168,6 +186,12 @@ global_reset_done (const Metadata& metadata)
         if (record.reset_done != 0) return 1;
     }
     return 0;
+}
+
+inline bool
+restart_resets_window (const Metadata& metadata) noexcept
+{
+    return metadata.version == 1;
 }
 
 inline int
