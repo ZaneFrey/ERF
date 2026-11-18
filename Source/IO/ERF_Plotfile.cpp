@@ -280,7 +280,8 @@ ERF::PlotFileVarNames (Vector<std::string> plot_var_names )
     Vector<std::string> names;
 
     for (const auto& name : plot_var_names) {
-        if (erf_plotfile::plot3d_pert_pres_face_direction(name) < 0) {
+        if (erf_plotfile::plot3d_pert_pres_face_direction(name) < 0 &&
+            erf_plotfile::plot3d_sgs_energy_flux_face_direction(name) < 0) {
             names.push_back(name);
         }
     }
@@ -2160,7 +2161,16 @@ ERF::Write3DPlotFile (int which, PlotFileType plotfile_type, Vector<std::string>
         pert_pres_face_names.begin(), pert_pres_face_names.end(),
         [] (const auto& names) { return !names.empty(); });
 
-    const bool has_interval_faces = has_pert_pres_faces;
+    Array<Vector<std::string>, AMREX_SPACEDIM> sgs_energy_flux_face_names;
+    for (const auto& name : plot_var_names) {
+        const int dir = erf_plotfile::plot3d_sgs_energy_flux_face_direction(name);
+        if (dir >= 0) sgs_energy_flux_face_names[dir].push_back(name);
+    }
+    const bool has_sgs_energy_flux_faces = std::any_of(
+        sgs_energy_flux_face_names.begin(), sgs_energy_flux_face_names.end(),
+        [] (const auto& names) { return !names.empty(); });
+    const bool has_interval_faces =
+        has_pert_pres_faces || has_sgs_energy_flux_faces;
 
     if (ncomp_mf == 0 && !has_interval_faces) return false;
     if (has_interval_faces && plotfile_type != PlotFileType::Amrex) {
@@ -2339,8 +2349,45 @@ ERF::Write3DPlotFile (int which, PlotFileType plotfile_type, Vector<std::string>
         }
     };
 
+    auto write_sgs_energy_flux_face_plotfiles = [&]() {
+        static constexpr const char* suffix[] = {
+            "_sgs_energy_flux_xface", "_sgs_energy_flux_yface",
+            "_sgs_energy_flux_zface"};
+        for (int dir = 0; dir < AMREX_SPACEDIM; ++dir) {
+            const auto& names = sgs_energy_flux_face_names[dir];
+            if (names.empty()) continue;
+
+            Vector<MultiFab> face_output(finest_level + 1);
+            for (int lev = 0; lev <= finest_level; ++lev) {
+                AMREX_ALWAYS_ASSERT(interval_sgs_energy_flux_face[lev][dir] != nullptr);
+                face_output[lev].define(
+                    interval_sgs_energy_flux_face[lev][dir]->boxArray(),
+                    dmap[lev], static_cast<int>(names.size()), 0);
+                face_output[lev].setVal(Real(0.0));
+
+                const Real norm = static_cast<Real>(t_mean_cnt[lev]);
+                if (norm <= Real(0.0)) continue;
+                const Real inv_norm = Real(1.0) / norm;
+                for (int n = 0; n < static_cast<int>(names.size()); ++n) {
+                    MultiFab::Copy(
+                        face_output[lev], *interval_sgs_energy_flux_face[lev][dir],
+                        erf_interval_means::SGSEnergyFlux, n, 1, 0);
+                    face_output[lev].mult(inv_norm, n, 1, 0);
+                }
+            }
+
+            const std::string filename = plotfilename + suffix[dir];
+            Print() << "Writing face-centered interval diagnostics "
+                    << filename << "\n";
+            WriteMultiLevelPlotfile(filename, finest_level + 1,
+                                    GetVecOfConstPtrs(face_output), names,
+                                    geom, tnew, istep, ref_ratio);
+        }
+    };
+
     if (ncomp_mf == 0) {
         write_pert_pres_face_plotfiles();
+        write_sgs_energy_flux_face_plotfiles();
         return true;
     }
 
@@ -2400,6 +2447,7 @@ ERF::Write3DPlotFile (int which, PlotFileType plotfile_type, Vector<std::string>
                                         Geom(), tnew, istep, refRatio());
             }
             write_pert_pres_face_plotfiles();
+            write_sgs_energy_flux_face_plotfiles();
 
             if (m_plot_face_terrain_blanking &&
                 (solverChoice.terrain_type == TerrainType::ImmersedForcing ||
@@ -2562,6 +2610,7 @@ ERF::Write3DPlotFile (int which, PlotFileType plotfile_type, Vector<std::string>
             } // ref_ratio test
 
             write_pert_pres_face_plotfiles();
+            write_sgs_energy_flux_face_plotfiles();
 
             writeJobInfo(plotfilename, erf_provenance::ArtifactType::Plotfile3D,
                          istep[0], t_new[0]);
