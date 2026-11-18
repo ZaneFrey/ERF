@@ -364,6 +364,9 @@ ERF::BuildPlot3DScratch (const Vector<std::string>& plot_var_names, Plot3DScratc
         containerHasElement(plot_var_names, "magvel"        ) ||
         containerHasElement(plot_var_names, "helicity"      ) ||
         containerHasElement(plot_var_names, "local_helicity") ||
+        containerHasElement(plot_var_names, "uiuiu"        ) ||
+        containerHasElement(plot_var_names, "uiuiv"        ) ||
+        containerHasElement(plot_var_names, "uiuiw"        ) ||
         containerHasElement(plot_var_names, "vort_stretching") ||
         containerHasElement(plot_var_names, "vorticity_x"   ) ||
         containerHasElement(plot_var_names, "vorticity_y"   ) ||
@@ -1214,6 +1217,30 @@ ERF::FillPlot3DVars (int lev,
         if (containerHasElement(plot_var_names, "umag_t_avg")) copy_time_average(3);
     }
 
+    static constexpr const char* instantaneous_triple_names[] = {
+        "uiuiu", "uiuiv", "uiuiw"};
+    for (int component = 0; component < AMREX_SPACEDIM; ++component) {
+        if (!containerHasElement(
+                plot_var_names, instantaneous_triple_names[component])) continue;
+        const int dest_comp = mf_comp++;
+#ifdef _OPENMP
+#pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
+#endif
+        for (MFIter mfi(mf_dst, TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+            const Box& bx = mfi.tilebox();
+            const auto out = mf_dst.array(mfi);
+            const auto velocity = mf_cc_vel[lev].const_array(mfi);
+            ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept {
+                const Real u = velocity(i,j,k,0);
+                const Real v = velocity(i,j,k,1);
+                const Real w = velocity(i,j,k,2);
+                const Real speed_sq = u*u + v*v + w*w;
+                const Real uj = component == 0 ? u : (component == 1 ? v : w);
+                out(i,j,k,dest_comp) = speed_sq * uj;
+            });
+        }
+    }
+
     if (solverChoice.compute_mean_vars) {
         AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
             interval_means[lev] != nullptr,
@@ -1375,6 +1402,76 @@ ERF::FillPlot3DVars (int lev,
                         out(i,j,k,dest_comp) = Real(0.5) * (uu_fluct + vv_fluct + ww_fluct);
                     });
                 }
+            }
+        }
+
+        static constexpr const char* triple_mean_names[] = {
+            "uiuiu_mean", "uiuiv_mean", "uiuiw_mean"};
+        static constexpr const char* triple_fluct_names[] = {
+            "uiuiu_fluct", "uiuiv_fluct", "uiuiw_fluct"};
+        static constexpr int first_components[] = {
+            erf_interval_means::U,
+            erf_interval_means::V,
+            erf_interval_means::W};
+        static constexpr int cross_components[AMREX_SPACEDIM][AMREX_SPACEDIM] = {
+            {erf_interval_means::UU, erf_interval_means::UV, erf_interval_means::UW},
+            {erf_interval_means::UV, erf_interval_means::VV, erf_interval_means::VW},
+            {erf_interval_means::UW, erf_interval_means::VW, erf_interval_means::WW}};
+        for (int component = 0; component < AMREX_SPACEDIM; ++component) {
+            if (!containerHasElement(
+                    plot_var_names, triple_mean_names[component])) continue;
+            AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
+                interval_triple_velocity[lev] != nullptr,
+                "third-order interval plot variables require triple-velocity storage");
+            const int dest_comp = mf_comp++;
+            if (norm <= Real(0.0)) {
+                mf_dst.setVal(Real(0.0), dest_comp, 1, 0);
+            } else {
+                MultiFab::Copy(
+                    mf_dst, *interval_triple_velocity[lev], component,
+                    dest_comp, 1, 0);
+                mf_dst.mult(inv_norm, dest_comp, 1, 0);
+            }
+        }
+        for (int component = 0; component < AMREX_SPACEDIM; ++component) {
+            if (!containerHasElement(
+                    plot_var_names, triple_fluct_names[component])) continue;
+            AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
+                interval_triple_velocity[lev] != nullptr,
+                "third-order interval plot variables require triple-velocity storage");
+            const int dest_comp = mf_comp++;
+            if (norm <= Real(0.0)) {
+                mf_dst.setVal(Real(0.0), dest_comp, 1, 0);
+                continue;
+            }
+#ifdef _OPENMP
+#pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
+#endif
+            for (MFIter mfi(mf_dst, TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+                const Box& bx = mfi.tilebox();
+                const auto out = mf_dst.array(mfi);
+                const auto lower = interval_means[lev]->const_array(mfi);
+                const auto third = interval_triple_velocity[lev]->const_array(mfi);
+                const int uj_comp = first_components[component];
+                const int uuj_comp = cross_components[0][component];
+                const int vuj_comp = cross_components[1][component];
+                const int wuj_comp = cross_components[2][component];
+                ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept {
+                    out(i,j,k,dest_comp) =
+                        erf_interval_means::third_velocity_central_from_sums(
+                            third(i,j,k,component),
+                            lower(i,j,k,erf_interval_means::U),
+                            lower(i,j,k,erf_interval_means::V),
+                            lower(i,j,k,erf_interval_means::W),
+                            lower(i,j,k,erf_interval_means::UU),
+                            lower(i,j,k,erf_interval_means::VV),
+                            lower(i,j,k,erf_interval_means::WW),
+                            lower(i,j,k,uj_comp),
+                            lower(i,j,k,uuj_comp),
+                            lower(i,j,k,vuj_comp),
+                            lower(i,j,k,wuj_comp),
+                            inv_norm);
+                });
             }
         }
     }
