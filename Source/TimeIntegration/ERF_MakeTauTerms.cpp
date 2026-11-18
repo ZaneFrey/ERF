@@ -9,6 +9,115 @@
 
 using namespace amrex;
 
+namespace {
+
+struct StrainSnapshot
+{
+    FArrayBox fab11, fab22, fab33, fab12, fab13, fab23;
+    FArrayBox fab21, fab31, fab32;
+    Array4<Real> s11, s22, s33, s12, s13, s23;
+    Array4<Real> s21, s31, s32;
+
+    void save_symmetric (const Box& bxcc, const Box& bxxy,
+                         const Box& bxxz, const Box& bxyz,
+                         const Array4<Real>& in11, const Array4<Real>& in22,
+                         const Array4<Real>& in33, const Array4<Real>& in12,
+                         const Array4<Real>& in13, const Array4<Real>& in23)
+    {
+        fab11.resize(bxcc, 1, The_Async_Arena());
+        fab22.resize(bxcc, 1, The_Async_Arena());
+        fab33.resize(bxcc, 1, The_Async_Arena());
+        fab12.resize(bxxy, 1, The_Async_Arena());
+        fab13.resize(bxxz, 1, The_Async_Arena());
+        fab23.resize(bxyz, 1, The_Async_Arena());
+        s11 = fab11.array(); s22 = fab22.array(); s33 = fab33.array();
+        s12 = fab12.array(); s13 = fab13.array(); s23 = fab23.array();
+        ParallelFor(bxcc, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept {
+            s11(i,j,k) = in11(i,j,k);
+            s22(i,j,k) = in22(i,j,k);
+            s33(i,j,k) = in33(i,j,k);
+        });
+        ParallelFor(bxxy, bxxz, bxyz,
+        [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept {
+            s12(i,j,k) = in12(i,j,k);
+        },
+        [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept {
+            s13(i,j,k) = in13(i,j,k);
+        },
+        [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept {
+            s23(i,j,k) = in23(i,j,k);
+        });
+    }
+
+    void save_transposes (const Box& bxxy, const Box& bxxz, const Box& bxyz,
+                          const Array4<Real>& in21, const Array4<Real>& in31,
+                          const Array4<Real>& in32)
+    {
+        fab21.resize(bxxy, 1, The_Async_Arena());
+        fab31.resize(bxxz, 1, The_Async_Arena());
+        fab32.resize(bxyz, 1, The_Async_Arena());
+        s21 = fab21.array(); s31 = fab31.array(); s32 = fab32.array();
+        ParallelFor(bxxy, bxxz, bxyz,
+        [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept {
+            s21(i,j,k) = in21(i,j,k);
+        },
+        [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept {
+            s31(i,j,k) = in31(i,j,k);
+        },
+        [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept {
+            s32(i,j,k) = in32(i,j,k);
+        });
+    }
+};
+
+void write_stress_strain_contraction (
+    const Box& bx, const Array4<Real>& out,
+    const Array4<Real>& tau11, const Array4<Real>& tau22,
+    const Array4<Real>& tau33, const Array4<Real>& tau12,
+    const Array4<Real>& tau13, const Array4<Real>& tau23,
+    const StrainSnapshot& strain,
+    const Array4<Real>& tau21 = {}, const Array4<Real>& tau31 = {},
+    const Array4<Real>& tau32 = {})
+{
+    const bool nonsymmetric = static_cast<bool>(tau21);
+    const auto old11 = strain.s11; const auto old22 = strain.s22;
+    const auto old33 = strain.s33; const auto old12 = strain.s12;
+    const auto old13 = strain.s13; const auto old23 = strain.s23;
+    const auto old21 = strain.s21; const auto old31 = strain.s31;
+    const auto old32 = strain.s32;
+    ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept {
+        Real contraction = tau11(i,j,k)*old11(i,j,k)
+                         + tau22(i,j,k)*old22(i,j,k)
+                         + tau33(i,j,k)*old33(i,j,k);
+        if (nonsymmetric) {
+            contraction += Real(0.25) * (
+                tau12(i,j,k)*old12(i,j,k) + tau21(i,j,k)*old21(i,j,k) +
+                tau12(i+1,j,k)*old12(i+1,j,k) + tau21(i+1,j,k)*old21(i+1,j,k) +
+                tau12(i,j+1,k)*old12(i,j+1,k) + tau21(i,j+1,k)*old21(i,j+1,k) +
+                tau12(i+1,j+1,k)*old12(i+1,j+1,k) + tau21(i+1,j+1,k)*old21(i+1,j+1,k) +
+                tau13(i,j,k)*old13(i,j,k) + tau31(i,j,k)*old31(i,j,k) +
+                tau13(i+1,j,k)*old13(i+1,j,k) + tau31(i+1,j,k)*old31(i+1,j,k) +
+                tau13(i,j,k+1)*old13(i,j,k+1) + tau31(i,j,k+1)*old31(i,j,k+1) +
+                tau13(i+1,j,k+1)*old13(i+1,j,k+1) + tau31(i+1,j,k+1)*old31(i+1,j,k+1) +
+                tau23(i,j,k)*old23(i,j,k) + tau32(i,j,k)*old32(i,j,k) +
+                tau23(i,j+1,k)*old23(i,j+1,k) + tau32(i,j+1,k)*old32(i,j+1,k) +
+                tau23(i,j,k+1)*old23(i,j,k+1) + tau32(i,j,k+1)*old32(i,j,k+1) +
+                tau23(i,j+1,k+1)*old23(i,j+1,k+1) + tau32(i,j+1,k+1)*old32(i,j+1,k+1));
+        } else {
+            contraction += Real(0.5) * (
+                tau12(i,j,k)*old12(i,j,k) + tau12(i+1,j,k)*old12(i+1,j,k) +
+                tau12(i,j+1,k)*old12(i,j+1,k) + tau12(i+1,j+1,k)*old12(i+1,j+1,k) +
+                tau13(i,j,k)*old13(i,j,k) + tau13(i+1,j,k)*old13(i+1,j,k) +
+                tau13(i,j,k+1)*old13(i,j,k+1) + tau13(i+1,j,k+1)*old13(i+1,j,k+1) +
+                tau23(i,j,k)*old23(i,j,k) + tau23(i,j+1,k)*old23(i,j+1,k) +
+                tau23(i,j,k+1)*old23(i,j,k+1) + tau23(i,j+1,k+1)*old23(i,j+1,k+1));
+        }
+        out(i,j,k) = contraction;
+    });
+}
+
+} // namespace
+
 void erf_make_tau_terms (int level, int nrk,
                          const Vector<BCRec>& domain_bcs_type_h,
                          const MultiFab& z_phys_nd,
@@ -18,6 +127,7 @@ void erf_make_tau_terms (int level, int nrk,
                          const MultiFab& zvel,
                          Vector<std::unique_ptr<MultiFab>>& Tau_lev,
                          Vector<std::unique_ptr<MultiFab>>& Tau_corr_lev,
+                         MultiFab* stress_strain,
                          MultiFab* SmnSmn,
                          MultiFab* eddyDiffs,
                          const Geometry geom,
@@ -190,6 +300,9 @@ void erf_make_tau_terms (int level, int nrk,
             S12.resize(tbxxy,1,The_Async_Arena()); S13.resize(tbxxz,1,The_Async_Arena()); S23.resize(tbxyz,1,The_Async_Arena());
             Array4<Real> s11 = S11.array();  Array4<Real> s22 = S22.array();  Array4<Real> s33 = S33.array();
             Array4<Real> s12 = S12.array();  Array4<Real> s13 = S13.array();  Array4<Real> s23 = S23.array();
+            StrainSnapshot strain_snapshot;
+            Array4<Real> stress_strain_arr = stress_strain
+                ? stress_strain->array(mfi) : Array4<Real>{};
             Array4<Real> tau11 = Tau_lev[TauType::tau11]->array(mfi); Array4<Real> tau22 = Tau_lev[TauType::tau22]->array(mfi);
             Array4<Real> tau33 = Tau_lev[TauType::tau33]->array(mfi); Array4<Real> tau12 = Tau_lev[TauType::tau12]->array(mfi);
             Array4<Real> tau13 = Tau_lev[TauType::tau13]->array(mfi); Array4<Real> tau23 = Tau_lev[TauType::tau23]->array(mfi);
@@ -232,7 +345,8 @@ void erf_make_tau_terms (int level, int nrk,
             // 2. Call ComputeStrain
             //    - IMPLICIT path: s31_corr and s32_corr are modified in here
             //
-            // 3. Call ComputeSmnSmn, if needed for turbulence model
+            // 3. Retain tile-local strain, if needed for the optional Tau:S
+            //    interval diagnostic, and call ComputeSmnSmn if needed
             //
             // 4. Call ComputeStress
             //    - add expansion rates to terms on diagonal
@@ -242,7 +356,11 @@ void erf_make_tau_terms (int level, int nrk,
             //      from the turbulence model
             //    - IMPLICIT path: s33_corr is modified in here
             //
-            // 5. Copy temp Sij fabs into Tau_lev multifabs
+            // 5. Contract the converted native-location stresses with the
+            //    retained strain and write the cell-centered instantaneous
+            //    Tau:S diagnostic, without recomputing velocity gradients
+            //
+            // 6. Copy temp Sij fabs into Tau_lev multifabs
             //    - stress tensor is symmetric if no terrain and no implicit diffusion
             //    - otherwise, stress tensor is asymmetric
             //
@@ -288,6 +406,14 @@ void erf_make_tau_terms (int level, int nrk,
                                 s13_corr, s23_corr);
                 } // end profile
 
+                if (stress_strain_arr) {
+                    strain_snapshot.save_symmetric(
+                        bxcc, tbxxy, tbxxz, tbxyz,
+                        s11, s22, s33, s12, s13, s23);
+                    strain_snapshot.save_transposes(
+                        tbxxy, tbxxz, tbxyz, s21, s31, s32);
+                }
+
                 if (SmnSmn_a) {
                     ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
                     {
@@ -330,6 +456,12 @@ void erf_make_tau_terms (int level, int nrk,
                                            mf_mx, mf_ux, mf_vx,
                                            mf_my, mf_uy, mf_vy,
                                            s13_corr, s23_corr, s33_corr);
+                }
+
+                if (stress_strain_arr) {
+                    write_stress_strain_contraction(
+                        bx, stress_strain_arr, s11, s22, s33,
+                        s12, s13, s23, strain_snapshot, s21, s31, s32);
                 }
 
                 // Remove halo cells from tau_ii but extend across valid_box bdry
@@ -442,6 +574,14 @@ void erf_make_tau_terms (int level, int nrk,
                                 s13_corr, s23_corr);
                 } // end profile
 
+                if (stress_strain_arr) {
+                    strain_snapshot.save_symmetric(
+                        bxcc, tbxxy, tbxxz, tbxyz,
+                        s11, s22, s33, s12, s13, s23);
+                    strain_snapshot.save_transposes(
+                        tbxxy, tbxxz, tbxyz, s21, s31, s32);
+                }
+
                 if (SmnSmn_a) {
                     ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
                     {
@@ -484,6 +624,12 @@ void erf_make_tau_terms (int level, int nrk,
                                            mf_mx, mf_ux, mf_vx,
                                            mf_my, mf_uy, mf_vy,
                                            s13_corr, s23_corr, s33_corr);
+                }
+
+                if (stress_strain_arr) {
+                    write_stress_strain_contraction(
+                        bx, stress_strain_arr, s11, s22, s33,
+                        s12, s13, s23, strain_snapshot, s21, s31, s32);
                 }
 
                 // Remove halo cells from tau_ii but extend across valid_box bdry
@@ -577,6 +723,13 @@ void erf_make_tau_terms (int level, int nrk,
                 }
                 } // end profile
 
+
+                if (stress_strain_arr) {
+                    strain_snapshot.save_symmetric(
+                        bxcc, tbxxy, tbxxz, tbxyz,
+                        s11, s22, s33, s12, s13, s23);
+                }
+
                 if (SmnSmn_a) {
                     ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
                     {
@@ -641,6 +794,13 @@ void erf_make_tau_terms (int level, int nrk,
                                             vfrac,
                                             s13_corr, s23_corr, s33_corr);
                     }
+                }
+
+
+                if (stress_strain_arr) {
+                    write_stress_strain_contraction(
+                        bx, stress_strain_arr, s11, s22, s33,
+                        s12, s13, s23, strain_snapshot);
                 }
 
                 // Remove halo cells from tau_ii but extend across valid_box bdry

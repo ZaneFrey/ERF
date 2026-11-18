@@ -77,6 +77,14 @@ ERF::canonicalizePlot3DVariables (Vector<std::string>& plot_var_names)
     capabilities.time_average_storage = solverChoice.time_avg_vel;
     capabilities.interval_mean_storage = solverChoice.compute_mean_vars;
     capabilities.interval_pert_pres_storage = solverChoice.compute_mean_pert_pres;
+    capabilities.interval_gradp_storage = solverChoice.compute_mean_gradp;
+    capabilities.interval_tau_storage = solverChoice.compute_mean_tau;
+    capabilities.interval_sgs_energy_flux_storage =
+        solverChoice.compute_mean_sgs_energy_flux;
+    capabilities.interval_triple_velocity_storage =
+        solverChoice.compute_mean_triple_velocity;
+    capabilities.interval_stress_strain_storage =
+        solverChoice.compute_mean_stress_strain;
     // qsrc_sw / qsrc_lw are available whenever qheating_rates is allocated,
     // i.e. for any erf.radiation_model other than None.
     capabilities.radiation_heating_storage =
@@ -1278,6 +1286,21 @@ ERF::FillPlot3DVars (int lev,
              source_comp < erf_interval_means::NumIntervalMoments; ++source_comp) {
             if (containerHasElement(plot_var_names, mean_names[source_comp])) {
                 copy_interval_mean(source_comp);
+            }
+        }
+
+        if (containerHasElement(plot_var_names, "total_stress_strain_mean")) {
+            const int dest_comp = mf_comp++;
+            if (norm <= Real(0.0)) {
+                mf_dst.setVal(Real(0.0), dest_comp, 1, 0);
+            } else {
+                AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
+                    interval_stress_strain[lev] != nullptr,
+                    "total_stress_strain_mean requires interval stress-strain storage");
+                MultiFab::Copy(
+                    mf_dst, *interval_stress_strain[lev],
+                    erf_interval_means::TotalStressStrain, dest_comp, 1, 0);
+                mf_dst.mult(inv_norm, dest_comp, 1, 0);
             }
         }
 

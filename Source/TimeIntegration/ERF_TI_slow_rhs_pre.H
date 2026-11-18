@@ -256,6 +256,7 @@
                          z_t_rk[level], cc_src, xmom_src, ymom_src, zmom_src, buoyancy,
                          (level > 0) ? &zmom_crse_rhs[level] : nullptr,
                          Tau[level], Tau_corr[level], Tau_EB[level],
+                         stress_strain_inst[level].get(),
                          SmnSmn, eddyDiffs, Hfx1, Hfx2, Hfx3, Q1fx1, Q1fx2, Q1fx3, Q2fx3, Diss, Hfx3_EB,
                          fine_geom, solverChoice, m_SurfaceLayer, domain_bcs_type_d, domain_bcs_type,
                          *zpn_to_use, *zpc_to_use, *ax_to_use, *ay_to_use, *az_to_use, *dJ_to_use,
