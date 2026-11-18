@@ -315,6 +315,46 @@ Accumulate_Interval_PertPres (
     const amrex::Geometry& geom,
     const amrex::EBFArrayBoxFactory* eb_factory = nullptr);
 
+/** Accumulate optional native-face anelastic pressure-gradient moments. */
+void
+Accumulate_Interval_GradP (
+    double dt,
+    const amrex::Array<amrex::MultiFab*, AMREX_SPACEDIM>& gradp_face_moments,
+    const amrex::Array<const amrex::MultiFab*, AMREX_SPACEDIM>& gradp,
+    const amrex::EBFArrayBoxFactory* eb_factory = nullptr);
+
+/** Accumulate the six independent total-stress components at cell centers. */
+void
+Accumulate_Interval_Tau (
+    double dt,
+    amrex::MultiFab* tau_moments,
+    const amrex::Vector<std::unique_ptr<amrex::MultiFab>>& tau);
+
+/** Accumulate native-face means of u_i Tau_ij for the three flux directions. */
+void
+Accumulate_Interval_SGSEnergyFlux (
+    double dt,
+    const amrex::Array<amrex::MultiFab*, AMREX_SPACEDIM>& flux_moments,
+    const amrex::Vector<std::unique_ptr<amrex::MultiFab>>& tau,
+    const amrex::Array<const amrex::MultiFab*, AMREX_SPACEDIM>& velocity,
+    const amrex::EBFArrayBoxFactory* eb_factory = nullptr);
+
+/** Accumulate the three cell-centered raw third-order velocity contractions. */
+void
+Accumulate_Interval_TripleVelocity (
+    double dt,
+    amrex::MultiFab* triple_velocity_moments,
+    const amrex::MultiFab& xvel,
+    const amrex::MultiFab& yvel,
+    const amrex::MultiFab& zvel);
+
+/** Accumulate the cell-centered instantaneous total-stress/strain contraction. */
+void
+Accumulate_Interval_StressStrain (
+    double dt,
+    amrex::MultiFab* stress_strain_moments,
+    const amrex::MultiFab* stress_strain_instantaneous);
+
 /**
  * Compute the nudging relaxation
  *

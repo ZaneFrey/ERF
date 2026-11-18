@@ -1689,11 +1689,36 @@ struct SolverChoice {
         pp.queryAdd("compute_mean_vars", compute_mean_vars);
         amrex::ParmParse pp_mean_vars("erf.compute_mean_vars");
         pp_mean_vars.queryAdd("pert_pres", compute_mean_pert_pres);
+        pp_mean_vars.queryAdd("gradp", compute_mean_gradp);
+        pp_mean_vars.queryAdd("tau", compute_mean_tau);
+        pp_mean_vars.queryAdd("sgs_energy_flux", compute_mean_sgs_energy_flux);
+        pp_mean_vars.queryAdd("triple_velocity", compute_mean_triple_velocity);
+        pp_mean_vars.queryAdd("stress_strain", compute_mean_stress_strain);
         pp.queryAdd("mean_vars_reset_mode", mean_vars_reset_mode);
         pp.queryAdd("mean_vars_reset_time", mean_vars_reset_time);
 
         if (compute_mean_pert_pres && !compute_mean_vars) {
             amrex::Error("erf.compute_mean_vars.pert_pres requires "
+                         "erf.compute_mean_vars = true");
+        }
+        if (compute_mean_gradp && !compute_mean_vars) {
+            amrex::Error("erf.compute_mean_vars.gradp requires "
+                         "erf.compute_mean_vars = true");
+        }
+        if (compute_mean_tau && !compute_mean_vars) {
+            amrex::Error("erf.compute_mean_vars.tau requires "
+                         "erf.compute_mean_vars = true");
+        }
+        if (compute_mean_sgs_energy_flux && !compute_mean_vars) {
+            amrex::Error("erf.compute_mean_vars.sgs_energy_flux requires "
+                         "erf.compute_mean_vars = true");
+        }
+        if (compute_mean_triple_velocity && !compute_mean_vars) {
+            amrex::Error("erf.compute_mean_vars.triple_velocity requires "
+                         "erf.compute_mean_vars = true");
+        }
+        if (compute_mean_stress_strain && !compute_mean_vars) {
+            amrex::Error("erf.compute_mean_vars.stress_strain requires "
                          "erf.compute_mean_vars = true");
         }
         if (compute_mean_pert_pres) {
@@ -1704,6 +1729,44 @@ struct SolverChoice {
                 }
             }
         }
+        if (compute_mean_gradp) {
+            for (int lev = 0; lev <= max_level; ++lev) {
+                if (anelastic[lev] != 1) {
+                    amrex::Error("erf.compute_mean_vars.gradp requires anelastic = 1 "
+                                 "on every configured AMR level");
+                }
+            }
+        }
+        if (compute_mean_tau) {
+            for (int lev = 0; lev <= max_level; ++lev) {
+                if (diffChoice.molec_diff_type == MolecDiffType::None &&
+                    !turbChoice[lev].use_kturb) {
+                    amrex::Error("erf.compute_mean_vars.tau requires molecular or "
+                                 "turbulent diffusion on every configured AMR level");
+                }
+            }
+        }
+        if (compute_mean_sgs_energy_flux) {
+            for (int lev = 0; lev <= max_level; ++lev) {
+                if (diffChoice.molec_diff_type == MolecDiffType::None &&
+                    !turbChoice[lev].use_kturb) {
+                    amrex::Error("erf.compute_mean_vars.sgs_energy_flux requires "
+                                 "molecular or turbulent diffusion on every "
+                                 "configured AMR level");
+                }
+            }
+        }
+        if (compute_mean_stress_strain) {
+            for (int lev = 0; lev <= max_level; ++lev) {
+                if (diffChoice.molec_diff_type == MolecDiffType::None &&
+                    !turbChoice[lev].use_kturb) {
+                    amrex::Error("erf.compute_mean_vars.stress_strain requires "
+                                 "molecular or turbulent diffusion on every "
+                                 "configured AMR level");
+                }
+            }
+        }
+
         if (compute_mean_vars &&
             mean_vars_reset_mode != "plotfile" && mean_vars_reset_mode != "time") {
             amrex::Error("erf.mean_vars_reset_mode must be either 'plotfile' or 'time'");
@@ -2436,6 +2499,21 @@ struct SolverChoice {
 
     // Accumulate optional anelastic perturbational-pressure interval moments
     bool compute_mean_pert_pres = false;
+
+    // Accumulate optional anelastic native-face pressure-gradient means
+    bool compute_mean_gradp = false;
+
+    // Accumulate optional cell-centered means of the total stress tensor
+    bool compute_mean_tau = false;
+
+    // Accumulate optional native-face means of velocity contracted with total stress
+    bool compute_mean_sgs_energy_flux = false;
+
+    // Accumulate optional cell-centered raw third-order velocity moments
+    bool compute_mean_triple_velocity = false;
+
+    // Accumulate the cell-centered contraction of total stress with strain
+    bool compute_mean_stress_strain = false;
 
     // Reset interval means after each plotfile or once at a requested time
     std::string mean_vars_reset_mode = "plotfile";

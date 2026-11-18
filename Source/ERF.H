@@ -901,6 +901,14 @@ public:
     amrex::Vector<std::unique_ptr<amrex::MultiFab>> interval_pert_pres;
     amrex::Vector<amrex::Array<std::unique_ptr<amrex::MultiFab>, AMREX_SPACEDIM>>
         interval_pert_pres_face;
+    amrex::Vector<amrex::Array<std::unique_ptr<amrex::MultiFab>, AMREX_SPACEDIM>>
+        interval_gradp_face;
+    amrex::Vector<std::unique_ptr<amrex::MultiFab>> interval_tau;
+    amrex::Vector<amrex::Array<std::unique_ptr<amrex::MultiFab>, AMREX_SPACEDIM>>
+        interval_sgs_energy_flux_face;
+    amrex::Vector<std::unique_ptr<amrex::MultiFab>> interval_triple_velocity;
+    amrex::Vector<std::unique_ptr<amrex::MultiFab>> interval_stress_strain;
+    amrex::Vector<std::unique_ptr<amrex::MultiFab>> stress_strain_inst;
     amrex::Vector<double> t_mean_cnt;
     // The configured time reset is one global, one-shot event.  Keep this
     // separate from the per-level accumulation storage so regridding a level
@@ -1312,6 +1320,14 @@ private:
     amrex::Vector<std::unique_ptr<amrex::MultiFab>> interval_pert_pres;
     amrex::Vector<amrex::Array<std::unique_ptr<amrex::MultiFab>, AMREX_SPACEDIM>>
         interval_pert_pres_face;
+    amrex::Vector<amrex::Array<std::unique_ptr<amrex::MultiFab>, AMREX_SPACEDIM>>
+        interval_gradp_face;
+    amrex::Vector<std::unique_ptr<amrex::MultiFab>> interval_tau;
+    amrex::Vector<amrex::Array<std::unique_ptr<amrex::MultiFab>, AMREX_SPACEDIM>>
+        interval_sgs_energy_flux_face;
+    amrex::Vector<std::unique_ptr<amrex::MultiFab>> interval_triple_velocity;
+    amrex::Vector<std::unique_ptr<amrex::MultiFab>> interval_stress_strain;
+    amrex::Vector<std::unique_ptr<amrex::MultiFab>> stress_strain_inst;
     amrex::Vector<double> t_mean_cnt;
     // Global one-shot time-reset state; interval_means remains per level.
     int mean_vars_time_reset_done{0};
@@ -1695,11 +1711,20 @@ private:
                                                     "mapfac", "lat_m", "lon_m",
                                                     // Time averaged velocity
                                                     "u_t_avg", "v_t_avg", "w_t_avg", "umag_t_avg",
+                                                    // Instantaneous raw third-order velocity contractions
+                                                    "uiuiu", "uiuiv", "uiuiw",
                                                     // Interval means and resolved turbulence moments
                                                     "u_mean", "v_mean", "w_mean", "theta_mean",
                                                     "uu_mean", "vv_mean", "ww_mean", "uw_mean", "vw_mean", "wtheta_mean", "uv_mean",
-                                                    "uu_fluct", "vv_fluct", "ww_fluct", "uw_fluct", "vw_fluct", "wtheta_fluct", "uv_fluct", "tke_resolved",
-                                                    "pert_pres_mean",
+                                                    "total_stress_strain_mean",
+                                                    "uu_fluct", "vv_fluct", "ww_fluct", "uw_fluct", "vw_fluct", "wtheta_fluct", "uv_fluct",
+                                                    "pert_pres_mean", "dpdx_mean", "dpdy_mean", "dpdz_mean",
+                                                    "Tau11_mean", "Tau12_mean", "Tau13_mean",
+                                                    "Tau22_mean", "Tau23_mean", "Tau33_mean", "tke_resolved",
+                                                    "sgs_energy_flux_x_mean", "sgs_energy_flux_y_mean",
+                                                    "sgs_energy_flux_z_mean",
+                                                    "uiuiu_mean", "uiuiv_mean", "uiuiw_mean",
+                                                    "uiuiu_fluct", "uiuiv_fluct", "uiuiw_fluct",
                                                     "pert_pres_u_mean", "pert_pres_v_mean", "pert_pres_w_mean",
                                                     "pert_pres_u_fluct", "pert_pres_v_fluct", "pert_pres_w_fluct",
                                                     // eddy viscosity

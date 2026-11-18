@@ -110,6 +110,18 @@ The default subvolume inventory is documented on :ref:`sec:Plotfiles`.
 |                             | in z direction   |
 |                             | [Pa/m]           |
 +-----------------------------+------------------+
+| **dpdx_mean**               | interval-mean x  |
+|                             | pressure gradient|
+|                             | [Pa/m]           |
++-----------------------------+------------------+
+| **dpdy_mean**               | interval-mean y  |
+|                             | pressure gradient|
+|                             | [Pa/m]           |
++-----------------------------+------------------+
+| **dpdz_mean**               | interval-mean z  |
+|                             | pressure gradient|
+|                             | [Pa/m]           |
++-----------------------------+------------------+
 | **temp**                    | Temperature      |
 |                             | [K]              |
 |                             |                  |
@@ -259,6 +271,82 @@ The default subvolume inventory is documented on :ref:`sec:Plotfiles`.
 | **uv_mean**                 | interval mean of |
 |                             | u times v        |
 |                             | [m^2/s^2]        |
++-----------------------------+------------------+
+| **total_stress_strain_mean**| interval mean of |
+|                             | Tau_ij S_ij      |
+|                             | [W/m^3]          |
++-----------------------------+------------------+
+| **Tau11_mean**              | interval mean of |
+|                             | total stress 11  |
+|                             | [Pa]             |
++-----------------------------+------------------+
+| **Tau12_mean**              | interval mean of |
+|                             | total stress 12  |
+|                             | [Pa]             |
++-----------------------------+------------------+
+| **Tau13_mean**              | interval mean of |
+|                             | total stress 13  |
+|                             | [Pa]             |
++-----------------------------+------------------+
+| **Tau22_mean**              | interval mean of |
+|                             | total stress 22  |
+|                             | [Pa]             |
++-----------------------------+------------------+
+| **Tau23_mean**              | interval mean of |
+|                             | total stress 23  |
+|                             | [Pa]             |
++-----------------------------+------------------+
+| **Tau33_mean**              | interval mean of |
+|                             | total stress 33  |
+|                             | [Pa]             |
++-----------------------------+------------------+
+| **sgs_energy_flux_x_mean**  | interval mean of |
+|                             | u_i Tau_i1       |
+|                             | [Pa m/s]         |
++-----------------------------+------------------+
+| **sgs_energy_flux_y_mean**  | interval mean of |
+|                             | u_i Tau_i2       |
+|                             | [Pa m/s]         |
++-----------------------------+------------------+
+| **sgs_energy_flux_z_mean**  | interval mean of |
+|                             | u_i Tau_i3       |
+|                             | [Pa m/s]         |
++-----------------------------+------------------+
+| **uiuiu**                   | instantaneous    |
+|                             | (u_i u_i) u      |
+|                             | [m^3/s^3]        |
++-----------------------------+------------------+
+| **uiuiv**                   | instantaneous    |
+|                             | (u_i u_i) v      |
+|                             | [m^3/s^3]        |
++-----------------------------+------------------+
+| **uiuiw**                   | instantaneous    |
+|                             | (u_i u_i) w      |
+|                             | [m^3/s^3]        |
++-----------------------------+------------------+
+| **uiuiu_mean**              | interval mean of |
+|                             | (u_i u_i) u      |
+|                             | [m^3/s^3]        |
++-----------------------------+------------------+
+| **uiuiv_mean**              | interval mean of |
+|                             | (u_i u_i) v      |
+|                             | [m^3/s^3]        |
++-----------------------------+------------------+
+| **uiuiw_mean**              | interval mean of |
+|                             | (u_i u_i) w      |
+|                             | [m^3/s^3]        |
++-----------------------------+------------------+
+| **uiuiu_fluct**             | central moment   |
+|                             | (u'_i u'_i) u'   |
+|                             | [m^3/s^3]        |
++-----------------------------+------------------+
+| **uiuiv_fluct**             | central moment   |
+|                             | (u'_i u'_i) v'   |
+|                             | [m^3/s^3]        |
++-----------------------------+------------------+
+| **uiuiw_fluct**             | central moment   |
+|                             | (u'_i u'_i) w'   |
+|                             | [m^3/s^3]        |
 +-----------------------------+------------------+
 | **uu_fluct**                | resolved u       |
 |                             | variance         |
@@ -1038,6 +1126,68 @@ every AMR level in the plotfile:
   A checkpoint without the optional pressure-statistics state resets the whole
   interval window on restart so every covariance continues to share one time
   window.
+* ``dpdx_mean``, ``dpdy_mean``, and ``dpdz_mean`` require
+  ``erf.compute_mean_vars.gradp = true`` and anelastic dynamics on every
+  configured level. ERF time-integrates the native staggered ``gradp`` fields
+  used by the momentum equations, including their existing map-factor
+  treatment, then averages the two adjacent face sums into these cell-centered
+  plot variables. Thus each output is the interval mean of its corresponding
+  instantaneous ``dpd*`` diagnostic. The fields have units Pa/m. This option
+  is independent of ``erf.compute_mean_vars.pert_pres``. If an enabled gradp
+  checkpoint state is absent on restart, the complete interval window is
+  reset so all fields retain the same normalizer.
+* ``Tau11_mean``, ``Tau12_mean``, ``Tau13_mean``, ``Tau22_mean``,
+  ``Tau23_mean``, and ``Tau33_mean`` require
+  ``erf.compute_mean_vars.tau = true`` and molecular or turbulent diffusion on
+  every configured level. They are time-weighted means of the dynamic total
+  stress left by the final Runge--Kutta stage, including molecular and modeled
+  turbulent contributions, in Pa. All six outputs are cell-centered. The
+  off-diagonal components use the same four-edge-to-cell interpolation as the
+  corresponding instantaneous ``Tau*`` fields. They are therefore total
+  diffusive stresses, not separately isolated SGS-only stresses. Their
+  optional checkpoint state shares the base interval duration; an older
+  checkpoint without it resets the complete interval window with a warning.
+* ``total_stress_strain_mean`` requires
+  ``erf.compute_mean_vars.stress_strain = true`` and molecular or turbulent
+  diffusion on every configured level. It is the time-weighted,
+  cell-centered mean of the signed total-stress contraction
+  :math:`\tau_{ij}S_{ij}` in W/m3. ERF retains the resolved strain values
+  used by ``MakeTauTerms`` while converting them to stress, forms products at
+  their native locations, and averages edge products to cell centers. Under
+  ERF's stress convention the value is normally negative; its negative is the
+  positive resolved kinetic-energy loss. Molecular and modeled turbulent
+  stresses are both included. The option is independent of the six
+  ``Tau*_mean`` outputs and its optional checkpoint sum shares the base
+  interval duration.
+* ``sgs_energy_flux_{x,y,z}_mean`` require
+  ``erf.compute_mean_vars.sgs_energy_flux = true`` and molecular or turbulent
+  diffusion on every configured level. ERF accumulates the instantaneous
+  contractions ``u*Tau11 + v*Tau21 + w*Tau31``,
+  ``u*Tau12 + v*Tau22 + w*Tau32``, and
+  ``u*Tau13 + v*Tau23 + w*Tau33`` at native x-, y-, and z-faces. When ERF has
+  no separately allocated transpose stress, symmetry supplies
+  ``Tau21=Tau12``, ``Tau31=Tau13``, and ``Tau32=Tau23``. The outputs have
+  units Pa m/s (W/m2) and are written only to AMReX companions named
+  ``<plotfile>_sgs_energy_flux_xface``, ``..._yface``, and ``..._zface``; no
+  cell-centered aliases are produced. They use the total dynamic diffusive
+  stress left by the final Runge--Kutta stage, so the quantity is purely SGS
+  only when molecular diffusion makes no contribution. This storage is
+  independent of ``erf.compute_mean_vars.tau``. A missing enabled optional
+  checkpoint payload resets the complete shared interval window with a
+  warning.
+* ``uiuiu``, ``uiuiv``, and ``uiuiw`` are the instantaneous cell-centered raw
+  contractions ``(u*u+v*v+w*w)*u_j`` and require no interval storage.
+  ``uiuiu_mean``, ``uiuiv_mean``, ``uiuiw_mean``, and their ``*_fluct`` forms
+  require ``erf.compute_mean_vars.triple_velocity = true``. The raw means are
+  time means of the instantaneous contractions. The fluctuation fields are
+  local central third moments reconstructed from the shared first-, second-,
+  and third-order time sums; for example,
+  ``uiuiw_fluct = mean((u'_i*u'_i)*w')``. Primes therefore denote deviations
+  from the local interval time mean at each cell, not deviations from the
+  instantaneous horizontal-plane mean used by the 1-D profile output. All
+  fields are cell-centered and have units m3/s3. The central contractions are
+  twice the corresponding resolved-TKE transport flux. Missing enabled
+  optional checkpoint state resets the complete shared interval window.
 * ``qsrc_sw`` and ``qsrc_lw`` require a non-``None`` radiation choice.
 * ``nut``, ``Kmv``, ``Kmh``, ``Khv``, ``Khh``, and ``Lturb`` require
   ``use_kturb = true`` at every AMR level.

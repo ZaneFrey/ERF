@@ -61,6 +61,11 @@ struct Plot3DSelectionCapabilities
     bool time_average_storage = false;
     bool interval_mean_storage = false;
     bool interval_pert_pres_storage = false;
+    bool interval_gradp_storage = false;
+    bool interval_tau_storage = false;
+    bool interval_sgs_energy_flux_storage = false;
+    bool interval_triple_velocity_storage = false;
+    bool interval_stress_strain_storage = false;
     bool radiation_heating_storage = false;
     bool eddy_diffusivity_storage = false;
     bool dissipation_storage = false;
@@ -160,7 +165,8 @@ plot3d_fixed_unconditional_diagnostic (const std::string& name)
         "ibseb_lw_net", "ibseb_f_sky", "ibseb_H", "ibseb_G",
         "Tau11", "Tau12", "Tau13", "Tau21", "Tau22", "Tau23",
         "Tau31", "Tau32", "Tau33", "hfx1", "hfx2", "hfx3",
-        "q1fx1", "q1fx2", "q1fx3", "q2fx3"
+        "q1fx1", "q1fx2", "q1fx3", "q2fx3",
+        "uiuiu", "uiuiv", "uiuiw"
     };
 
     for (const char* candidate : names) {
@@ -189,9 +195,17 @@ plot3d_interval_mean_diagnostic (const std::string& name)
     static constexpr const char* names[] = {
         "u_mean", "v_mean", "w_mean", "theta_mean",
         "uu_mean", "vv_mean", "ww_mean", "uw_mean", "vw_mean", "wtheta_mean", "uv_mean",
+        "total_stress_strain_mean",
         "uu_fluct", "vv_fluct", "ww_fluct", "uw_fluct", "vw_fluct", "wtheta_fluct", "uv_fluct", "tke_resolved",
         "pert_pres_mean", "pert_pres_u_mean", "pert_pres_v_mean", "pert_pres_w_mean",
         "pert_pres_u_fluct", "pert_pres_v_fluct", "pert_pres_w_fluct",
+        "dpdx_mean", "dpdy_mean", "dpdz_mean",
+        "Tau11_mean", "Tau12_mean", "Tau13_mean",
+        "Tau22_mean", "Tau23_mean", "Tau33_mean",
+        "sgs_energy_flux_x_mean", "sgs_energy_flux_y_mean",
+        "sgs_energy_flux_z_mean",
+        "uiuiu_mean", "uiuiv_mean", "uiuiw_mean",
+        "uiuiu_fluct", "uiuiv_fluct", "uiuiw_fluct"
     };
 
     for (const char* candidate : names) {
@@ -214,6 +228,23 @@ plot3d_has_pert_pres_face_diagnostic (const amrex::Vector<std::string>& names)
 {
     return std::any_of(names.begin(), names.end(), [] (const std::string& name) {
         return plot3d_pert_pres_face_direction(name) >= 0;
+    });
+}
+
+inline int
+plot3d_sgs_energy_flux_face_direction (const std::string& name)
+{
+    if (name == "sgs_energy_flux_x_mean") return 0;
+    if (name == "sgs_energy_flux_y_mean") return 1;
+    if (name == "sgs_energy_flux_z_mean") return 2;
+    return -1;
+}
+
+inline bool
+plot3d_has_sgs_energy_flux_face_diagnostic (const amrex::Vector<std::string>& names)
+{
+    return std::any_of(names.begin(), names.end(), [] (const std::string& name) {
+        return plot3d_sgs_energy_flux_face_direction(name) >= 0;
     });
 }
 
@@ -260,6 +291,25 @@ plot3d_fixed_variable_available (const std::string& name,
     if (plot3d_interval_mean_diagnostic(name)) {
         if (name.rfind("pert_pres", 0) == 0) {
             return caps.interval_pert_pres_storage;
+        }
+        if (name == "dpdx_mean" || name == "dpdy_mean" || name == "dpdz_mean") {
+            return caps.interval_gradp_storage;
+        }
+        if (name == "Tau11_mean" || name == "Tau12_mean" ||
+            name == "Tau13_mean" || name == "Tau22_mean" ||
+            name == "Tau23_mean" || name == "Tau33_mean") {
+            return caps.interval_tau_storage;
+        }
+        if (plot3d_sgs_energy_flux_face_direction(name) >= 0) {
+            return caps.interval_sgs_energy_flux_storage;
+        }
+        if (name == "uiuiu_mean" || name == "uiuiv_mean" ||
+            name == "uiuiw_mean" || name == "uiuiu_fluct" ||
+            name == "uiuiv_fluct" || name == "uiuiw_fluct") {
+            return caps.interval_triple_velocity_storage;
+        }
+        if (name == "total_stress_strain_mean") {
+            return caps.interval_stress_strain_storage;
         }
         return caps.interval_mean_storage;
     }

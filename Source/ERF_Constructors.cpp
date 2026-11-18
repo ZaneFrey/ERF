@@ -628,6 +628,12 @@ ERF::ERF_shared ()
     interval_means.resize(nlevs_max);
     interval_pert_pres.resize(nlevs_max);
     interval_pert_pres_face.resize(nlevs_max);
+    interval_gradp_face.resize(nlevs_max);
+    interval_tau.resize(nlevs_max);
+    interval_sgs_energy_flux_face.resize(nlevs_max);
+    interval_triple_velocity.resize(nlevs_max);
+    interval_stress_strain.resize(nlevs_max);
+    stress_strain_inst.resize(nlevs_max);
     t_mean_cnt.resize(nlevs_max);
     mean_vars_time_reset_done = 0;
 

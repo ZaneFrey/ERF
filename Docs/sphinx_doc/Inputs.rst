@@ -1130,6 +1130,26 @@ List of Parameters
      - Accumulate anelastic projection-pressure means and native face pressure-velocity moments
      - Boolean
      - false
+   * - **erf.compute_mean_vars.gradp**
+     - Accumulate native-face anelastic pressure-gradient means
+     - Boolean
+     - false
+   * - **erf.compute_mean_vars.tau**
+     - Accumulate the six independent total-stress interval means
+     - Boolean
+     - false
+   * - **erf.compute_mean_vars.sgs_energy_flux**
+     - Accumulate native-face interval means of velocity contracted with total stress
+     - Boolean
+     - false
+   * - **erf.compute_mean_vars.triple_velocity**
+     - Accumulate cell-centered raw third-order velocity contractions
+     - Boolean
+     - false
+   * - **erf.compute_mean_vars.stress_strain**
+     - Accumulate the cell-centered interval mean of total stress contracted with resolved strain
+     - Boolean
+     - false
    * - **erf.mean_vars_reset_mode**
      - Reset moments after a complete 3-D plotfile batch or once at a specified time
      - ``plotfile`` or ``time``
@@ -1169,6 +1189,79 @@ selected ``pert_pres_{u,v,w}_{mean,fluct}`` fields are written at their native
 velocity faces in dedicated ``_pert_pres_{x,y,z}face`` AMReX companion
 plotfiles. These staggered diagnostics are not available for NetCDF output or
 with ``erf.expand_plotvars_to_unif_rr = true``.
+
+Set ``erf.compute_mean_vars.gradp = true`` together with
+``erf.compute_mean_vars = true`` to expose the cell-centered interval means
+``dpdx_mean``, ``dpdy_mean``, and ``dpdz_mean``. This option is also restricted
+to anelastic dynamics on every configured AMR level. ERF accumulates the
+native face-centered pressure gradients used by the momentum equations and
+averages adjacent face sums only when producing the cell-centered plotfile
+fields. The option has its own storage and checkpoint state and does not
+require ``erf.compute_mean_vars.pert_pres``.
+
+Set ``erf.compute_mean_vars.tau = true`` together with
+``erf.compute_mean_vars = true`` to expose ``Tau11_mean``, ``Tau12_mean``,
+``Tau13_mean``, ``Tau22_mean``, ``Tau23_mean``, and ``Tau33_mean``. Molecular
+or turbulent diffusion must be enabled on every configured AMR level. These
+are cell-centered, time-weighted means of ERF's existing dynamic total-stress
+fields, in Pa. The diagonal components are accumulated at cell centers; the
+three off-diagonal components are averaged from their native edges to cell
+centers using the same four-point interpolation as the instantaneous ``Tau*``
+plot variables. The stored stress is the value left by the final Runge--Kutta
+stage and includes molecular and modeled turbulent contributions; it is not a
+separately diagnosed SGS-only stress. The optional sums share the base
+interval normalizer, reset behavior, and checkpoint window.
+
+Set ``erf.compute_mean_vars.stress_strain = true`` together with
+``erf.compute_mean_vars = true`` to expose ``total_stress_strain_mean``.
+Molecular or turbulent diffusion must be enabled on every configured AMR
+level. ERF forms the instantaneous signed contraction
+
+.. math::
+
+   \tau_{ij}S_{ij}
+
+from the total stress produced by ``MakeTauTerms`` and the same resolved
+strain discretization used to produce that stress. Diagonal products are
+formed at cell centers. Off-diagonal stress-strain products are formed at
+their native edges and then averaged to cell centers; ERF does not multiply
+separately interpolated stress and strain. The output has units W/m3
+(``kg/(m s3)``). Under ERF's stress sign convention this quantity is normally
+negative for dissipative stress; the positive resolved-to-subfilter transfer
+is its negative. The total stress includes molecular and modeled turbulent
+contributions. This option is independent of ``erf.compute_mean_vars.tau``
+and has its own checkpointed sum while sharing the base interval duration and
+reset behavior.
+
+Set ``erf.compute_mean_vars.sgs_energy_flux = true`` together with
+``erf.compute_mean_vars = true`` to expose ``sgs_energy_flux_x_mean``,
+``sgs_energy_flux_y_mean``, and ``sgs_energy_flux_z_mean``. Molecular or
+turbulent diffusion must be enabled on every configured AMR level. ERF forms
+the complete instantaneous contractions
+``u_i Tau_i1``, ``u_i Tau_i2``, and ``u_i Tau_i3`` from the native staggered
+velocity and stress fields, then time-integrates each result on its native
+x-, y-, or z-face. The fields have units Pa m/s (equivalently W/m2) and are
+written to AMReX companions named ``<plotfile>_sgs_energy_flux_xface`` (and
+the corresponding y/z names); no cell-centered aliases are produced. This
+option is independent of ``erf.compute_mean_vars.tau``. Despite the output
+name, the contraction uses ERF's total diffusive stress: it is purely SGS only
+when no molecular diffusivity contributes. NetCDF output and
+``erf.expand_plotvars_to_unif_rr = true`` are not supported for these native
+face diagnostics. Their optional checkpoint state shares the base interval
+normalizer and reset behavior.
+
+Set ``erf.compute_mean_vars.triple_velocity = true`` together with
+``erf.compute_mean_vars = true`` to expose the cell-centered interval raw
+means ``uiuiu_mean``, ``uiuiv_mean``, and ``uiuiw_mean`` and the corresponding
+central moments ``uiuiu_fluct``, ``uiuiv_fluct``, and ``uiuiw_fluct``. The raw
+instantaneous products ``uiuiu``, ``uiuiv``, and ``uiuiw`` are available
+without interval storage. Here ``uiui`` denotes ``u*u + v*v + w*w``. The
+``*_fluct`` fields use local time means at every cell, rather than the
+instantaneous horizontal-plane means used by the 1-D profile writer. All nine
+fields have units m3/s3 and are cell-centered. The optional three-component
+accumulator shares the base interval normalizer, reset behavior, and averaging
+window; a checkpoint without the enabled optional state resets the complete
+interval window with a warning.
 
 
 .. _inputs-screen-output:

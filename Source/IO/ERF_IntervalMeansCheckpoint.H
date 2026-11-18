@@ -176,6 +176,400 @@ validate_pert_pres_metadata (
     return {};
 }
 
+struct GradPLevelMetadata
+{
+    int level{-1};
+    double accumulation_count{0.0};
+    amrex::Array<amrex::BoxArray, AMREX_SPACEDIM> face_boxes;
+};
+
+struct GradPMetadata
+{
+    int levels{0};
+    int face_components{0};
+    amrex::Vector<GradPLevelMetadata> level;
+};
+
+struct TauLevelMetadata
+{
+    int level{-1};
+    double accumulation_count{0.0};
+    amrex::BoxArray boxes;
+};
+
+struct TauMetadata
+{
+    int levels{0};
+    int components{0};
+    amrex::Vector<TauLevelMetadata> level;
+};
+
+inline bool
+parse_tau_metadata (std::istream& input, TauMetadata& result,
+                    std::string& error)
+{
+    std::string title;
+    if (!std::getline(input, title) || title != "ERF interval tau checkpoint v1") {
+        error = "unsupported interval tau checkpoint title '" + title + "'";
+        return false;
+    }
+    if (!(input >> result.levels >> result.components) || result.levels < 0) {
+        error = "missing or invalid interval tau dimensions";
+        return false;
+    }
+    result.level.resize(result.levels);
+    for (int lev = 0; lev < result.levels; ++lev) {
+        auto& record = result.level[lev];
+        if (!(input >> record.level >> record.accumulation_count) ||
+            record.level != lev || !std::isfinite(record.accumulation_count) ||
+            record.accumulation_count < 0.0) {
+            error = "invalid interval tau level record " + std::to_string(lev);
+            return false;
+        }
+        if (!detail::read_box_array(input, record.boxes)) {
+            error = "invalid interval tau BoxArray at level " + std::to_string(lev);
+            return false;
+        }
+    }
+    return true;
+}
+
+inline std::string
+validate_tau_metadata (
+    const TauMetadata& metadata,
+    const amrex::Vector<amrex::BoxArray>& expected_boxes,
+    const amrex::Vector<double>& expected_counts)
+{
+    const int expected_levels = static_cast<int>(expected_boxes.size());
+    if (metadata.levels != expected_levels ||
+        static_cast<int>(metadata.level.size()) != expected_levels ||
+        static_cast<int>(expected_counts.size()) < expected_levels) {
+        return "interval tau metadata level count does not match the restart";
+    }
+    if (metadata.components != NumTauMeanMoments) {
+        return "interval tau metadata component count is unsupported";
+    }
+    for (int lev = 0; lev < expected_levels; ++lev) {
+        if (!(metadata.level[lev].boxes == expected_boxes[lev])) {
+            return "interval tau BoxArray does not match level " +
+                   std::to_string(lev);
+        }
+        const double scale = std::max(1.0, std::abs(expected_counts[lev]));
+        if (std::abs(metadata.level[lev].accumulation_count - expected_counts[lev]) >
+            16.0 * std::numeric_limits<double>::epsilon() * scale) {
+            return "interval tau accumulated time does not match level " +
+                   std::to_string(lev);
+        }
+    }
+    return {};
+}
+
+using StressStrainLevelMetadata = TauLevelMetadata;
+
+struct StressStrainMetadata
+{
+    int levels{0};
+    int components{0};
+    amrex::Vector<StressStrainLevelMetadata> level;
+};
+
+inline bool
+parse_stress_strain_metadata (std::istream& input,
+                              StressStrainMetadata& result,
+                              std::string& error)
+{
+    std::string title;
+    if (!std::getline(input, title) ||
+        title != "ERF interval stress strain checkpoint v1") {
+        error = "unsupported interval stress strain checkpoint title '" +
+                title + "'";
+        return false;
+    }
+    if (!(input >> result.levels >> result.components) || result.levels < 0) {
+        error = "missing or invalid interval stress strain dimensions";
+        return false;
+    }
+    result.level.resize(result.levels);
+    for (int lev = 0; lev < result.levels; ++lev) {
+        auto& record = result.level[lev];
+        if (!(input >> record.level >> record.accumulation_count) ||
+            record.level != lev || !std::isfinite(record.accumulation_count) ||
+            record.accumulation_count < 0.0) {
+            error = "invalid interval stress strain level record " +
+                    std::to_string(lev);
+            return false;
+        }
+        if (!detail::read_box_array(input, record.boxes)) {
+            error = "invalid interval stress strain BoxArray at level " +
+                    std::to_string(lev);
+            return false;
+        }
+    }
+    return true;
+}
+
+inline std::string
+validate_stress_strain_metadata (
+    const StressStrainMetadata& metadata,
+    const amrex::Vector<amrex::BoxArray>& expected_boxes,
+    const amrex::Vector<double>& expected_counts)
+{
+    const int expected_levels = static_cast<int>(expected_boxes.size());
+    if (metadata.levels != expected_levels ||
+        static_cast<int>(metadata.level.size()) != expected_levels ||
+        static_cast<int>(expected_counts.size()) < expected_levels) {
+        return "interval stress strain metadata level count does not match the restart";
+    }
+    if (metadata.components != NumStressStrainMoments) {
+        return "interval stress strain metadata component count is unsupported";
+    }
+    for (int lev = 0; lev < expected_levels; ++lev) {
+        if (!(metadata.level[lev].boxes == expected_boxes[lev])) {
+            return "interval stress strain BoxArray does not match level " +
+                   std::to_string(lev);
+        }
+        const double scale = std::max(1.0, std::abs(expected_counts[lev]));
+        if (std::abs(metadata.level[lev].accumulation_count -
+                     expected_counts[lev]) >
+            16.0 * std::numeric_limits<double>::epsilon() * scale) {
+            return "interval stress strain accumulated time does not match level " +
+                   std::to_string(lev);
+        }
+    }
+    return {};
+}
+
+struct TripleVelocityLevelMetadata
+{
+    int level{-1};
+    double accumulation_count{0.0};
+    amrex::BoxArray boxes;
+};
+
+struct TripleVelocityMetadata
+{
+    int levels{0};
+    int components{0};
+    amrex::Vector<TripleVelocityLevelMetadata> level;
+};
+
+inline bool
+parse_triple_velocity_metadata (std::istream& input,
+                                TripleVelocityMetadata& result,
+                                std::string& error)
+{
+    std::string title;
+    if (!std::getline(input, title) ||
+        title != "ERF interval triple velocity checkpoint v1") {
+        error = "unsupported interval triple velocity checkpoint title '" +
+                title + "'";
+        return false;
+    }
+    if (!(input >> result.levels >> result.components) || result.levels < 0) {
+        error = "missing or invalid interval triple velocity dimensions";
+        return false;
+    }
+    result.level.resize(result.levels);
+    for (int lev = 0; lev < result.levels; ++lev) {
+        auto& record = result.level[lev];
+        if (!(input >> record.level >> record.accumulation_count) ||
+            record.level != lev || !std::isfinite(record.accumulation_count) ||
+            record.accumulation_count < 0.0) {
+            error = "invalid interval triple velocity level record " +
+                    std::to_string(lev);
+            return false;
+        }
+        if (!detail::read_box_array(input, record.boxes)) {
+            error = "invalid interval triple velocity BoxArray at level " +
+                    std::to_string(lev);
+            return false;
+        }
+    }
+    return true;
+}
+
+inline std::string
+validate_triple_velocity_metadata (
+    const TripleVelocityMetadata& metadata,
+    const amrex::Vector<amrex::BoxArray>& expected_boxes,
+    const amrex::Vector<double>& expected_counts)
+{
+    const int expected_levels = static_cast<int>(expected_boxes.size());
+    if (metadata.levels != expected_levels ||
+        static_cast<int>(metadata.level.size()) != expected_levels ||
+        static_cast<int>(expected_counts.size()) < expected_levels) {
+        return "interval triple velocity metadata level count does not match the restart";
+    }
+    if (metadata.components != NumTripleVelocityMoments) {
+        return "interval triple velocity metadata component count is unsupported";
+    }
+    for (int lev = 0; lev < expected_levels; ++lev) {
+        if (!(metadata.level[lev].boxes == expected_boxes[lev])) {
+            return "interval triple velocity BoxArray does not match level " +
+                   std::to_string(lev);
+        }
+        const double scale = std::max(1.0, std::abs(expected_counts[lev]));
+        if (std::abs(metadata.level[lev].accumulation_count - expected_counts[lev]) >
+            16.0 * std::numeric_limits<double>::epsilon() * scale) {
+            return "interval triple velocity accumulated time does not match level " +
+                   std::to_string(lev);
+        }
+    }
+    return {};
+}
+
+inline bool
+parse_gradp_metadata (std::istream& input, GradPMetadata& result,
+                      std::string& error)
+{
+    std::string title;
+    if (!std::getline(input, title) || title != "ERF interval gradp checkpoint v1") {
+        error = "unsupported interval gradp checkpoint title '" + title + "'";
+        return false;
+    }
+    if (!(input >> result.levels >> result.face_components) || result.levels < 0) {
+        error = "missing or invalid interval gradp dimensions";
+        return false;
+    }
+    result.level.resize(result.levels);
+    for (int lev = 0; lev < result.levels; ++lev) {
+        auto& record = result.level[lev];
+        if (!(input >> record.level >> record.accumulation_count) ||
+            record.level != lev || !std::isfinite(record.accumulation_count) ||
+            record.accumulation_count < 0.0) {
+            error = "invalid interval gradp level record " + std::to_string(lev);
+            return false;
+        }
+        for (int dir = 0; dir < AMREX_SPACEDIM; ++dir) {
+            if (!detail::read_box_array(input, record.face_boxes[dir])) {
+                error = "invalid interval gradp face BoxArray at level " +
+                        std::to_string(lev);
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+inline std::string
+validate_gradp_metadata (
+    const GradPMetadata& metadata,
+    const amrex::Vector<amrex::BoxArray>& expected_cells,
+    const amrex::Vector<double>& expected_counts)
+{
+    const int expected_levels = static_cast<int>(expected_cells.size());
+    if (metadata.levels != expected_levels ||
+        static_cast<int>(metadata.level.size()) != expected_levels ||
+        static_cast<int>(expected_counts.size()) < expected_levels) {
+        return "interval gradp metadata level count does not match the restart";
+    }
+    if (metadata.face_components != NumGradPFaceMoments) {
+        return "interval gradp metadata component count is unsupported";
+    }
+    for (int lev = 0; lev < expected_levels; ++lev) {
+        for (int dir = 0; dir < AMREX_SPACEDIM; ++dir) {
+            const amrex::BoxArray expected = amrex::convert(
+                expected_cells[lev], amrex::IntVect::TheDimensionVector(dir));
+            if (!(metadata.level[lev].face_boxes[dir] == expected)) {
+                return "interval gradp face BoxArray does not match level " +
+                       std::to_string(lev);
+            }
+        }
+        const double scale = std::max(1.0, std::abs(expected_counts[lev]));
+        if (std::abs(metadata.level[lev].accumulation_count - expected_counts[lev]) >
+            16.0 * std::numeric_limits<double>::epsilon() * scale) {
+            return "interval gradp accumulated time does not match level " +
+                   std::to_string(lev);
+        }
+    }
+    return {};
+}
+
+struct SGSEnergyFluxLevelMetadata
+{
+    int level{-1};
+    double accumulation_count{0.0};
+    amrex::Array<amrex::BoxArray, AMREX_SPACEDIM> face_boxes;
+};
+
+struct SGSEnergyFluxMetadata
+{
+    int levels{0};
+    int face_components{0};
+    amrex::Vector<SGSEnergyFluxLevelMetadata> level;
+};
+
+inline bool
+parse_sgs_energy_flux_metadata (std::istream& input,
+                                SGSEnergyFluxMetadata& result,
+                                std::string& error)
+{
+    std::string title;
+    if (!std::getline(input, title) ||
+        title != "ERF interval sgs energy flux checkpoint v1") {
+        error = "unsupported interval sgs energy flux checkpoint title '" +
+                title + "'";
+        return false;
+    }
+    if (!(input >> result.levels >> result.face_components) || result.levels < 0) {
+        error = "missing or invalid interval sgs energy flux dimensions";
+        return false;
+    }
+    result.level.resize(result.levels);
+    for (int lev = 0; lev < result.levels; ++lev) {
+        auto& record = result.level[lev];
+        if (!(input >> record.level >> record.accumulation_count) ||
+            record.level != lev || !std::isfinite(record.accumulation_count) ||
+            record.accumulation_count < 0.0) {
+            error = "invalid interval sgs energy flux level record " +
+                    std::to_string(lev);
+            return false;
+        }
+        for (int dir = 0; dir < AMREX_SPACEDIM; ++dir) {
+            if (!detail::read_box_array(input, record.face_boxes[dir])) {
+                error = "invalid interval sgs energy flux face BoxArray at level " +
+                        std::to_string(lev);
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+inline std::string
+validate_sgs_energy_flux_metadata (
+    const SGSEnergyFluxMetadata& metadata,
+    const amrex::Vector<amrex::BoxArray>& expected_cells,
+    const amrex::Vector<double>& expected_counts)
+{
+    const int expected_levels = static_cast<int>(expected_cells.size());
+    if (metadata.levels != expected_levels ||
+        static_cast<int>(metadata.level.size()) != expected_levels ||
+        static_cast<int>(expected_counts.size()) < expected_levels) {
+        return "interval sgs energy flux metadata level count does not match the restart";
+    }
+    if (metadata.face_components != NumSGSEnergyFluxFaceMoments) {
+        return "interval sgs energy flux metadata component count is unsupported";
+    }
+    for (int lev = 0; lev < expected_levels; ++lev) {
+        for (int dir = 0; dir < AMREX_SPACEDIM; ++dir) {
+            const amrex::BoxArray expected = amrex::convert(
+                expected_cells[lev], amrex::IntVect::TheDimensionVector(dir));
+            if (!(metadata.level[lev].face_boxes[dir] == expected)) {
+                return "interval sgs energy flux face BoxArray does not match level " +
+                       std::to_string(lev);
+            }
+        }
+        const double scale = std::max(1.0, std::abs(expected_counts[lev]));
+        if (std::abs(metadata.level[lev].accumulation_count - expected_counts[lev]) >
+            16.0 * std::numeric_limits<double>::epsilon() * scale) {
+            return "interval sgs energy flux accumulated time does not match level " +
+                   std::to_string(lev);
+        }
+    }
+    return {};
+}
+
 inline bool
 parse_metadata (std::istream& input, Metadata& result, std::string& error)
 {

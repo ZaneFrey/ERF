@@ -60,6 +60,91 @@ make_pert_pres_metadata (const amrex::Vector<amrex::BoxArray>& boxes,
     return output.str();
 }
 
+std::string
+make_gradp_metadata (const amrex::Vector<amrex::BoxArray>& boxes,
+                     const amrex::Vector<double>& counts)
+{
+    std::ostringstream output;
+    output << "ERF interval gradp checkpoint v1\n";
+    output << boxes.size() << " "
+           << erf_interval_means::NumGradPFaceMoments << "\n";
+    for (int lev = 0; lev < static_cast<int>(boxes.size()); ++lev) {
+        output << lev << " " << counts[lev] << "\n";
+        for (int dir = 0; dir < AMREX_SPACEDIM; ++dir) {
+            amrex::convert(boxes[lev], amrex::IntVect::TheDimensionVector(dir)).writeOn(output);
+            output << "\n";
+        }
+    }
+    return output.str();
+}
+
+std::string
+make_tau_metadata (const amrex::Vector<amrex::BoxArray>& boxes,
+                   const amrex::Vector<double>& counts)
+{
+    std::ostringstream output;
+    output << "ERF interval tau checkpoint v1\n";
+    output << boxes.size() << " "
+           << erf_interval_means::NumTauMeanMoments << "\n";
+    for (int lev = 0; lev < static_cast<int>(boxes.size()); ++lev) {
+        output << lev << " " << counts[lev] << "\n";
+        boxes[lev].writeOn(output);
+        output << "\n";
+    }
+    return output.str();
+}
+
+std::string
+make_stress_strain_metadata (const amrex::Vector<amrex::BoxArray>& boxes,
+                             const amrex::Vector<double>& counts)
+{
+    std::ostringstream output;
+    output << "ERF interval stress strain checkpoint v1\n";
+    output << boxes.size() << " "
+           << erf_interval_means::NumStressStrainMoments << "\n";
+    for (int lev = 0; lev < static_cast<int>(boxes.size()); ++lev) {
+        output << lev << " " << counts[lev] << "\n";
+        boxes[lev].writeOn(output);
+        output << "\n";
+    }
+    return output.str();
+}
+
+std::string
+make_sgs_energy_flux_metadata (const amrex::Vector<amrex::BoxArray>& boxes,
+                               const amrex::Vector<double>& counts)
+{
+    std::ostringstream output;
+    output << "ERF interval sgs energy flux checkpoint v1\n";
+    output << boxes.size() << " "
+           << erf_interval_means::NumSGSEnergyFluxFaceMoments << "\n";
+    for (int lev = 0; lev < static_cast<int>(boxes.size()); ++lev) {
+        output << lev << " " << counts[lev] << "\n";
+        for (int dir = 0; dir < AMREX_SPACEDIM; ++dir) {
+            amrex::convert(boxes[lev],
+                           amrex::IntVect::TheDimensionVector(dir)).writeOn(output);
+            output << "\n";
+        }
+    }
+    return output.str();
+}
+
+std::string
+make_triple_velocity_metadata (const amrex::Vector<amrex::BoxArray>& boxes,
+                               const amrex::Vector<double>& counts)
+{
+    std::ostringstream output;
+    output << "ERF interval triple velocity checkpoint v1\n";
+    output << boxes.size() << " "
+           << erf_interval_means::NumTripleVelocityMoments << "\n";
+    for (int lev = 0; lev < static_cast<int>(boxes.size()); ++lev) {
+        output << lev << " " << counts[lev] << "\n";
+        boxes[lev].writeOn(output);
+        output << "\n";
+    }
+    return output.str();
+}
+
 amrex::Vector<amrex::BoxArray>
 make_boxes ()
 {
@@ -112,6 +197,108 @@ TEST(IntervalMeansRestart, ValidatesOptionalPertPresStaggeredMetadata)
 
     metadata.face_components += 1;
     EXPECT_FALSE(erf_interval_means::validate_pert_pres_metadata(
+                     metadata, boxes, counts).empty());
+}
+
+TEST(IntervalMeansRestart, ValidatesOptionalGradPStaggeredMetadata)
+{
+    const auto boxes = make_boxes();
+    const amrex::Vector<double> counts{1.25, 1.25};
+    std::istringstream input(make_gradp_metadata(boxes, counts));
+    erf_interval_means::GradPMetadata metadata;
+    std::string error;
+    ASSERT_TRUE(erf_interval_means::parse_gradp_metadata(input, metadata, error)) << error;
+    EXPECT_TRUE(erf_interval_means::validate_gradp_metadata(
+                    metadata, boxes, counts).empty());
+
+    metadata.face_components += 1;
+    EXPECT_FALSE(erf_interval_means::validate_gradp_metadata(
+                     metadata, boxes, counts).empty());
+}
+
+TEST(IntervalMeansRestart, ValidatesOptionalTauMetadata)
+{
+    const auto boxes = make_boxes();
+    const amrex::Vector<double> counts{4.0, 4.0};
+    std::istringstream input(make_tau_metadata(boxes, counts));
+    erf_interval_means::TauMetadata metadata;
+    std::string error;
+    ASSERT_TRUE(erf_interval_means::parse_tau_metadata(input, metadata, error)) << error;
+    EXPECT_TRUE(erf_interval_means::validate_tau_metadata(
+                    metadata, boxes, counts).empty());
+
+    auto mismatched_counts = counts;
+    mismatched_counts[1] = 5.0;
+    EXPECT_FALSE(erf_interval_means::validate_tau_metadata(
+                     metadata, boxes, mismatched_counts).empty());
+
+    metadata.components += 1;
+    EXPECT_FALSE(erf_interval_means::validate_tau_metadata(
+                     metadata, boxes, counts).empty());
+}
+
+TEST(IntervalMeansRestart, ValidatesOptionalStressStrainMetadata)
+{
+    const auto boxes = make_boxes();
+    const amrex::Vector<double> counts{4.0, 4.0};
+    std::istringstream input(make_stress_strain_metadata(boxes, counts));
+    erf_interval_means::StressStrainMetadata metadata;
+    std::string error;
+    ASSERT_TRUE(erf_interval_means::parse_stress_strain_metadata(
+        input, metadata, error)) << error;
+    EXPECT_TRUE(erf_interval_means::validate_stress_strain_metadata(
+                    metadata, boxes, counts).empty());
+
+    auto mismatched_counts = counts;
+    mismatched_counts[1] = 5.0;
+    EXPECT_FALSE(erf_interval_means::validate_stress_strain_metadata(
+                     metadata, boxes, mismatched_counts).empty());
+
+    metadata.components += 1;
+    EXPECT_FALSE(erf_interval_means::validate_stress_strain_metadata(
+                     metadata, boxes, counts).empty());
+}
+
+TEST(IntervalMeansRestart, ValidatesOptionalSGSEnergyFluxMetadata)
+{
+    const auto boxes = make_boxes();
+    const amrex::Vector<double> counts{4.5, 4.5};
+    std::istringstream input(make_sgs_energy_flux_metadata(boxes, counts));
+    erf_interval_means::SGSEnergyFluxMetadata metadata;
+    std::string error;
+    ASSERT_TRUE(erf_interval_means::parse_sgs_energy_flux_metadata(
+        input, metadata, error)) << error;
+    EXPECT_TRUE(erf_interval_means::validate_sgs_energy_flux_metadata(
+                    metadata, boxes, counts).empty());
+
+    auto mismatched_counts = counts;
+    mismatched_counts[1] = 5.0;
+    EXPECT_FALSE(erf_interval_means::validate_sgs_energy_flux_metadata(
+                     metadata, boxes, mismatched_counts).empty());
+
+    metadata.face_components += 1;
+    EXPECT_FALSE(erf_interval_means::validate_sgs_energy_flux_metadata(
+                     metadata, boxes, counts).empty());
+}
+
+TEST(IntervalMeansRestart, ValidatesOptionalTripleVelocityMetadata)
+{
+    const auto boxes = make_boxes();
+    const amrex::Vector<double> counts{6.0, 6.0};
+    std::istringstream input(make_triple_velocity_metadata(boxes, counts));
+    erf_interval_means::TripleVelocityMetadata metadata;
+    std::string error;
+    ASSERT_TRUE(erf_interval_means::parse_triple_velocity_metadata(
+        input, metadata, error)) << error;
+    EXPECT_TRUE(erf_interval_means::validate_triple_velocity_metadata(
+                    metadata, boxes, counts).empty());
+
+    auto mismatched_counts = counts;
+    mismatched_counts[1] = 7.0;
+    EXPECT_FALSE(erf_interval_means::validate_triple_velocity_metadata(
+                     metadata, boxes, mismatched_counts).empty());
+    metadata.components += 1;
+    EXPECT_FALSE(erf_interval_means::validate_triple_velocity_metadata(
                      metadata, boxes, counts).empty());
 }
 
@@ -204,6 +391,94 @@ TEST(IntervalMeansAccumulation, TimeWeightsHorizontalVelocityCovariance)
     EXPECT_DOUBLE_EQ(v_mean, Real(1.5));
     EXPECT_DOUBLE_EQ(uv_mean, Real(4.5));
     EXPECT_DOUBLE_EQ(uv_mean - u_mean * v_mean, Real(-0.75));
+}
+
+TEST(IntervalMeansAccumulation, TimeWeightsCentralThirdVelocityMoments)
+{
+    using namespace amrex;
+
+    const BoxArray cells(Box(IntVect(0,0,0), IntVect(0,0,0)));
+    const DistributionMapping dm(cells);
+    MultiFab xvel(convert(cells, IntVect(1,0,0)), dm, 1, 0);
+    MultiFab yvel(convert(cells, IntVect(0,1,0)), dm, 1, 0);
+    MultiFab zvel(convert(cells, IntVect(0,0,1)), dm, 1, 0);
+    MultiFab cons(cells, dm, RhoTheta_comp + 1, 0);
+    MultiFab lower(cells, dm, erf_interval_means::NumIntervalMoments, 0);
+    MultiFab third(cells, dm, erf_interval_means::NumTripleVelocityMoments, 0);
+    cons.setVal(Real(0.0));
+    cons.setVal(Real(1.0), Rho_comp, 1, 0);
+    cons.setVal(Real(300.0), RhoTheta_comp, 1, 0);
+
+    const Real expected_central[] = {Real(-9.0), Real(-4.5), Real(4.5)};
+    for (int shifted = 0; shifted < 2; ++shifted) {
+        const Real du = shifted ? Real(10.0) : Real(0.0);
+        const Real dv = shifted ? Real(-7.0) : Real(0.0);
+        const Real dw = shifted ? Real(2.0) : Real(0.0);
+        lower.setVal(Real(0.0));
+        third.setVal(Real(0.0));
+        double accumulated_time = 0.0;
+
+        xvel.setVal(Real(1.0) + du);
+        yvel.setVal(Real(2.0) + dv);
+        zvel.setVal(Real(3.0) + dw);
+        Accumulate_Interval_Means(
+            1.0, accumulated_time, &lower, xvel, yvel, zvel, cons);
+        Accumulate_Interval_TripleVelocity(
+            1.0, &third, xvel, yvel, zvel);
+
+        xvel.setVal(Real(5.0) + du);
+        yvel.setVal(Real(4.0) + dv);
+        zvel.setVal(Real(1.0) + dw);
+        Accumulate_Interval_Means(
+            3.0, accumulated_time, &lower, xvel, yvel, zvel, cons);
+        Accumulate_Interval_TripleVelocity(
+            3.0, &third, xvel, yvel, zvel);
+
+        EXPECT_DOUBLE_EQ(accumulated_time, 4.0);
+        const Real inv = Real(1.0) / static_cast<Real>(accumulated_time);
+        Real lower_sum[erf_interval_means::NumIntervalMoments];
+        for (int component = 0;
+             component < erf_interval_means::NumIntervalMoments; ++component) {
+            lower_sum[component] = lower.sum(component);
+        }
+        Real third_sum[erf_interval_means::NumTripleVelocityMoments];
+        for (int component = 0;
+             component < erf_interval_means::NumTripleVelocityMoments; ++component) {
+            third_sum[component] = third.sum(component);
+        }
+        const int first[] = {
+            erf_interval_means::U,
+            erf_interval_means::V,
+            erf_interval_means::W};
+        const int cross[AMREX_SPACEDIM][AMREX_SPACEDIM] = {
+            {erf_interval_means::UU, erf_interval_means::UV, erf_interval_means::UW},
+            {erf_interval_means::UV, erf_interval_means::VV, erf_interval_means::VW},
+            {erf_interval_means::UW, erf_interval_means::VW, erf_interval_means::WW}};
+        for (int component = 0; component < AMREX_SPACEDIM; ++component) {
+            const Real central =
+                erf_interval_means::third_velocity_central_from_sums(
+                    third_sum[component],
+                    lower_sum[erf_interval_means::U],
+                    lower_sum[erf_interval_means::V],
+                    lower_sum[erf_interval_means::W],
+                    lower_sum[erf_interval_means::UU],
+                    lower_sum[erf_interval_means::VV],
+                    lower_sum[erf_interval_means::WW],
+                    lower_sum[first[component]],
+                    lower_sum[cross[0][component]],
+                    lower_sum[cross[1][component]],
+                    lower_sum[cross[2][component]], inv);
+            EXPECT_NEAR(central, expected_central[component], Real(1.0e-12));
+        }
+        if (!shifted) {
+            EXPECT_DOUBLE_EQ(
+                third_sum[erf_interval_means::UiUiU] * inv, Real(161.0));
+            EXPECT_DOUBLE_EQ(
+                third_sum[erf_interval_means::UiUiV] * inv, Real(133.0));
+            EXPECT_DOUBLE_EQ(
+                third_sum[erf_interval_means::UiUiW] * inv, Real(42.0));
+        }
+    }
 }
 
 TEST(IntervalMeansAccumulation, TimeWeightsFaceCenteredPertPresCovariances)
@@ -321,11 +596,212 @@ TEST(IntervalMeansAccumulation, InterpolatesPertPresToPeriodicAndPhysicalFaces)
     EXPECT_DOUBLE_EQ(periodic[2], Real(4.0));
 }
 
+TEST(IntervalMeansAccumulation, TimeWeightsNativeFacePressureGradients)
+{
+    using namespace amrex;
+
+    const BoxArray cells(Box(IntVect(0,0,0), IntVect(0,0,0)));
+    const DistributionMapping dm(cells);
+    Array<MultiFab, AMREX_SPACEDIM> gradient;
+    Array<MultiFab, AMREX_SPACEDIM> moments;
+    Array<const MultiFab*, AMREX_SPACEDIM> gradient_ptrs;
+    Array<MultiFab*, AMREX_SPACEDIM> moment_ptrs;
+    for (int dir = 0; dir < AMREX_SPACEDIM; ++dir) {
+        const BoxArray faces = convert(cells, IntVect::TheDimensionVector(dir));
+        gradient[dir].define(faces, dm, 1, 0);
+        moments[dir].define(faces, dm, erf_interval_means::NumGradPFaceMoments, 0);
+        moments[dir].setVal(Real(0.0));
+        gradient_ptrs[dir] = &gradient[dir];
+        moment_ptrs[dir] = &moments[dir];
+    }
+
+    auto set_faces = [&] (Real low, Real high) {
+        for (int dir = 0; dir < AMREX_SPACEDIM; ++dir) {
+            IntVect lo(0,0,0);
+            IntVect hi(0,0,0);
+            hi[dir] = 1;
+            gradient[dir][0](lo,0) = low;
+            gradient[dir][0](hi,0) = high;
+        }
+    };
+
+    set_faces(Real(2.0), Real(4.0));
+    Accumulate_Interval_GradP(1.0, moment_ptrs, gradient_ptrs);
+    set_faces(Real(6.0), Real(10.0));
+    Accumulate_Interval_GradP(3.0, moment_ptrs, gradient_ptrs);
+
+    for (int dir = 0; dir < AMREX_SPACEDIM; ++dir) {
+        IntVect lo(0,0,0);
+        IntVect hi(0,0,0);
+        hi[dir] = 1;
+        const Real low_mean = moments[dir][0](lo,erf_interval_means::GradP) / Real(4.0);
+        const Real high_mean = moments[dir][0](hi,erf_interval_means::GradP) / Real(4.0);
+        EXPECT_DOUBLE_EQ(low_mean, Real(5.0));
+        EXPECT_DOUBLE_EQ(high_mean, Real(8.5));
+        EXPECT_DOUBLE_EQ(Real(0.5) * (low_mean + high_mean), Real(6.75));
+    }
+}
+
+TEST(IntervalMeansAccumulation, TimeWeightsCellCenteredTotalStress)
+{
+    using namespace amrex;
+
+    const BoxArray cells(Box(IntVect(0,0,0), IntVect(0,0,0)));
+    const DistributionMapping dm(cells);
+    Vector<std::unique_ptr<MultiFab>> tau(9);
+    tau[TauType::tau11] = std::make_unique<MultiFab>(cells, dm, 1, 0);
+    tau[TauType::tau22] = std::make_unique<MultiFab>(cells, dm, 1, 0);
+    tau[TauType::tau33] = std::make_unique<MultiFab>(cells, dm, 1, 0);
+    tau[TauType::tau12] = std::make_unique<MultiFab>(
+        convert(cells, IntVect(1,1,0)), dm, 1, 0);
+    tau[TauType::tau13] = std::make_unique<MultiFab>(
+        convert(cells, IntVect(1,0,1)), dm, 1, 0);
+    tau[TauType::tau23] = std::make_unique<MultiFab>(
+        convert(cells, IntVect(0,1,1)), dm, 1, 0);
+    MultiFab moments(cells, dm, erf_interval_means::NumTauMeanMoments, 0);
+    moments.setVal(Real(0.0));
+
+    auto set_four_edges = [] (MultiFab& field, int dir1, int dir2, Real average) {
+        IntVect p0(0,0,0), p1(0,0,0), p2(0,0,0), p3(0,0,0);
+        p1[dir1] = 1;
+        p2[dir2] = 1;
+        p3[dir1] = 1;
+        p3[dir2] = 1;
+        field[0](p0,0) = average - Real(3.0);
+        field[0](p1,0) = average - Real(1.0);
+        field[0](p2,0) = average + Real(1.0);
+        field[0](p3,0) = average + Real(3.0);
+    };
+    auto set_stress = [&] (Real diagonal, Real off_diagonal) {
+        tau[TauType::tau11]->setVal(diagonal);
+        tau[TauType::tau22]->setVal(diagonal + Real(1.0));
+        tau[TauType::tau33]->setVal(diagonal + Real(2.0));
+        set_four_edges(*tau[TauType::tau12], 0, 1, off_diagonal);
+        set_four_edges(*tau[TauType::tau13], 0, 2, off_diagonal + Real(1.0));
+        set_four_edges(*tau[TauType::tau23], 1, 2, off_diagonal + Real(2.0));
+    };
+
+    set_stress(Real(2.0), Real(5.0));
+    Accumulate_Interval_Tau(1.0, &moments, tau);
+    set_stress(Real(6.0), Real(9.0));
+    Accumulate_Interval_Tau(3.0, &moments, tau);
+
+    const Real expected[] = {Real(5.0), Real(8.0), Real(9.0),
+                             Real(6.0), Real(10.0), Real(7.0)};
+    for (int comp = 0; comp < erf_interval_means::NumTauMeanMoments; ++comp) {
+        EXPECT_DOUBLE_EQ(moments.sum(comp) / Real(4.0), expected[comp]);
+    }
+}
+
+TEST(IntervalMeansAccumulation, TimeWeightsNativeFaceSGSEnergyFlux)
+{
+    using namespace amrex;
+
+    const BoxArray cells(Box(IntVect(0,0,0), IntVect(0,0,0)));
+    const DistributionMapping dm(cells);
+    Vector<std::unique_ptr<MultiFab>> tau(9);
+    tau[TauType::tau11] = std::make_unique<MultiFab>(cells, dm, 1, 1);
+    tau[TauType::tau22] = std::make_unique<MultiFab>(cells, dm, 1, 1);
+    tau[TauType::tau33] = std::make_unique<MultiFab>(cells, dm, 1, 1);
+    tau[TauType::tau12] = std::make_unique<MultiFab>(
+        convert(cells, IntVect(1,1,0)), dm, 1, 1);
+    tau[TauType::tau13] = std::make_unique<MultiFab>(
+        convert(cells, IntVect(1,0,1)), dm, 1, 1);
+    tau[TauType::tau23] = std::make_unique<MultiFab>(
+        convert(cells, IntVect(0,1,1)), dm, 1, 1);
+    tau[TauType::tau11]->setVal(Real(1.0));
+    tau[TauType::tau22]->setVal(Real(2.0));
+    tau[TauType::tau33]->setVal(Real(3.0));
+    tau[TauType::tau12]->setVal(Real(5.0));
+    tau[TauType::tau13]->setVal(Real(6.0));
+    tau[TauType::tau23]->setVal(Real(7.0));
+
+    Array<MultiFab, AMREX_SPACEDIM> velocity;
+    Array<MultiFab, AMREX_SPACEDIM> moments;
+    Array<const MultiFab*, AMREX_SPACEDIM> velocity_ptrs;
+    Array<MultiFab*, AMREX_SPACEDIM> moment_ptrs;
+    const Real first_velocity[] = {Real(2.0), Real(3.0), Real(4.0)};
+    for (int dir = 0; dir < AMREX_SPACEDIM; ++dir) {
+        const BoxArray faces = convert(cells, IntVect::TheDimensionVector(dir));
+        velocity[dir].define(faces, dm, 1, 1);
+        moments[dir].define(
+            faces, dm, erf_interval_means::NumSGSEnergyFluxFaceMoments, 0);
+        velocity[dir].setVal(first_velocity[dir]);
+        moments[dir].setVal(Real(0.0));
+        velocity_ptrs[dir] = &velocity[dir];
+        moment_ptrs[dir] = &moments[dir];
+    }
+
+    // Missing transpose storage must use the symmetric aliases 21=12,
+    // 31=13, and 32=23.
+    Accumulate_Interval_SGSEnergyFlux(
+        1.0, moment_ptrs, tau, velocity_ptrs);
+    for (int dir = 0; dir < AMREX_SPACEDIM; ++dir) {
+        velocity[dir].setVal(Real(2.0) * first_velocity[dir]);
+    }
+    Accumulate_Interval_SGSEnergyFlux(
+        3.0, moment_ptrs, tau, velocity_ptrs);
+
+    const Real expected[] = {Real(71.75), Real(77.0), Real(78.75)};
+    const IntVect sample(0,0,0);
+    for (int dir = 0; dir < AMREX_SPACEDIM; ++dir) {
+        EXPECT_DOUBLE_EQ(
+            moments[dir][0](sample, erf_interval_means::SGSEnergyFlux) /
+                Real(4.0),
+            expected[dir]);
+    }
+
+    // When terrain/implicit-diffusion storage provides distinct transpose
+    // stresses, the contraction must use those actual components.
+    tau[TauType::tau21] = std::make_unique<MultiFab>(
+        convert(cells, IntVect(1,1,0)), dm, 1, 1);
+    tau[TauType::tau31] = std::make_unique<MultiFab>(
+        convert(cells, IntVect(1,0,1)), dm, 1, 1);
+    tau[TauType::tau32] = std::make_unique<MultiFab>(
+        convert(cells, IntVect(0,1,1)), dm, 1, 1);
+    tau[TauType::tau21]->setVal(Real(8.0));
+    tau[TauType::tau31]->setVal(Real(9.0));
+    tau[TauType::tau32]->setVal(Real(10.0));
+    for (int dir = 0; dir < AMREX_SPACEDIM; ++dir) {
+        velocity[dir].setVal(first_velocity[dir]);
+        moments[dir].setVal(Real(0.0));
+    }
+    Accumulate_Interval_SGSEnergyFlux(
+        1.0, moment_ptrs, tau, velocity_ptrs);
+    const Real distinct_expected[] = {Real(62.0), Real(56.0), Real(45.0)};
+    for (int dir = 0; dir < AMREX_SPACEDIM; ++dir) {
+        EXPECT_DOUBLE_EQ(
+            moments[dir][0](sample, erf_interval_means::SGSEnergyFlux),
+            distinct_expected[dir]);
+    }
+}
+
 TEST(IntervalMeansRestart, LegacyCheckpointFallbackPreservesTimeResetSemantics)
 {
     EXPECT_EQ(erf_interval_means::legacy_reset_done(true, 10.0, 10.0), 1);
     EXPECT_EQ(erf_interval_means::legacy_reset_done(true, 9.0, 10.0), 0);
     EXPECT_EQ(erf_interval_means::legacy_reset_done(false, 20.0, 10.0), 0);
+}
+
+TEST(IntervalMeansRestart, StressStrainAccumulatorUsesSharedTimeWeighting)
+{
+    using namespace amrex;
+    const BoxArray boxes(Box(IntVect(0,0,0), IntVect(1,1,1)));
+    const DistributionMapping dm(boxes);
+    MultiFab instantaneous(boxes, dm, 1, 0);
+    MultiFab moments(
+        boxes, dm, erf_interval_means::NumStressStrainMoments, 0);
+    moments.setVal(Real(0.0));
+
+    instantaneous.setVal(Real(-2.0));
+    Accumulate_Interval_StressStrain(1.0, &moments, &instantaneous);
+    instantaneous.setVal(Real(-6.0));
+    Accumulate_Interval_StressStrain(3.0, &moments, &instantaneous);
+
+    const IntVect sample(0,0,0);
+    EXPECT_DOUBLE_EQ(
+        moments[0](sample, erf_interval_means::TotalStressStrain) / Real(4.0),
+        Real(-5.0));
 }
 
 TEST(IntervalMeansRestart, InitializationPreservesRestoredWindow)

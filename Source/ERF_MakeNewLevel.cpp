@@ -1506,6 +1506,16 @@ ERF::ClearLevel (int lev)
     for (auto& face_moment : interval_pert_pres_face[lev]) {
         face_moment.reset();
     }
+    for (auto& face_moment : interval_gradp_face[lev]) {
+        face_moment.reset();
+    }
+    interval_tau[lev].reset();
+    interval_triple_velocity[lev].reset();
+    interval_stress_strain[lev].reset();
+    stress_strain_inst[lev].reset();
+    for (auto& face_moment : interval_sgs_energy_flux_face[lev]) {
+        face_moment.reset();
+    }
     if (solverChoice.anelastic[lev] == 0) {
         lagged_delta_rt[lev].clear();
     }

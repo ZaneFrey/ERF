@@ -586,6 +586,47 @@ ERF::Advance (int lev, double time, double dt_lev, int iteration, int /*ncycle*/
                 dt_lev, interval_pert_pres[lev].get(), face_moments,
                 pp_inc[lev], velocity, geom[lev], eb_factory);
         }
+        if (solverChoice.compute_mean_gradp) {
+            Array<MultiFab*, AMREX_SPACEDIM> face_moments{
+                AMREX_D_DECL(interval_gradp_face[lev][0].get(),
+                             interval_gradp_face[lev][1].get(),
+                             interval_gradp_face[lev][2].get())};
+            Array<const MultiFab*, AMREX_SPACEDIM> pressure_gradient{
+                AMREX_D_DECL(&gradp[lev][GpVars::gpx],
+                             &gradp[lev][GpVars::gpy],
+                             &gradp[lev][GpVars::gpz])};
+            const EBFArrayBoxFactory* eb_factory =
+                solverChoice.terrain_type == TerrainType::EB
+                    ? get_eb(lev).get_const_factory().get() : nullptr;
+            Accumulate_Interval_GradP(
+                dt_lev, face_moments, pressure_gradient, eb_factory);
+        }
+        if (solverChoice.compute_mean_tau) {
+            Accumulate_Interval_Tau(dt_lev, interval_tau[lev].get(), Tau[lev]);
+        }
+        if (solverChoice.compute_mean_triple_velocity) {
+            Accumulate_Interval_TripleVelocity(
+                dt_lev, interval_triple_velocity[lev].get(),
+                U_new, V_new, W_new);
+        }
+        if (solverChoice.compute_mean_sgs_energy_flux) {
+            Array<MultiFab*, AMREX_SPACEDIM> flux_moments{
+                AMREX_D_DECL(interval_sgs_energy_flux_face[lev][0].get(),
+                             interval_sgs_energy_flux_face[lev][1].get(),
+                             interval_sgs_energy_flux_face[lev][2].get())};
+            Array<const MultiFab*, AMREX_SPACEDIM> velocity{
+                AMREX_D_DECL(&U_new, &V_new, &W_new)};
+            const EBFArrayBoxFactory* eb_factory =
+                solverChoice.terrain_type == TerrainType::EB
+                    ? get_eb(lev).get_const_factory().get() : nullptr;
+            Accumulate_Interval_SGSEnergyFlux(
+                dt_lev, flux_moments, Tau[lev], velocity, eb_factory);
+        }
+        if (solverChoice.compute_mean_stress_strain) {
+            Accumulate_Interval_StressStrain(
+                dt_lev, interval_stress_strain[lev].get(),
+                stress_strain_inst[lev].get());
+        }
     }
 
 }

@@ -369,6 +369,21 @@ ERF::ResetIntervalMeans ()
                 face_moment->setVal(zero);
             }
         }
+        for (auto& face_moment : interval_gradp_face[lev]) {
+            if (face_moment != nullptr) face_moment->setVal(zero);
+        }
+        if (interval_tau[lev] != nullptr) {
+            interval_tau[lev]->setVal(zero);
+        }
+        if (interval_triple_velocity[lev] != nullptr) {
+            interval_triple_velocity[lev]->setVal(zero);
+        }
+        for (auto& face_moment : interval_sgs_energy_flux_face[lev]) {
+            if (face_moment != nullptr) face_moment->setVal(zero);
+        }
+        if (interval_stress_strain[lev] != nullptr) {
+            interval_stress_strain[lev]->setVal(zero);
+        }
     }
 }
 
@@ -2052,6 +2067,57 @@ ERF::InitData_post ()
                     Accumulate_Interval_PertPres(
                         dt[lev], interval_pert_pres[lev].get(), face_moments,
                         pp_inc[lev], velocity, geom[lev], eb_factory);
+                }
+                if (solverChoice.compute_mean_gradp) {
+                    Array<MultiFab*, AMREX_SPACEDIM> face_moments{
+                        AMREX_D_DECL(interval_gradp_face[lev][0].get(),
+                                     interval_gradp_face[lev][1].get(),
+                                     interval_gradp_face[lev][2].get())};
+                    Array<const MultiFab*, AMREX_SPACEDIM> pressure_gradient{
+                        AMREX_D_DECL(&gradp[lev][GpVars::gpx],
+                                     &gradp[lev][GpVars::gpy],
+                                     &gradp[lev][GpVars::gpz])};
+                    const EBFArrayBoxFactory* eb_factory =
+                        solverChoice.terrain_type == TerrainType::EB
+                            ? get_eb(lev).get_const_factory().get() : nullptr;
+                    Accumulate_Interval_GradP(
+                        dt[lev], face_moments, pressure_gradient, eb_factory);
+                }
+                if (solverChoice.compute_mean_tau) {
+                    // Tau is initialized to zero before the first RHS evaluation;
+                    // retain the historical interval convention by contributing
+                    // that zero initial sample to the shared normalizer.
+                    Accumulate_Interval_Tau(
+                        dt[lev], interval_tau[lev].get(), Tau[lev]);
+                }
+                if (solverChoice.compute_mean_triple_velocity) {
+                    Accumulate_Interval_TripleVelocity(
+                        dt[lev], interval_triple_velocity[lev].get(),
+                        vars_new[lev][Vars::xvel],
+                        vars_new[lev][Vars::yvel],
+                        vars_new[lev][Vars::zvel]);
+                }
+                if (solverChoice.compute_mean_sgs_energy_flux) {
+                    Array<MultiFab*, AMREX_SPACEDIM> flux_moments{
+                        AMREX_D_DECL(interval_sgs_energy_flux_face[lev][0].get(),
+                                     interval_sgs_energy_flux_face[lev][1].get(),
+                                     interval_sgs_energy_flux_face[lev][2].get())};
+                    Array<const MultiFab*, AMREX_SPACEDIM> velocity{
+                        AMREX_D_DECL(&vars_new[lev][Vars::xvel],
+                                     &vars_new[lev][Vars::yvel],
+                                     &vars_new[lev][Vars::zvel])};
+                    const EBFArrayBoxFactory* eb_factory =
+                        solverChoice.terrain_type == TerrainType::EB
+                            ? get_eb(lev).get_const_factory().get() : nullptr;
+                    // Tau is zero before the first RHS evaluation, so this is
+                    // the zero initial sample used by the base interval window.
+                    Accumulate_Interval_SGSEnergyFlux(
+                        dt[lev], flux_moments, Tau[lev], velocity, eb_factory);
+                }
+                if (solverChoice.compute_mean_stress_strain) {
+                    Accumulate_Interval_StressStrain(
+                        dt[lev], interval_stress_strain[lev].get(),
+                        stress_strain_inst[lev].get());
                 }
             }
         }

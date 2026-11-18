@@ -405,6 +405,101 @@ ERF::WriteCheckpointFile () const
         }
     }
 
+    if (solverChoice.compute_mean_gradp && ParallelDescriptor::IOProcessor()) {
+        const std::string metadata_name(checkpointname + "/IntervalGradPHeader");
+        std::ofstream metadata(metadata_name, std::ofstream::out |
+                                            std::ofstream::trunc |
+                                            std::ofstream::binary);
+        if (!metadata.good()) FileOpenFailed(metadata_name);
+        metadata.precision(17);
+        metadata << "ERF interval gradp checkpoint v1\n";
+        metadata << finest_level + 1 << " "
+                 << erf_interval_means::NumGradPFaceMoments << "\n";
+        for (int lev = 0; lev <= finest_level; ++lev) {
+            metadata << lev << " " << t_mean_cnt[lev] << "\n";
+            for (int dir = 0; dir < AMREX_SPACEDIM; ++dir) {
+                interval_gradp_face[lev][dir]->boxArray().writeOn(metadata);
+                metadata << "\n";
+            }
+        }
+    }
+
+    if (solverChoice.compute_mean_tau && ParallelDescriptor::IOProcessor()) {
+        const std::string metadata_name(checkpointname + "/IntervalTauHeader");
+        std::ofstream metadata(metadata_name, std::ofstream::out |
+                                            std::ofstream::trunc |
+                                            std::ofstream::binary);
+        if (!metadata.good()) FileOpenFailed(metadata_name);
+        metadata.precision(17);
+        metadata << "ERF interval tau checkpoint v1\n";
+        metadata << finest_level + 1 << " "
+                 << erf_interval_means::NumTauMeanMoments << "\n";
+        for (int lev = 0; lev <= finest_level; ++lev) {
+            metadata << lev << " " << t_mean_cnt[lev] << "\n";
+            interval_tau[lev]->boxArray().writeOn(metadata);
+            metadata << "\n";
+        }
+    }
+
+    if (solverChoice.compute_mean_stress_strain &&
+        ParallelDescriptor::IOProcessor()) {
+        const std::string metadata_name(
+            checkpointname + "/IntervalStressStrainHeader");
+        std::ofstream metadata(metadata_name, std::ofstream::out |
+                                              std::ofstream::trunc |
+                                              std::ofstream::binary);
+        if (!metadata.good()) FileOpenFailed(metadata_name);
+        metadata.precision(17);
+        metadata << "ERF interval stress strain checkpoint v1\n";
+        metadata << finest_level + 1 << " "
+                 << erf_interval_means::NumStressStrainMoments << "\n";
+        for (int lev = 0; lev <= finest_level; ++lev) {
+            metadata << lev << " " << t_mean_cnt[lev] << "\n";
+            interval_stress_strain[lev]->boxArray().writeOn(metadata);
+            metadata << "\n";
+        }
+    }
+
+    if (solverChoice.compute_mean_triple_velocity &&
+        ParallelDescriptor::IOProcessor()) {
+        const std::string metadata_name(
+            checkpointname + "/IntervalTripleVelocityHeader");
+        std::ofstream metadata(metadata_name, std::ofstream::out |
+                                              std::ofstream::trunc |
+                                              std::ofstream::binary);
+        if (!metadata.good()) FileOpenFailed(metadata_name);
+        metadata.precision(17);
+        metadata << "ERF interval triple velocity checkpoint v1\n";
+        metadata << finest_level + 1 << " "
+                 << erf_interval_means::NumTripleVelocityMoments << "\n";
+        for (int lev = 0; lev <= finest_level; ++lev) {
+            metadata << lev << " " << t_mean_cnt[lev] << "\n";
+            interval_triple_velocity[lev]->boxArray().writeOn(metadata);
+            metadata << "\n";
+        }
+    }
+
+    if (solverChoice.compute_mean_sgs_energy_flux &&
+        ParallelDescriptor::IOProcessor()) {
+        const std::string metadata_name(
+            checkpointname + "/IntervalSGSEnergyFluxHeader");
+        std::ofstream metadata(metadata_name, std::ofstream::out |
+                                              std::ofstream::trunc |
+                                              std::ofstream::binary);
+        if (!metadata.good()) FileOpenFailed(metadata_name);
+        metadata.precision(17);
+        metadata << "ERF interval sgs energy flux checkpoint v1\n";
+        metadata << finest_level + 1 << " "
+                 << erf_interval_means::NumSGSEnergyFluxFaceMoments << "\n";
+        for (int lev = 0; lev <= finest_level; ++lev) {
+            metadata << lev << " " << t_mean_cnt[lev] << "\n";
+            for (int dir = 0; dir < AMREX_SPACEDIM; ++dir) {
+                interval_sgs_energy_flux_face[lev][dir]->boxArray().writeOn(metadata);
+                metadata << "\n";
+            }
+        }
+    }
+
     // write the MultiFab data to, e.g., chk00010/Level_0/
     // Here we make copies of the MultiFab with no ghost cells
     for (int lev = 0; lev <= finest_level; ++lev)
@@ -511,6 +606,50 @@ ERF::WriteCheckpointFile () const
             for (int dir = 0; dir < AMREX_SPACEDIM; ++dir) {
                 VisMF::Write(*interval_pert_pres_face[lev][dir],
                              MultiFabFileFullPrefix(lev, checkpointname, "Level_", face_name[dir]));
+            }
+        }
+        if (solverChoice.compute_mean_gradp) {
+            static constexpr const char* face_name[] = {
+                "IntervalGradPX", "IntervalGradPY", "IntervalGradPZ"};
+            for (int dir = 0; dir < AMREX_SPACEDIM; ++dir) {
+                VisMF::Write(*interval_gradp_face[lev][dir],
+                             MultiFabFileFullPrefix(lev, checkpointname, "Level_", face_name[dir]));
+            }
+        }
+        if (solverChoice.compute_mean_tau) {
+            AMREX_ALWAYS_ASSERT(interval_tau[lev] != nullptr);
+            AMREX_ALWAYS_ASSERT(interval_tau[lev]->nComp() ==
+                                erf_interval_means::NumTauMeanMoments);
+            VisMF::Write(*interval_tau[lev],
+                         MultiFabFileFullPrefix(lev, checkpointname, "Level_", "IntervalTau"));
+        }
+        if (solverChoice.compute_mean_stress_strain) {
+            AMREX_ALWAYS_ASSERT(interval_stress_strain[lev] != nullptr);
+            AMREX_ALWAYS_ASSERT(
+                interval_stress_strain[lev]->nComp() ==
+                erf_interval_means::NumStressStrainMoments);
+            VisMF::Write(
+                *interval_stress_strain[lev],
+                MultiFabFileFullPrefix(
+                    lev, checkpointname, "Level_", "IntervalStressStrain"));
+        }
+        if (solverChoice.compute_mean_triple_velocity) {
+            AMREX_ALWAYS_ASSERT(interval_triple_velocity[lev] != nullptr);
+            AMREX_ALWAYS_ASSERT(interval_triple_velocity[lev]->nComp() ==
+                                erf_interval_means::NumTripleVelocityMoments);
+            VisMF::Write(
+                *interval_triple_velocity[lev],
+                MultiFabFileFullPrefix(
+                    lev, checkpointname, "Level_", "IntervalTripleVelocity"));
+        }
+        if (solverChoice.compute_mean_sgs_energy_flux) {
+            static constexpr const char* face_name[] = {
+                "IntervalSGSEnergyFluxX", "IntervalSGSEnergyFluxY",
+                "IntervalSGSEnergyFluxZ"};
+            for (int dir = 0; dir < AMREX_SPACEDIM; ++dir) {
+                VisMF::Write(*interval_sgs_energy_flux_face[lev][dir],
+                             MultiFabFileFullPrefix(
+                                 lev, checkpointname, "Level_", face_name[dir]));
             }
         }
 
@@ -1187,9 +1326,33 @@ ERF::ReadCheckpointFile ()
     }
 
     const std::string pert_pres_header(restart_chkfile + "/IntervalPertPresHeader");
+    const std::string gradp_header(restart_chkfile + "/IntervalGradPHeader");
+    const std::string tau_header(restart_chkfile + "/IntervalTauHeader");
+    const std::string stress_strain_header(
+        restart_chkfile + "/IntervalStressStrainHeader");
+    const std::string triple_velocity_header(
+        restart_chkfile + "/IntervalTripleVelocityHeader");
+    const std::string sgs_energy_flux_header(
+        restart_chkfile + "/IntervalSGSEnergyFluxHeader");
     const bool missing_pert_pres = solverChoice.compute_mean_pert_pres &&
                                    !amrex::FileExists(pert_pres_header);
-    const bool reset_for_missing_optional = missing_pert_pres;
+    const bool missing_gradp = solverChoice.compute_mean_gradp &&
+                               !amrex::FileExists(gradp_header);
+    const bool missing_tau = solverChoice.compute_mean_tau &&
+                             !amrex::FileExists(tau_header);
+    const bool missing_stress_strain =
+        solverChoice.compute_mean_stress_strain &&
+        !amrex::FileExists(stress_strain_header);
+    const bool missing_triple_velocity =
+        solverChoice.compute_mean_triple_velocity &&
+        !amrex::FileExists(triple_velocity_header);
+    const bool missing_sgs_energy_flux =
+        solverChoice.compute_mean_sgs_energy_flux &&
+        !amrex::FileExists(sgs_energy_flux_header);
+    const bool reset_for_missing_optional =
+        missing_pert_pres || missing_gradp || missing_tau ||
+        missing_triple_velocity ||
+        missing_sgs_energy_flux || missing_stress_strain;
     if (reset_for_missing_optional) {
         // Every optional moment uses the base interval normalizer, so none may
         // retain an older window when any enabled optional state is absent.
@@ -1251,6 +1414,206 @@ ERF::ReadCheckpointFile ()
                     !(interval_pert_pres_face[lev][dir]->boxArray() == expected_faces)) {
                     Abort("Interval pert_pres face data layout is invalid at level " +
                           std::to_string(lev));
+                }
+            }
+        }
+    }
+
+    if (solverChoice.compute_mean_gradp && !reset_for_missing_optional) {
+        Vector<char> metadata_chars;
+        ParallelDescriptor::ReadAndBcastFile(gradp_header, metadata_chars);
+        std::istringstream metadata(std::string(metadata_chars.dataPtr()),
+                                    std::istringstream::in);
+        erf_interval_means::GradPMetadata parsed_metadata;
+        std::string metadata_error;
+        if (!erf_interval_means::parse_gradp_metadata(
+                metadata, parsed_metadata, metadata_error)) {
+            Abort("Invalid interval gradp checkpoint metadata in '" +
+                  gradp_header + "': " + metadata_error);
+        }
+        const std::string validation_error =
+            erf_interval_means::validate_gradp_metadata(
+                parsed_metadata, grids, t_mean_cnt);
+        if (!validation_error.empty()) {
+            Abort(validation_error + " in '" + gradp_header + "'");
+        }
+
+        static constexpr const char* face_name[] = {
+            "IntervalGradPX", "IntervalGradPY", "IntervalGradPZ"};
+        for (int lev = 0; lev <= finest_level; ++lev) {
+            for (int dir = 0; dir < AMREX_SPACEDIM; ++dir) {
+                const std::string mf_name = MultiFabFileFullPrefix(
+                    lev, restart_chkfile, "Level_", face_name[dir]);
+                if (!amrex::FileExists(mf_name + "_H")) {
+                    Abort("Interval gradp metadata exists but face data is missing at level " +
+                          std::to_string(lev));
+                }
+                VisMF::Read(*interval_gradp_face[lev][dir], mf_name);
+                const BoxArray expected_faces = convert(
+                    grids[lev], IntVect::TheDimensionVector(dir));
+                if (interval_gradp_face[lev][dir]->nComp() !=
+                        erf_interval_means::NumGradPFaceMoments ||
+                    !(interval_gradp_face[lev][dir]->boxArray() == expected_faces)) {
+                    Abort("Interval gradp face data layout is invalid at level " +
+                          std::to_string(lev));
+                }
+            }
+        }
+    }
+
+    if (solverChoice.compute_mean_tau && !reset_for_missing_optional) {
+        Vector<char> metadata_chars;
+        ParallelDescriptor::ReadAndBcastFile(tau_header, metadata_chars);
+        std::istringstream metadata(std::string(metadata_chars.dataPtr()),
+                                    std::istringstream::in);
+        erf_interval_means::TauMetadata parsed_metadata;
+        std::string metadata_error;
+        if (!erf_interval_means::parse_tau_metadata(
+                metadata, parsed_metadata, metadata_error)) {
+            Abort("Invalid interval tau checkpoint metadata in '" +
+                  tau_header + "': " + metadata_error);
+        }
+        const std::string validation_error =
+            erf_interval_means::validate_tau_metadata(
+                parsed_metadata, grids, t_mean_cnt);
+        if (!validation_error.empty()) {
+            Abort(validation_error + " in '" + tau_header + "'");
+        }
+
+        for (int lev = 0; lev <= finest_level; ++lev) {
+            const std::string mf_name = MultiFabFileFullPrefix(
+                lev, restart_chkfile, "Level_", "IntervalTau");
+            if (!amrex::FileExists(mf_name + "_H")) {
+                Abort("Interval tau metadata exists but data is missing at level " +
+                      std::to_string(lev));
+            }
+            VisMF::Read(*interval_tau[lev], mf_name);
+            if (interval_tau[lev]->nComp() !=
+                    erf_interval_means::NumTauMeanMoments ||
+                !(interval_tau[lev]->boxArray() == grids[lev])) {
+                Abort("Interval tau data layout is invalid at level " +
+                      std::to_string(lev));
+            }
+        }
+    }
+
+    if (solverChoice.compute_mean_stress_strain &&
+        !reset_for_missing_optional) {
+        Vector<char> metadata_chars;
+        ParallelDescriptor::ReadAndBcastFile(
+            stress_strain_header, metadata_chars);
+        std::istringstream metadata(std::string(metadata_chars.dataPtr()),
+                                    std::istringstream::in);
+        erf_interval_means::StressStrainMetadata parsed_metadata;
+        std::string metadata_error;
+        if (!erf_interval_means::parse_stress_strain_metadata(
+                metadata, parsed_metadata, metadata_error)) {
+            Abort("Invalid interval stress strain checkpoint metadata in '" +
+                  stress_strain_header + "': " + metadata_error);
+        }
+        const std::string validation_error =
+            erf_interval_means::validate_stress_strain_metadata(
+                parsed_metadata, grids, t_mean_cnt);
+        if (!validation_error.empty()) {
+            Abort(validation_error + " in '" + stress_strain_header + "'");
+        }
+
+        for (int lev = 0; lev <= finest_level; ++lev) {
+            const std::string mf_name = MultiFabFileFullPrefix(
+                lev, restart_chkfile, "Level_", "IntervalStressStrain");
+            if (!amrex::FileExists(mf_name + "_H")) {
+                Abort("Interval stress strain metadata exists but data is missing at level " +
+                      std::to_string(lev));
+            }
+            VisMF::Read(*interval_stress_strain[lev], mf_name);
+            if (interval_stress_strain[lev]->nComp() !=
+                    erf_interval_means::NumStressStrainMoments ||
+                !(interval_stress_strain[lev]->boxArray() == grids[lev])) {
+                Abort("Interval stress strain data layout is invalid at level " +
+                      std::to_string(lev));
+            }
+        }
+    }
+
+    if (solverChoice.compute_mean_triple_velocity &&
+        !reset_for_missing_optional) {
+        Vector<char> metadata_chars;
+        ParallelDescriptor::ReadAndBcastFile(
+            triple_velocity_header, metadata_chars);
+        std::istringstream metadata(std::string(metadata_chars.dataPtr()),
+                                    std::istringstream::in);
+        erf_interval_means::TripleVelocityMetadata parsed_metadata;
+        std::string metadata_error;
+        if (!erf_interval_means::parse_triple_velocity_metadata(
+                metadata, parsed_metadata, metadata_error)) {
+            Abort("Invalid interval triple velocity checkpoint metadata in '" +
+                  triple_velocity_header + "': " + metadata_error);
+        }
+        const std::string validation_error =
+            erf_interval_means::validate_triple_velocity_metadata(
+                parsed_metadata, grids, t_mean_cnt);
+        if (!validation_error.empty()) {
+            Abort(validation_error + " in '" + triple_velocity_header + "'");
+        }
+
+        for (int lev = 0; lev <= finest_level; ++lev) {
+            const std::string mf_name = MultiFabFileFullPrefix(
+                lev, restart_chkfile, "Level_", "IntervalTripleVelocity");
+            if (!amrex::FileExists(mf_name + "_H")) {
+                Abort("Interval triple velocity metadata exists but data is "
+                      "missing at level " + std::to_string(lev));
+            }
+            VisMF::Read(*interval_triple_velocity[lev], mf_name);
+            if (interval_triple_velocity[lev]->nComp() !=
+                    erf_interval_means::NumTripleVelocityMoments ||
+                !(interval_triple_velocity[lev]->boxArray() == grids[lev])) {
+                Abort("Interval triple velocity data layout is invalid at level " +
+                      std::to_string(lev));
+            }
+        }
+    }
+
+    if (solverChoice.compute_mean_sgs_energy_flux &&
+        !reset_for_missing_optional) {
+        Vector<char> metadata_chars;
+        ParallelDescriptor::ReadAndBcastFile(
+            sgs_energy_flux_header, metadata_chars);
+        std::istringstream metadata(std::string(metadata_chars.dataPtr()),
+                                    std::istringstream::in);
+        erf_interval_means::SGSEnergyFluxMetadata parsed_metadata;
+        std::string metadata_error;
+        if (!erf_interval_means::parse_sgs_energy_flux_metadata(
+                metadata, parsed_metadata, metadata_error)) {
+            Abort("Invalid interval sgs energy flux checkpoint metadata in '" +
+                  sgs_energy_flux_header + "': " + metadata_error);
+        }
+        const std::string validation_error =
+            erf_interval_means::validate_sgs_energy_flux_metadata(
+                parsed_metadata, grids, t_mean_cnt);
+        if (!validation_error.empty()) {
+            Abort(validation_error + " in '" + sgs_energy_flux_header + "'");
+        }
+
+        static constexpr const char* face_name[] = {
+            "IntervalSGSEnergyFluxX", "IntervalSGSEnergyFluxY",
+            "IntervalSGSEnergyFluxZ"};
+        for (int lev = 0; lev <= finest_level; ++lev) {
+            for (int dir = 0; dir < AMREX_SPACEDIM; ++dir) {
+                const std::string mf_name = MultiFabFileFullPrefix(
+                    lev, restart_chkfile, "Level_", face_name[dir]);
+                if (!amrex::FileExists(mf_name + "_H")) {
+                    Abort("Interval sgs energy flux metadata exists but face data "
+                          "is missing at level " + std::to_string(lev));
+                }
+                VisMF::Read(*interval_sgs_energy_flux_face[lev][dir], mf_name);
+                const BoxArray expected_faces = convert(
+                    grids[lev], IntVect::TheDimensionVector(dir));
+                if (interval_sgs_energy_flux_face[lev][dir]->nComp() !=
+                        erf_interval_means::NumSGSEnergyFluxFaceMoments ||
+                    !(interval_sgs_energy_flux_face[lev][dir]->boxArray() ==
+                      expected_faces)) {
+                    Abort("Interval sgs energy flux face data layout is invalid "
+                          "at level " + std::to_string(lev));
                 }
             }
         }

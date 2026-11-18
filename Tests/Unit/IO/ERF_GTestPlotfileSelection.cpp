@@ -466,6 +466,21 @@ TEST(Plotfile3DSelection, OptionalStorageGroupsAreExplicit)
     EXPECT_FALSE(erf_plotfile::plot3d_fixed_variable_available("tke_resolved", caps));
     EXPECT_FALSE(erf_plotfile::plot3d_fixed_variable_available("pert_pres_mean", caps));
     EXPECT_FALSE(erf_plotfile::plot3d_fixed_variable_available("pert_pres_u_fluct", caps));
+    EXPECT_FALSE(erf_plotfile::plot3d_fixed_variable_available("dpdx_mean", caps));
+    EXPECT_FALSE(erf_plotfile::plot3d_fixed_variable_available("Tau13_mean", caps));
+    EXPECT_FALSE(erf_plotfile::plot3d_fixed_variable_available(
+        "sgs_energy_flux_x_mean", caps));
+    EXPECT_FALSE(erf_plotfile::plot3d_fixed_variable_available(
+        "sgs_energy_flux_y_mean", caps));
+    EXPECT_FALSE(erf_plotfile::plot3d_fixed_variable_available(
+        "sgs_energy_flux_z_mean", caps));
+    EXPECT_TRUE(erf_plotfile::plot3d_fixed_variable_available("uiuiu", caps));
+    EXPECT_TRUE(erf_plotfile::plot3d_fixed_variable_available("uiuiv", caps));
+    EXPECT_TRUE(erf_plotfile::plot3d_fixed_variable_available("uiuiw", caps));
+    EXPECT_FALSE(erf_plotfile::plot3d_fixed_variable_available("uiuiu_mean", caps));
+    EXPECT_FALSE(erf_plotfile::plot3d_fixed_variable_available("uiuiw_fluct", caps));
+    EXPECT_FALSE(erf_plotfile::plot3d_fixed_variable_available(
+        "total_stress_strain_mean", caps));
     EXPECT_FALSE(erf_plotfile::plot3d_fixed_variable_available("qsrc_sw", caps));
     EXPECT_FALSE(erf_plotfile::plot3d_fixed_variable_available("Kmv", caps));
     EXPECT_FALSE(erf_plotfile::plot3d_fixed_variable_available("diss", caps));
@@ -488,6 +503,36 @@ TEST(Plotfile3DSelection, OptionalStorageGroupsAreExplicit)
     EXPECT_TRUE(erf_plotfile::plot3d_fixed_variable_available("pert_pres_mean", caps));
     EXPECT_TRUE(erf_plotfile::plot3d_fixed_variable_available("pert_pres_u_mean", caps));
     EXPECT_TRUE(erf_plotfile::plot3d_fixed_variable_available("pert_pres_v_fluct", caps));
+    EXPECT_FALSE(erf_plotfile::plot3d_fixed_variable_available("dpdx_mean", caps));
+    caps.interval_gradp_storage = true;
+    EXPECT_TRUE(erf_plotfile::plot3d_fixed_variable_available("dpdx_mean", caps));
+    EXPECT_TRUE(erf_plotfile::plot3d_fixed_variable_available("dpdy_mean", caps));
+    EXPECT_TRUE(erf_plotfile::plot3d_fixed_variable_available("dpdz_mean", caps));
+    EXPECT_FALSE(erf_plotfile::plot3d_fixed_variable_available("Tau13_mean", caps));
+    caps.interval_tau_storage = true;
+    EXPECT_TRUE(erf_plotfile::plot3d_fixed_variable_available("Tau11_mean", caps));
+    EXPECT_TRUE(erf_plotfile::plot3d_fixed_variable_available("Tau12_mean", caps));
+    EXPECT_TRUE(erf_plotfile::plot3d_fixed_variable_available("Tau13_mean", caps));
+    EXPECT_TRUE(erf_plotfile::plot3d_fixed_variable_available("Tau22_mean", caps));
+    EXPECT_TRUE(erf_plotfile::plot3d_fixed_variable_available("Tau23_mean", caps));
+    EXPECT_TRUE(erf_plotfile::plot3d_fixed_variable_available("Tau33_mean", caps));
+    caps.interval_sgs_energy_flux_storage = true;
+    EXPECT_TRUE(erf_plotfile::plot3d_fixed_variable_available(
+        "sgs_energy_flux_x_mean", caps));
+    EXPECT_TRUE(erf_plotfile::plot3d_fixed_variable_available(
+        "sgs_energy_flux_y_mean", caps));
+    EXPECT_TRUE(erf_plotfile::plot3d_fixed_variable_available(
+        "sgs_energy_flux_z_mean", caps));
+    caps.interval_triple_velocity_storage = true;
+    EXPECT_TRUE(erf_plotfile::plot3d_fixed_variable_available("uiuiu_mean", caps));
+    EXPECT_TRUE(erf_plotfile::plot3d_fixed_variable_available("uiuiv_mean", caps));
+    EXPECT_TRUE(erf_plotfile::plot3d_fixed_variable_available("uiuiw_mean", caps));
+    EXPECT_TRUE(erf_plotfile::plot3d_fixed_variable_available("uiuiu_fluct", caps));
+    EXPECT_TRUE(erf_plotfile::plot3d_fixed_variable_available("uiuiv_fluct", caps));
+    EXPECT_TRUE(erf_plotfile::plot3d_fixed_variable_available("uiuiw_fluct", caps));
+    caps.interval_stress_strain_storage = true;
+    EXPECT_TRUE(erf_plotfile::plot3d_fixed_variable_available(
+        "total_stress_strain_mean", caps));
     EXPECT_TRUE(erf_plotfile::plot3d_fixed_variable_available("qsrc_lw", caps));
     EXPECT_TRUE(erf_plotfile::plot3d_fixed_variable_available("Lturb", caps));
     EXPECT_TRUE(erf_plotfile::plot3d_fixed_variable_available("diss", caps));
@@ -583,4 +628,25 @@ TEST(Plotfile3DSelection, IntervalMeansResetOncePerCompleted3DBatch)
     EXPECT_EQ(erf_plotfile::plot3d_pert_pres_face_direction("pert_pres_mean"), -1);
     EXPECT_TRUE(erf_plotfile::plot3d_has_pert_pres_face_diagnostic(
         {"density", "pert_pres_u_fluct"}));
+    EXPECT_TRUE(erf_plotfile::plot3d_selection_has_interval_mean_diagnostic(
+        {"density", "dpdy_mean"}));
+    EXPECT_TRUE(erf_plotfile::plot3d_selection_has_interval_mean_diagnostic(
+        {"density", "Tau23_mean"}));
+    EXPECT_TRUE(erf_plotfile::plot3d_selection_has_interval_mean_diagnostic(
+        {"sgs_energy_flux_y_mean"}));
+    EXPECT_EQ(erf_plotfile::plot3d_sgs_energy_flux_face_direction(
+                  "sgs_energy_flux_x_mean"), 0);
+    EXPECT_EQ(erf_plotfile::plot3d_sgs_energy_flux_face_direction(
+                  "sgs_energy_flux_y_mean"), 1);
+    EXPECT_EQ(erf_plotfile::plot3d_sgs_energy_flux_face_direction(
+                  "sgs_energy_flux_z_mean"), 2);
+    EXPECT_EQ(erf_plotfile::plot3d_sgs_energy_flux_face_direction("Tau11_mean"), -1);
+    EXPECT_TRUE(erf_plotfile::plot3d_has_sgs_energy_flux_face_diagnostic(
+        {"density", "sgs_energy_flux_z_mean"}));
+    EXPECT_TRUE(erf_plotfile::plot3d_selection_has_interval_mean_diagnostic(
+        {"density", "uiuiu_mean"}));
+    EXPECT_TRUE(erf_plotfile::plot3d_selection_has_interval_mean_diagnostic(
+        {"uiuiw_fluct"}));
+    EXPECT_TRUE(erf_plotfile::plot3d_selection_has_interval_mean_diagnostic(
+        {"density", "total_stress_strain_mean"}));
 }

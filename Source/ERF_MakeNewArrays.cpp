@@ -279,6 +279,16 @@ ERF::init_stuff (int lev, const BoxArray& ba, const DistributionMapping& dm,
     for (auto& face_moment : interval_pert_pres_face[lev]) {
         face_moment = nullptr;
     }
+    for (auto& face_moment : interval_gradp_face[lev]) {
+        face_moment = nullptr;
+    }
+    interval_tau[lev] = nullptr;
+    interval_triple_velocity[lev] = nullptr;
+    interval_stress_strain[lev] = nullptr;
+    stress_strain_inst[lev] = nullptr;
+    for (auto& face_moment : interval_sgs_energy_flux_face[lev]) {
+        face_moment = nullptr;
+    }
     if (solverChoice.compute_mean_vars) {
         interval_means[lev] = std::make_unique<MultiFab>(
             ba, dm, erf_interval_means::NumIntervalMoments, 0);
@@ -295,6 +305,39 @@ ERF::init_stuff (int lev, const BoxArray& ba, const DistributionMapping& dm,
                 erf_interval_means::NumPertPresFaceMoments, 0);
             interval_pert_pres_face[lev][dir]->setVal(zero);
         }
+    }
+    if (solverChoice.compute_mean_gradp) {
+        for (int dir = 0; dir < AMREX_SPACEDIM; ++dir) {
+            interval_gradp_face[lev][dir] = std::make_unique<MultiFab>(
+                convert(ba, IntVect::TheDimensionVector(dir)), dm,
+                erf_interval_means::NumGradPFaceMoments, 0);
+            interval_gradp_face[lev][dir]->setVal(zero);
+        }
+    }
+    if (solverChoice.compute_mean_tau) {
+        interval_tau[lev] = std::make_unique<MultiFab>(
+            ba, dm, erf_interval_means::NumTauMeanMoments, 0);
+        interval_tau[lev]->setVal(zero);
+    }
+    if (solverChoice.compute_mean_triple_velocity) {
+        interval_triple_velocity[lev] = std::make_unique<MultiFab>(
+            ba, dm, erf_interval_means::NumTripleVelocityMoments, 0);
+        interval_triple_velocity[lev]->setVal(zero);
+    }
+    if (solverChoice.compute_mean_sgs_energy_flux) {
+        for (int dir = 0; dir < AMREX_SPACEDIM; ++dir) {
+            interval_sgs_energy_flux_face[lev][dir] = std::make_unique<MultiFab>(
+                convert(ba, IntVect::TheDimensionVector(dir)), dm,
+                erf_interval_means::NumSGSEnergyFluxFaceMoments, 0);
+            interval_sgs_energy_flux_face[lev][dir]->setVal(zero);
+        }
+    }
+    if (solverChoice.compute_mean_stress_strain) {
+        interval_stress_strain[lev] = std::make_unique<MultiFab>(
+            ba, dm, erf_interval_means::NumStressStrainMoments, 0);
+        interval_stress_strain[lev]->setVal(zero);
+        stress_strain_inst[lev] = std::make_unique<MultiFab>(ba, dm, 1, 0);
+        stress_strain_inst[lev]->setVal(zero);
     }
 
     // ********************************************************************************************
