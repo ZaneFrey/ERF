@@ -1302,6 +1302,56 @@ ERF::FillPlot3DVars (int lev,
             }
         }
 
+        auto copy_gradp_mean = [&] (int dir) {
+            const int dest_comp = mf_comp++;
+            if (norm <= Real(0.0)) {
+                mf_dst.setVal(Real(0.0), dest_comp, 1, 0);
+                return;
+            }
+#ifdef _OPENMP
+#pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
+#endif
+            for (MFIter mfi(mf_dst, TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+                const Box& bx = mfi.tilebox();
+                const auto out = mf_dst.array(mfi);
+                const auto face_sum = interval_gradp_face[lev][dir]->const_array(mfi);
+                ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept {
+                    int ihi = i, jhi = j, khi = k;
+                    if (dir == 0) ++ihi;
+                    if (dir == 1) ++jhi;
+                    if (dir == 2) ++khi;
+                    out(i,j,k,dest_comp) = Real(0.5) * inv_norm *
+                        (face_sum(i,j,k,erf_interval_means::GradP) +
+                         face_sum(ihi,jhi,khi,erf_interval_means::GradP));
+                });
+            }
+        };
+
+        if (containerHasElement(plot_var_names, "dpdx_mean")) copy_gradp_mean(0);
+        if (containerHasElement(plot_var_names, "dpdy_mean")) copy_gradp_mean(1);
+        if (containerHasElement(plot_var_names, "dpdz_mean")) copy_gradp_mean(2);
+
+        static constexpr const char* tau_mean_names[] = {
+            "Tau11_mean", "Tau12_mean", "Tau13_mean",
+            "Tau22_mean", "Tau23_mean", "Tau33_mean"};
+        static_assert(sizeof(tau_mean_names) / sizeof(tau_mean_names[0]) ==
+                      erf_interval_means::NumTauMeanMoments);
+        for (int source_comp = 0;
+             source_comp < erf_interval_means::NumTauMeanMoments; ++source_comp) {
+            if (!containerHasElement(plot_var_names, tau_mean_names[source_comp])) continue;
+            const int dest_comp = mf_comp++;
+            if (norm <= Real(0.0)) {
+                mf_dst.setVal(Real(0.0), dest_comp, 1, 0);
+            } else {
+                AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
+                    interval_tau[lev] != nullptr,
+                    "Tau*_mean plot variables require interval Tau storage");
+                MultiFab::Copy(mf_dst, *interval_tau[lev], source_comp,
+                               dest_comp, 1, 0);
+                mf_dst.mult(inv_norm, dest_comp, 1, 0);
+            }
+        }
+
         if (containerHasElement(plot_var_names, "tke_resolved")) {
             const int dest_comp = mf_comp++;
             if (norm <= Real(0.0)) {
