@@ -3,6 +3,7 @@
 
 #include "AMReX.H"
 #include "AMReX_MultiFab.H"
+#include "AMReX_EBFabFactory.H"
 #include "AMReX_BCRec.H"
 #include "ERF_NumericalConstants.H"
 #include "ERF_MicrophysicsConstants.H"
@@ -302,6 +303,17 @@ Accumulate_Interval_Means (double dt,
                            amrex::MultiFab& yvel,
                            amrex::MultiFab& zvel,
                            amrex::MultiFab& cons);
+
+/** Accumulate optional anelastic perturbational-pressure moments. */
+void
+Accumulate_Interval_PertPres (
+    double dt,
+    amrex::MultiFab* pert_pres_moment,
+    amrex::Array<amrex::MultiFab*, AMREX_SPACEDIM> pert_pres_face_moments,
+    const amrex::MultiFab& pert_pres,
+    const amrex::Array<const amrex::MultiFab*, AMREX_SPACEDIM>& velocity,
+    const amrex::Geometry& geom,
+    const amrex::EBFArrayBoxFactory* eb_factory = nullptr);
 
 /**
  * Compute the nudging relaxation

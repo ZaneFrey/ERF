@@ -1126,6 +1126,10 @@ List of Parameters
      - Accumulate interval first and second moments for resolved plot diagnostics
      - Boolean
      - false
+   * - **erf.compute_mean_vars.pert_pres**
+     - Accumulate anelastic projection-pressure means and native face pressure-velocity moments
+     - Boolean
+     - false
    * - **erf.mean_vars_reset_mode**
      - Reset moments after a complete 3-D plotfile batch or once at a specified time
      - ``plotfile`` or ``time``
@@ -1156,6 +1160,15 @@ In either mode, regridding a level rebuilds that level's accumulator, so the
 averaging window restarts on the regridded level while the other levels keep
 accumulating. A plotfile written shortly after a regrid can therefore mix
 per-level averaging windows; see :ref:`sec:Plotfile3DReference`.
+
+Set ``erf.compute_mean_vars.pert_pres = true`` together with
+``erf.compute_mean_vars = true`` to accumulate anelastic projection-pressure
+statistics. This option requires ``erf.anelastic = 1`` on every configured AMR
+level. ``pert_pres_mean`` is written in the cell-centered plotfile, while the
+selected ``pert_pres_{u,v,w}_{mean,fluct}`` fields are written at their native
+velocity faces in dedicated ``_pert_pres_{x,y,z}face`` AMReX companion
+plotfiles. These staggered diagnostics are not available for NetCDF output or
+with ``erf.expand_plotvars_to_unif_rr = true``.
 
 
 .. _inputs-screen-output:

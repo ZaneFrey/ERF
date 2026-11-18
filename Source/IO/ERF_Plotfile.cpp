@@ -76,6 +76,7 @@ ERF::canonicalizePlot3DVariables (Vector<std::string>& plot_var_names)
                                                 micro->Get_Qstate_Size());
     capabilities.time_average_storage = solverChoice.time_avg_vel;
     capabilities.interval_mean_storage = solverChoice.compute_mean_vars;
+    capabilities.interval_pert_pres_storage = solverChoice.compute_mean_pert_pres;
     // qsrc_sw / qsrc_lw are available whenever qheating_rates is allocated,
     // i.e. for any erf.radiation_model other than None.
     capabilities.radiation_heating_storage =
@@ -278,7 +279,11 @@ ERF::PlotFileVarNames (Vector<std::string> plot_var_names )
 {
     Vector<std::string> names;
 
-    names.insert(names.end(), plot_var_names.begin(), plot_var_names.end());
+    for (const auto& name : plot_var_names) {
+        if (erf_plotfile::plot3d_pert_pres_face_direction(name) < 0) {
+            names.push_back(name);
+        }
+    }
 
     return names;
 
@@ -1264,10 +1269,9 @@ ERF::FillPlot3DVars (int lev,
                 const Array4<Real>& out = mf_dst.array(mfi);
                 const Array4<const Real>& moments = interval_means[lev]->const_array(mfi);
                 ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept {
-                    const Real product_mean = moments(i,j,k,product_comp) * inv_norm;
-                    const Real first_mean = moments(i,j,k,first_comp) * inv_norm;
-                    const Real second_mean = moments(i,j,k,second_comp) * inv_norm;
-                    out(i,j,k,dest_comp) = product_mean - first_mean * second_mean;
+                    out(i,j,k,dest_comp) = erf_interval_means::covariance_from_sums(
+                        moments(i,j,k,product_comp), moments(i,j,k,first_comp),
+                        moments(i,j,k,second_comp), inv_norm);
                 });
             }
         };
@@ -1286,6 +1290,17 @@ ERF::FillPlot3DVars (int lev,
             copy_fluctuation(erf_interval_means::WTheta, erf_interval_means::W, erf_interval_means::Theta);
         if (containerHasElement(plot_var_names, "uv_fluct"))
             copy_fluctuation(erf_interval_means::UV, erf_interval_means::U, erf_interval_means::V);
+
+        if (containerHasElement(plot_var_names, "pert_pres_mean")) {
+            const int dest_comp = mf_comp++;
+            if (norm <= Real(0.0)) {
+                mf_dst.setVal(Real(0.0), dest_comp, 1, 0);
+            } else {
+                MultiFab::Copy(mf_dst, *interval_pert_pres[lev],
+                               erf_interval_means::PertPres, dest_comp, 1, 0);
+                mf_dst.mult(inv_norm, dest_comp, 1, 0);
+            }
+        }
 
         if (containerHasElement(plot_var_names, "tke_resolved")) {
             const int dest_comp = mf_comp++;
@@ -2086,15 +2101,33 @@ ERF::Write3DPlotFile (int which, PlotFileType plotfile_type, Vector<std::string>
     const Vector<std::string> varnames = PlotFileVarNames(plot_var_names);
     const int ncomp_mf = static_cast<int>(varnames.size());
 
-    if (ncomp_mf == 0) return false;
+    Array<Vector<std::string>, AMREX_SPACEDIM> pert_pres_face_names;
+    for (const auto& name : plot_var_names) {
+        const int dir = erf_plotfile::plot3d_pert_pres_face_direction(name);
+        if (dir >= 0) pert_pres_face_names[dir].push_back(name);
+    }
+    const bool has_pert_pres_faces = std::any_of(
+        pert_pres_face_names.begin(), pert_pres_face_names.end(),
+        [] (const auto& names) { return !names.empty(); });
+
+    const bool has_interval_faces = has_pert_pres_faces;
+
+    if (ncomp_mf == 0 && !has_interval_faces) return false;
+    if (has_interval_faces && plotfile_type != PlotFileType::Amrex) {
+        Abort("Face-centered interval diagnostics require AMReX plotfiles");
+    }
+    if (has_interval_faces && m_expand_plotvars_to_unif_rr) {
+        Abort("Face-centered interval diagnostics do not support "
+              "erf.expand_plotvars_to_unif_rr = true");
+    }
 
     Plot3DScratch scratch;
-    BuildPlot3DScratch(plot_var_names, scratch);
+    if (ncomp_mf > 0) BuildPlot3DScratch(plot_var_names, scratch);
 
     // Vector of MultiFabs for cell-centered data
     Vector<MultiFab> mf(finest_level+1);
     for (int lev = 0; lev <= finest_level; ++lev) {
-        mf[lev].define(grids[lev], dmap[lev], ncomp_mf, 0);
+        if (ncomp_mf > 0) mf[lev].define(grids[lev], dmap[lev], ncomp_mf, 0);
     }
 
     // Vector of MultiFabs for nodal data
@@ -2125,11 +2158,13 @@ ERF::Write3DPlotFile (int which, PlotFileType plotfile_type, Vector<std::string>
         }
     }
 
-    for (int lev = 0; lev <= finest_level; ++lev) {
-        FillPlot3DVars(lev, plot_var_names, scratch, mf[lev], ncomp_mf, tnew);
+    if (ncomp_mf > 0) {
+        for (int lev = 0; lev <= finest_level; ++lev) {
+            FillPlot3DVars(lev, plot_var_names, scratch, mf[lev], ncomp_mf, tnew);
+        }
     }
 
-    if (solverChoice.terrain_type == TerrainType::EB)
+    if (ncomp_mf > 0 && solverChoice.terrain_type == TerrainType::EB)
     {
         for (int lev = 0; lev <= finest_level; ++lev) {
             EB_set_covered(mf[lev], zero);
@@ -2177,6 +2212,86 @@ ERF::Write3DPlotFile (int which, PlotFileType plotfile_type, Vector<std::string>
        plotfilenameU = Concatenate(plot3d_file_2+"U", istep[0], file_name_digits);
        plotfilenameV = Concatenate(plot3d_file_2+"V", istep[0], file_name_digits);
        plotfilenameW = Concatenate(plot3d_file_2+"W", istep[0], file_name_digits);
+    }
+
+    auto write_pert_pres_face_plotfiles = [&]() {
+        static constexpr const char* suffix[] = {
+            "_pert_pres_xface", "_pert_pres_yface", "_pert_pres_zface"};
+        for (int dir = 0; dir < AMREX_SPACEDIM; ++dir) {
+            const auto& names = pert_pres_face_names[dir];
+            if (names.empty()) continue;
+
+            Vector<MultiFab> face_output(finest_level + 1);
+            for (int lev = 0; lev <= finest_level; ++lev) {
+                AMREX_ALWAYS_ASSERT(interval_pert_pres[lev] != nullptr);
+                AMREX_ALWAYS_ASSERT(interval_pert_pres_face[lev][dir] != nullptr);
+                face_output[lev].define(interval_pert_pres_face[lev][dir]->boxArray(),
+                                        dmap[lev], static_cast<int>(names.size()), 0);
+                face_output[lev].setVal(Real(0.0));
+
+                const Real norm = static_cast<Real>(t_mean_cnt[lev]);
+                if (norm <= Real(0.0)) continue;
+                const Real inv_norm = Real(1.0) / norm;
+
+                MultiFab p_sum(grids[lev], dmap[lev], 1, 1);
+                p_sum.setVal(Real(0.0));
+                MultiFab::Copy(p_sum, *interval_pert_pres[lev],
+                               erf_interval_means::PertPres, 0, 1, 0);
+                p_sum.FillBoundary(geom[lev].periodicity());
+
+                const Box domain = geom[lev].Domain();
+                const auto domlo = lbound(domain);
+                const auto domhi = ubound(domain);
+                const auto is_per = geom[lev].isPeriodicArray();
+                for (MFIter mfi(face_output[lev], TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+                    const Box& bx = mfi.tilebox();
+                    const auto out = face_output[lev].array(mfi);
+                    const auto p = p_sum.const_array(mfi);
+                    const auto moments = interval_pert_pres_face[lev][dir]->const_array(mfi);
+                    for (int n = 0; n < static_cast<int>(names.size()); ++n) {
+                        const bool fluct = names[n].find("_fluct") != std::string::npos;
+                        ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept {
+                            if (!fluct) {
+                                out(i,j,k,n) = moments(
+                                    i,j,k,erf_interval_means::PertPresVelocity) * inv_norm;
+                                return;
+                            }
+                            int ilo = i, jlo = j, klo = k;
+                            if (dir == 0) --ilo;
+                            if (dir == 1) --jlo;
+                            if (dir == 2) --klo;
+                            const int face_index = dir == 0 ? i : (dir == 1 ? j : k);
+                            const int domain_lo = dir == 0 ? domlo.x : (dir == 1 ? domlo.y : domlo.z);
+                            const int domain_hi = dir == 0 ? domhi.x : (dir == 1 ? domhi.y : domhi.z);
+                            Real pface_sum;
+                            if (!is_per[dir] && face_index == domain_lo) {
+                                pface_sum = p(i,j,k);
+                            } else if (!is_per[dir] && face_index == domain_hi + 1) {
+                                pface_sum = p(ilo,jlo,klo);
+                            } else {
+                                pface_sum = Real(0.5) * (p(ilo,jlo,klo) + p(i,j,k));
+                            }
+                            out(i,j,k,n) = erf_interval_means::covariance_from_sums(
+                                moments(i,j,k,erf_interval_means::PertPresVelocity),
+                                pface_sum,
+                                moments(i,j,k,erf_interval_means::FaceVelocity),
+                                inv_norm);
+                        });
+                    }
+                }
+            }
+
+            const std::string filename = plotfilename + suffix[dir];
+            Print() << "Writing face-centered interval diagnostics " << filename << "\n";
+            WriteMultiLevelPlotfile(filename, finest_level + 1,
+                                    GetVecOfConstPtrs(face_output), names,
+                                    geom, tnew, istep, ref_ratio);
+        }
+    };
+
+    if (ncomp_mf == 0) {
+        write_pert_pres_face_plotfiles();
+        return true;
     }
 
     // LSM writes it's own data
@@ -2234,6 +2349,7 @@ ERF::Write3DPlotFile (int which, PlotFileType plotfile_type, Vector<std::string>
                                         {"z_velocity_stag"},
                                         Geom(), tnew, istep, refRatio());
             }
+            write_pert_pres_face_plotfiles();
 
             if (m_plot_face_terrain_blanking &&
                 (solverChoice.terrain_type == TerrainType::ImmersedForcing ||
@@ -2394,6 +2510,8 @@ ERF::Write3DPlotFile (int which, PlotFileType plotfile_type, Vector<std::string>
                                             geom, tnew, istep, ref_ratio);
                 }
             } // ref_ratio test
+
+            write_pert_pres_face_plotfiles();
 
             writeJobInfo(plotfilename, erf_provenance::ArtifactType::Plotfile3D,
                          istep[0], t_new[0]);

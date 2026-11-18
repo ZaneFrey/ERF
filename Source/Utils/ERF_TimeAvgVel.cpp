@@ -97,3 +97,84 @@ Accumulate_Interval_Means (double dt_d,
         });
     }
 }
+
+void
+Accumulate_Interval_PertPres (
+    double dt_d,
+    MultiFab* pert_pres_moment,
+    Array<MultiFab*, AMREX_SPACEDIM> pert_pres_face_moments,
+    const MultiFab& pert_pres,
+    const Array<const MultiFab*, AMREX_SPACEDIM>& velocity,
+    const Geometry& geom,
+    const EBFArrayBoxFactory* eb_factory)
+{
+    AMREX_ALWAYS_ASSERT(pert_pres_moment != nullptr);
+    for (int dir = 0; dir < AMREX_SPACEDIM; ++dir) {
+        AMREX_ALWAYS_ASSERT(pert_pres_face_moments[dir] != nullptr);
+        AMREX_ALWAYS_ASSERT(velocity[dir] != nullptr);
+    }
+
+    const Real dt = static_cast<Real>(dt_d);
+    const Box domain = geom.Domain();
+    const auto domlo = lbound(domain);
+    const auto domhi = ubound(domain);
+    const auto is_per = geom.isPeriodicArray();
+
+#ifdef _OPENMP
+#pragma omp parallel if (Gpu::notInLaunchRegion())
+#endif
+    for (MFIter mfi(*pert_pres_moment, TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+        const Box& bx = mfi.tilebox();
+        const auto p = pert_pres.const_array(mfi);
+        const auto sum = pert_pres_moment->array(mfi);
+        ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept {
+            sum(i,j,k,erf_interval_means::PertPres) += p(i,j,k) * dt;
+        });
+    }
+
+    for (int dir = 0; dir < AMREX_SPACEDIM; ++dir) {
+        MultiFab& face_sum = *pert_pres_face_moments[dir];
+#ifdef _OPENMP
+#pragma omp parallel if (Gpu::notInLaunchRegion())
+#endif
+        for (MFIter mfi(face_sum, TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+            const Box& fbx = mfi.tilebox();
+            const auto p = pert_pres.const_array(mfi);
+            const auto vel = velocity[dir]->const_array(mfi);
+            const auto sum = face_sum.array(mfi);
+            Array4<const Real> afrac;
+            if (eb_factory != nullptr) {
+                afrac = eb_factory->getAreaFrac()[dir]->const_array(mfi);
+            }
+
+            ParallelFor(fbx, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept {
+                if (afrac && afrac(i,j,k) <= Real(0.0)) {
+                    sum(i,j,k,erf_interval_means::FaceVelocity) = Real(0.0);
+                    sum(i,j,k,erf_interval_means::PertPresVelocity) = Real(0.0);
+                    return;
+                }
+
+                int ilo = i, jlo = j, klo = k;
+                if (dir == 0) --ilo;
+                if (dir == 1) --jlo;
+                if (dir == 2) --klo;
+
+                const int face_index = dir == 0 ? i : (dir == 1 ? j : k);
+                const int domain_lo = dir == 0 ? domlo.x : (dir == 1 ? domlo.y : domlo.z);
+                const int domain_hi = dir == 0 ? domhi.x : (dir == 1 ? domhi.y : domhi.z);
+                Real pface;
+                if (!is_per[dir] && face_index == domain_lo) {
+                    pface = p(i,j,k);
+                } else if (!is_per[dir] && face_index == domain_hi + 1) {
+                    pface = p(ilo,jlo,klo);
+                } else {
+                    pface = Real(0.5) * (p(ilo,jlo,klo) + p(i,j,k));
+                }
+
+                const Real uface = vel(i,j,k);
+                sum(i,j,k,erf_interval_means::FaceVelocity) += uface * dt;
+                sum(i,j,k,erf_interval_means::PertPresVelocity) += pface * uface * dt;
+            });
+        }
+    }
+}

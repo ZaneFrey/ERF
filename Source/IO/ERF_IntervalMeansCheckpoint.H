@@ -84,6 +84,98 @@ struct Metadata
     amrex::Vector<LevelMetadata> level;
 };
 
+struct PertPresLevelMetadata
+{
+    int level{-1};
+    double accumulation_count{0.0};
+    amrex::BoxArray cell_boxes;
+    amrex::Array<amrex::BoxArray, AMREX_SPACEDIM> face_boxes;
+};
+
+struct PertPresMetadata
+{
+    int levels{0};
+    int cell_components{0};
+    int face_components{0};
+    amrex::Vector<PertPresLevelMetadata> level;
+};
+
+inline bool
+parse_pert_pres_metadata (std::istream& input, PertPresMetadata& result,
+                          std::string& error)
+{
+    std::string title;
+    if (!std::getline(input, title) || title != "ERF interval pert_pres checkpoint v1") {
+        error = "unsupported interval pert_pres checkpoint title '" + title + "'";
+        return false;
+    }
+    if (!(input >> result.levels >> result.cell_components >> result.face_components) ||
+        result.levels < 0) {
+        error = "missing or invalid interval pert_pres dimensions";
+        return false;
+    }
+    result.level.resize(result.levels);
+    for (int lev = 0; lev < result.levels; ++lev) {
+        auto& record = result.level[lev];
+        if (!(input >> record.level >> record.accumulation_count) ||
+            record.level != lev || !std::isfinite(record.accumulation_count) ||
+            record.accumulation_count < 0.0) {
+            error = "invalid interval pert_pres level record " + std::to_string(lev);
+            return false;
+        }
+        if (!detail::read_box_array(input, record.cell_boxes)) {
+            error = "invalid interval pert_pres cell BoxArray at level " + std::to_string(lev);
+            return false;
+        }
+        for (int dir = 0; dir < AMREX_SPACEDIM; ++dir) {
+            if (!detail::read_box_array(input, record.face_boxes[dir])) {
+                error = "invalid interval pert_pres face BoxArray at level " +
+                        std::to_string(lev);
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+inline std::string
+validate_pert_pres_metadata (
+    const PertPresMetadata& metadata,
+    const amrex::Vector<amrex::BoxArray>& expected_cells,
+    const amrex::Vector<double>& expected_counts)
+{
+    const int expected_levels = static_cast<int>(expected_cells.size());
+    if (metadata.levels != expected_levels ||
+        static_cast<int>(metadata.level.size()) != expected_levels ||
+        static_cast<int>(expected_counts.size()) < expected_levels) {
+        return "interval pert_pres metadata level count does not match the restart";
+    }
+    if (metadata.cell_components != NumPertPresCellMoments ||
+        metadata.face_components != NumPertPresFaceMoments) {
+        return "interval pert_pres metadata component counts are unsupported";
+    }
+    for (int lev = 0; lev < expected_levels; ++lev) {
+        if (!(metadata.level[lev].cell_boxes == expected_cells[lev])) {
+            return "interval pert_pres cell BoxArray does not match level " + std::to_string(lev);
+        }
+        for (int dir = 0; dir < AMREX_SPACEDIM; ++dir) {
+            amrex::BoxArray expected = amrex::convert(
+                expected_cells[lev], amrex::IntVect::TheDimensionVector(dir));
+            if (!(metadata.level[lev].face_boxes[dir] == expected)) {
+                return "interval pert_pres face BoxArray does not match level " +
+                       std::to_string(lev);
+            }
+        }
+        const double scale = std::max(1.0, std::abs(expected_counts[lev]));
+        if (std::abs(metadata.level[lev].accumulation_count - expected_counts[lev]) >
+            16.0 * std::numeric_limits<double>::epsilon() * scale) {
+            return "interval pert_pres accumulated time does not match level " +
+                   std::to_string(lev);
+        }
+    }
+    return {};
+}
+
 inline bool
 parse_metadata (std::istream& input, Metadata& result, std::string& error)
 {

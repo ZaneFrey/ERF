@@ -291,6 +291,34 @@ The default subvolume inventory is documented on :ref:`sec:Plotfiles`.
 | **tke_resolved**            | resolved TKE     |
 |                             | [m^2/s^2]        |
 +-----------------------------+------------------+
+| **pert_pres_mean**          | interval mean of |
+|                             | projection       |
+|                             | pressure [Pa]    |
++-----------------------------+------------------+
+| **pert_pres_u_mean**        | interval mean of |
+|                             | p_pert*u         |
+|                             | [Pa m/s]         |
++-----------------------------+------------------+
+| **pert_pres_v_mean**        | interval mean of |
+|                             | p_pert*v         |
+|                             | [Pa m/s]         |
++-----------------------------+------------------+
+| **pert_pres_w_mean**        | interval mean of |
+|                             | p_pert*w         |
+|                             | [Pa m/s]         |
++-----------------------------+------------------+
+| **pert_pres_u_fluct**       | resolved p-u     |
+|                             | covariance       |
+|                             | [Pa m/s]         |
++-----------------------------+------------------+
+| **pert_pres_v_fluct**       | resolved p-v     |
+|                             | covariance       |
+|                             | [Pa m/s]         |
++-----------------------------+------------------+
+| **pert_pres_w_fluct**       | resolved p-w     |
+|                             | covariance       |
+|                             | [Pa m/s]         |
++-----------------------------+------------------+
 | **rhoadv_0**                | Conserved scalar |
 |                             | [problem-dep.]   |
 |                             |                  |
@@ -993,6 +1021,23 @@ every AMR level in the plotfile:
   the ``*_t_avg`` fields above. If a consistent window across levels matters
   for the analysis, write the interval fields from a run without regridding,
   or allow enough time after a regrid for the window to refill.
+* ``pert_pres_mean`` and ``pert_pres_{u,v,w}_{mean,fluct}`` additionally
+  require ``erf.compute_mean_vars.pert_pres = true`` and anelastic dynamics on
+  every configured level. Here ``pert_pres`` is the projection pressure
+  ``pp_inc``. The raw face means are ``mean(p_pert*u_i)`` and the covariance is
+  ``pert_pres_u_fluct = mean(p_pert*u) - mean(p_pert)*mean(u)``, with analogous
+  definitions for v and w. Pressure is arithmetically interpolated to each
+  velocity face, with periodic wrapping and the adjacent cell value at a
+  nonperiodic physical boundary. ``pert_pres_mean`` is cell-centered in Pa.
+  The product and covariance fields have units Pa m/s (equivalently W/m2).
+  They retain the existing projection-pressure gauge; no additional pressure
+  normalization is applied. The six
+  pressure-velocity fields retain the native velocity staggering and are
+  written only to AMReX companions named ``<plotfile>_pert_pres_xface``,
+  ``..._yface``, and ``..._zface``; no cell-centered aliases are produced.
+  A checkpoint without the optional pressure-statistics state resets the whole
+  interval window on restart so every covariance continues to share one time
+  window.
 * ``qsrc_sw`` and ``qsrc_lw`` require a non-``None`` radiation choice.
 * ``nut``, ``Kmv``, ``Kmh``, ``Khv``, ``Khh``, and ``Lturb`` require
   ``use_kturb = true`` at every AMR level.

@@ -1687,9 +1687,23 @@ struct SolverChoice {
 
         // Interval means and resolved turbulent moments for plotfile output
         pp.queryAdd("compute_mean_vars", compute_mean_vars);
+        amrex::ParmParse pp_mean_vars("erf.compute_mean_vars");
+        pp_mean_vars.queryAdd("pert_pres", compute_mean_pert_pres);
         pp.queryAdd("mean_vars_reset_mode", mean_vars_reset_mode);
         pp.queryAdd("mean_vars_reset_time", mean_vars_reset_time);
 
+        if (compute_mean_pert_pres && !compute_mean_vars) {
+            amrex::Error("erf.compute_mean_vars.pert_pres requires "
+                         "erf.compute_mean_vars = true");
+        }
+        if (compute_mean_pert_pres) {
+            for (int lev = 0; lev <= max_level; ++lev) {
+                if (anelastic[lev] != 1) {
+                    amrex::Error("erf.compute_mean_vars.pert_pres requires anelastic = 1 "
+                                 "on every configured AMR level");
+                }
+            }
+        }
         if (compute_mean_vars &&
             mean_vars_reset_mode != "plotfile" && mean_vars_reset_mode != "time") {
             amrex::Error("erf.mean_vars_reset_mode must be either 'plotfile' or 'time'");
@@ -2419,6 +2433,9 @@ struct SolverChoice {
 
     // User wishes to output interval means and resolved turbulent moments
     bool compute_mean_vars = false;
+
+    // Accumulate optional anelastic perturbational-pressure interval moments
+    bool compute_mean_pert_pres = false;
 
     // Reset interval means after each plotfile or once at a requested time
     std::string mean_vars_reset_mode = "plotfile";

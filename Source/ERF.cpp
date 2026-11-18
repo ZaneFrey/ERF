@@ -363,6 +363,12 @@ ERF::ResetIntervalMeans ()
             interval_means[lev]->setVal(zero);
             t_mean_cnt[lev] = 0.0;
         }
+        if (interval_pert_pres[lev] != nullptr) {
+            interval_pert_pres[lev]->setVal(zero);
+            for (auto& face_moment : interval_pert_pres_face[lev]) {
+                face_moment->setVal(zero);
+            }
+        }
     }
 }
 
@@ -2031,6 +2037,22 @@ ERF::InitData_post ()
                                           vars_new[lev][Vars::yvel],
                                           vars_new[lev][Vars::zvel],
                                           vars_new[lev][Vars::cons]);
+                if (solverChoice.compute_mean_pert_pres) {
+                    Array<MultiFab*, AMREX_SPACEDIM> face_moments{
+                        AMREX_D_DECL(interval_pert_pres_face[lev][0].get(),
+                                     interval_pert_pres_face[lev][1].get(),
+                                     interval_pert_pres_face[lev][2].get())};
+                    Array<const MultiFab*, AMREX_SPACEDIM> velocity{
+                        AMREX_D_DECL(&vars_new[lev][Vars::xvel],
+                                     &vars_new[lev][Vars::yvel],
+                                     &vars_new[lev][Vars::zvel])};
+                    const EBFArrayBoxFactory* eb_factory =
+                        solverChoice.terrain_type == TerrainType::EB
+                            ? get_eb(lev).get_const_factory().get() : nullptr;
+                    Accumulate_Interval_PertPres(
+                        dt[lev], interval_pert_pres[lev].get(), face_moments,
+                        pp_inc[lev], velocity, geom[lev], eb_factory);
+                }
             }
         }
     }

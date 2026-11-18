@@ -383,6 +383,28 @@ ERF::WriteCheckpointFile () const
         }
     }
 
+    if (solverChoice.compute_mean_pert_pres && ParallelDescriptor::IOProcessor()) {
+        const std::string metadata_name(checkpointname + "/IntervalPertPresHeader");
+        std::ofstream metadata(metadata_name, std::ofstream::out |
+                                            std::ofstream::trunc |
+                                            std::ofstream::binary);
+        if (!metadata.good()) FileOpenFailed(metadata_name);
+        metadata.precision(17);
+        metadata << "ERF interval pert_pres checkpoint v1\n";
+        metadata << finest_level + 1 << " "
+                 << erf_interval_means::NumPertPresCellMoments << " "
+                 << erf_interval_means::NumPertPresFaceMoments << "\n";
+        for (int lev = 0; lev <= finest_level; ++lev) {
+            metadata << lev << " " << t_mean_cnt[lev] << "\n";
+            interval_pert_pres[lev]->boxArray().writeOn(metadata);
+            metadata << "\n";
+            for (int dir = 0; dir < AMREX_SPACEDIM; ++dir) {
+                interval_pert_pres_face[lev][dir]->boxArray().writeOn(metadata);
+                metadata << "\n";
+            }
+        }
+    }
+
     // write the MultiFab data to, e.g., chk00010/Level_0/
     // Here we make copies of the MultiFab with no ghost cells
     for (int lev = 0; lev <= finest_level; ++lev)
@@ -480,6 +502,16 @@ ERF::WriteCheckpointFile () const
                                 erf_interval_means::NumIntervalMoments);
             VisMF::Write(*interval_means[lev],
                          MultiFabFileFullPrefix(lev, checkpointname, "Level_", "IntervalMeans"));
+        }
+        if (solverChoice.compute_mean_pert_pres) {
+            VisMF::Write(*interval_pert_pres[lev],
+                         MultiFabFileFullPrefix(lev, checkpointname, "Level_", "IntervalPertPres"));
+            static constexpr const char* face_name[] = {
+                "IntervalPertPresX", "IntervalPertPresY", "IntervalPertPresZ"};
+            for (int dir = 0; dir < AMREX_SPACEDIM; ++dir) {
+                VisMF::Write(*interval_pert_pres_face[lev][dir],
+                             MultiFabFileFullPrefix(lev, checkpointname, "Level_", face_name[dir]));
+            }
         }
 
         // Note that we write the ghost cells of the base state (unlike above)
@@ -1149,6 +1181,76 @@ ERF::ReadCheckpointFile ()
                     AMREX_ALWAYS_ASSERT(interval_means[lev] != nullptr);
                     VisMF::Read(*interval_means[lev], mf_name);
                     t_mean_cnt[lev] = level_metadata.accumulation_count;
+                }
+            }
+        }
+    }
+
+    const std::string pert_pres_header(restart_chkfile + "/IntervalPertPresHeader");
+    const bool missing_pert_pres = solverChoice.compute_mean_pert_pres &&
+                                   !amrex::FileExists(pert_pres_header);
+    const bool reset_for_missing_optional = missing_pert_pres;
+    if (reset_for_missing_optional) {
+        // Every optional moment uses the base interval normalizer, so none may
+        // retain an older window when any enabled optional state is absent.
+        ResetIntervalMeans();
+        if (ParallelDescriptor::IOProcessor()) {
+            amrex::Print()
+                << "WARNING: checkpoint predates enabled optional interval "
+                   "statistics; the complete interval-statistics window starts empty.\n";
+        }
+    }
+
+    if (solverChoice.compute_mean_pert_pres && !reset_for_missing_optional) {
+        Vector<char> metadata_chars;
+        ParallelDescriptor::ReadAndBcastFile(pert_pres_header, metadata_chars);
+        std::istringstream metadata(std::string(metadata_chars.dataPtr()),
+                                    std::istringstream::in);
+        erf_interval_means::PertPresMetadata parsed_metadata;
+        std::string metadata_error;
+        if (!erf_interval_means::parse_pert_pres_metadata(
+                metadata, parsed_metadata, metadata_error)) {
+            Abort("Invalid interval pert_pres checkpoint metadata in '" +
+                  pert_pres_header + "': " + metadata_error);
+        }
+        const std::string validation_error =
+            erf_interval_means::validate_pert_pres_metadata(
+                parsed_metadata, grids, t_mean_cnt);
+        if (!validation_error.empty()) {
+            Abort(validation_error + " in '" + pert_pres_header + "'");
+        }
+
+        static constexpr const char* face_name[] = {
+            "IntervalPertPresX", "IntervalPertPresY", "IntervalPertPresZ"};
+        for (int lev = 0; lev <= finest_level; ++lev) {
+            const std::string cell_name = MultiFabFileFullPrefix(
+                lev, restart_chkfile, "Level_", "IntervalPertPres");
+            if (!amrex::FileExists(cell_name + "_H")) {
+                Abort("Interval pert_pres metadata exists but cell data is missing at level " +
+                      std::to_string(lev));
+            }
+            VisMF::Read(*interval_pert_pres[lev], cell_name);
+            if (interval_pert_pres[lev]->nComp() !=
+                erf_interval_means::NumPertPresCellMoments ||
+                !(interval_pert_pres[lev]->boxArray() == grids[lev])) {
+                Abort("Interval pert_pres cell data layout is invalid at level " +
+                      std::to_string(lev));
+            }
+            for (int dir = 0; dir < AMREX_SPACEDIM; ++dir) {
+                const std::string mf_name = MultiFabFileFullPrefix(
+                    lev, restart_chkfile, "Level_", face_name[dir]);
+                if (!amrex::FileExists(mf_name + "_H")) {
+                    Abort("Interval pert_pres metadata exists but face data is missing at level " +
+                          std::to_string(lev));
+                }
+                VisMF::Read(*interval_pert_pres_face[lev][dir], mf_name);
+                const BoxArray expected_faces = convert(
+                    grids[lev], IntVect::TheDimensionVector(dir));
+                if (interval_pert_pres_face[lev][dir]->nComp() !=
+                        erf_interval_means::NumPertPresFaceMoments ||
+                    !(interval_pert_pres_face[lev][dir]->boxArray() == expected_faces)) {
+                    Abort("Interval pert_pres face data layout is invalid at level " +
+                          std::to_string(lev));
                 }
             }
         }

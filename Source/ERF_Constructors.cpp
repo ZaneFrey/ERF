@@ -626,6 +626,8 @@ ERF::ERF_shared ()
 
     // Interval mean variables
     interval_means.resize(nlevs_max);
+    interval_pert_pres.resize(nlevs_max);
+    interval_pert_pres_face.resize(nlevs_max);
     t_mean_cnt.resize(nlevs_max);
     mean_vars_time_reset_done = 0;
 

@@ -22,6 +22,7 @@
 #include <ERF_Plotfile2DSampledLevel.H>
 #include <ERF_Plotfile2DUtils.H>
 #include <ERF_Plotfile2DWaterPath.H>
+#include <ERF_PlotfileSelection.H>
 #include <ERF_Constants.H>
 #include <ERF_EpochTime.H>
 #include <ERF_LatLonMap.H>
@@ -714,6 +715,11 @@ ERF::init_stations ()
     {
         for (auto& var : station.vars)
         {
+            if (erf_plotfile::plot3d_pert_pres_face_direction(var.name) >= 0)
+                Abort("Station '" + station.name + "': '" + var.name +
+                      "' is a native face-centered plotfile diagnostic and cannot be "
+                      "sampled by the cell-centered station machinery");
+            }
             // Is it a 3D plot variable that this configuration can produce?
             Vector<std::string> probe{var.name};
             canonicalizePlot3DVariables(probe);

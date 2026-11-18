@@ -60,6 +60,7 @@ struct Plot3DSelectionCapabilities
 
     bool time_average_storage = false;
     bool interval_mean_storage = false;
+    bool interval_pert_pres_storage = false;
     bool radiation_heating_storage = false;
     bool eddy_diffusivity_storage = false;
     bool dissipation_storage = false;
@@ -188,13 +189,32 @@ plot3d_interval_mean_diagnostic (const std::string& name)
     static constexpr const char* names[] = {
         "u_mean", "v_mean", "w_mean", "theta_mean",
         "uu_mean", "vv_mean", "ww_mean", "uw_mean", "vw_mean", "wtheta_mean", "uv_mean",
-        "uu_fluct", "vv_fluct", "ww_fluct", "uw_fluct", "vw_fluct", "wtheta_fluct", "uv_fluct", "tke_resolved"
+        "uu_fluct", "vv_fluct", "ww_fluct", "uw_fluct", "vw_fluct", "wtheta_fluct", "uv_fluct", "tke_resolved",
+        "pert_pres_mean", "pert_pres_u_mean", "pert_pres_v_mean", "pert_pres_w_mean",
+        "pert_pres_u_fluct", "pert_pres_v_fluct", "pert_pres_w_fluct",
     };
 
     for (const char* candidate : names) {
         if (name == candidate) return true;
     }
     return false;
+}
+
+inline int
+plot3d_pert_pres_face_direction (const std::string& name)
+{
+    if (name == "pert_pres_u_mean" || name == "pert_pres_u_fluct") return 0;
+    if (name == "pert_pres_v_mean" || name == "pert_pres_v_fluct") return 1;
+    if (name == "pert_pres_w_mean" || name == "pert_pres_w_fluct") return 2;
+    return -1;
+}
+
+inline bool
+plot3d_has_pert_pres_face_diagnostic (const amrex::Vector<std::string>& names)
+{
+    return std::any_of(names.begin(), names.end(), [] (const std::string& name) {
+        return plot3d_pert_pres_face_direction(name) >= 0;
+    });
 }
 
 inline bool
@@ -238,6 +258,9 @@ plot3d_fixed_variable_available (const std::string& name,
         return caps.time_average_storage;
     }
     if (plot3d_interval_mean_diagnostic(name)) {
+        if (name.rfind("pert_pres", 0) == 0) {
+            return caps.interval_pert_pres_storage;
+        }
         return caps.interval_mean_storage;
     }
     if (name == "qsrc_sw" || name == "qsrc_lw") {

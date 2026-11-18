@@ -275,11 +275,26 @@ ERF::init_stuff (int lev, const BoxArray& ba, const DistributionMapping& dm,
     // The field storage is rebuilt for this level, but the time-reset state is
     // global and must survive regridding of any level.
     interval_means[lev] = nullptr;
+    interval_pert_pres[lev] = nullptr;
+    for (auto& face_moment : interval_pert_pres_face[lev]) {
+        face_moment = nullptr;
+    }
     if (solverChoice.compute_mean_vars) {
         interval_means[lev] = std::make_unique<MultiFab>(
             ba, dm, erf_interval_means::NumIntervalMoments, 0);
         interval_means[lev]->setVal(zero);
         t_mean_cnt[lev] = 0.0;
+    }
+    if (solverChoice.compute_mean_pert_pres) {
+        interval_pert_pres[lev] = std::make_unique<MultiFab>(
+            ba, dm, erf_interval_means::NumPertPresCellMoments, 0);
+        interval_pert_pres[lev]->setVal(zero);
+        for (int dir = 0; dir < AMREX_SPACEDIM; ++dir) {
+            interval_pert_pres_face[lev][dir] = std::make_unique<MultiFab>(
+                convert(ba, IntVect::TheDimensionVector(dir)), dm,
+                erf_interval_means::NumPertPresFaceMoments, 0);
+            interval_pert_pres_face[lev][dir]->setVal(zero);
+        }
     }
 
     // ********************************************************************************************

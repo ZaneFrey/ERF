@@ -572,6 +572,20 @@ ERF::Advance (int lev, double time, double dt_lev, int iteration, int /*ncycle*/
 
         Accumulate_Interval_Means(dt_lev, t_mean_cnt[lev], interval_means[lev].get(),
                                   U_new, V_new, W_new, S_new);
+        if (solverChoice.compute_mean_pert_pres) {
+            Array<MultiFab*, AMREX_SPACEDIM> face_moments{
+                AMREX_D_DECL(interval_pert_pres_face[lev][0].get(),
+                             interval_pert_pres_face[lev][1].get(),
+                             interval_pert_pres_face[lev][2].get())};
+            Array<const MultiFab*, AMREX_SPACEDIM> velocity{
+                AMREX_D_DECL(&U_new, &V_new, &W_new)};
+            const EBFArrayBoxFactory* eb_factory =
+                solverChoice.terrain_type == TerrainType::EB
+                    ? get_eb(lev).get_const_factory().get() : nullptr;
+            Accumulate_Interval_PertPres(
+                dt_lev, interval_pert_pres[lev].get(), face_moments,
+                pp_inc[lev], velocity, geom[lev], eb_factory);
+        }
     }
 
 }

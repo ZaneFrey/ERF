@@ -1502,6 +1502,10 @@ ERF::ClearLevel (int lev)
     if ( (solverChoice.anelastic[lev] == 1) || (solverChoice.project_initial_velocity[lev] == 1) ) {
         pp_inc[lev].clear();
     }
+    interval_pert_pres[lev].reset();
+    for (auto& face_moment : interval_pert_pres_face[lev]) {
+        face_moment.reset();
+    }
     if (solverChoice.anelastic[lev] == 0) {
         lagged_delta_rt[lev].clear();
     }

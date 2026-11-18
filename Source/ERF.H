@@ -896,8 +896,11 @@ public:
     amrex::Vector<std::unique_ptr<amrex::MultiFab>> vel_t_avg;
     amrex::Vector<double> t_avg_cnt;
 
-    // Interval first and second moments used by mean/fluctuation plot fields
+    // Interval moments used by mean/fluctuation plot fields
     amrex::Vector<std::unique_ptr<amrex::MultiFab>> interval_means;
+    amrex::Vector<std::unique_ptr<amrex::MultiFab>> interval_pert_pres;
+    amrex::Vector<amrex::Array<std::unique_ptr<amrex::MultiFab>, AMREX_SPACEDIM>>
+        interval_pert_pres_face;
     amrex::Vector<double> t_mean_cnt;
     // The configured time reset is one global, one-shot event.  Keep this
     // separate from the per-level accumulation storage so regridding a level
@@ -1304,8 +1307,11 @@ private:
     amrex::Vector<std::unique_ptr<amrex::MultiFab>> vel_t_avg;
     amrex::Vector<double> t_avg_cnt;
 
-    // Interval first and second moments used by mean/fluctuation plot fields
+    // Interval moments used by mean/fluctuation plot fields
     amrex::Vector<std::unique_ptr<amrex::MultiFab>> interval_means;
+    amrex::Vector<std::unique_ptr<amrex::MultiFab>> interval_pert_pres;
+    amrex::Vector<amrex::Array<std::unique_ptr<amrex::MultiFab>, AMREX_SPACEDIM>>
+        interval_pert_pres_face;
     amrex::Vector<double> t_mean_cnt;
     // Global one-shot time-reset state; interval_means remains per level.
     int mean_vars_time_reset_done{0};
@@ -1693,6 +1699,9 @@ private:
                                                     "u_mean", "v_mean", "w_mean", "theta_mean",
                                                     "uu_mean", "vv_mean", "ww_mean", "uw_mean", "vw_mean", "wtheta_mean", "uv_mean",
                                                     "uu_fluct", "vv_fluct", "ww_fluct", "uw_fluct", "vw_fluct", "wtheta_fluct", "uv_fluct", "tke_resolved",
+                                                    "pert_pres_mean",
+                                                    "pert_pres_u_mean", "pert_pres_v_mean", "pert_pres_w_mean",
+                                                    "pert_pres_u_fluct", "pert_pres_v_fluct", "pert_pres_w_fluct",
                                                     // eddy viscosity
                                                     "nut",
                                                     // eddy diffusivity of momentum

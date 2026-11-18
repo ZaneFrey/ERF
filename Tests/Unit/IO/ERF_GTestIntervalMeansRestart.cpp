@@ -1,9 +1,11 @@
+#include <array>
 #include <sstream>
 #include <string>
 
 #include <AMReX_Box.H>
 #include <AMReX_BoxArray.H>
 #include <AMReX_DistributionMapping.H>
+#include <AMReX_Geometry.H>
 #include <AMReX_MultiFab.H>
 
 #include <gtest/gtest.h>
@@ -33,6 +35,27 @@ make_metadata (const amrex::Vector<amrex::BoxArray>& boxes,
             output << " " << (ibox + lev);
         }
         output << "\n";
+    }
+    return output.str();
+}
+
+std::string
+make_pert_pres_metadata (const amrex::Vector<amrex::BoxArray>& boxes,
+                         const amrex::Vector<double>& counts)
+{
+    std::ostringstream output;
+    output << "ERF interval pert_pres checkpoint v1\n";
+    output << boxes.size() << " "
+           << erf_interval_means::NumPertPresCellMoments << " "
+           << erf_interval_means::NumPertPresFaceMoments << "\n";
+    for (int lev = 0; lev < static_cast<int>(boxes.size()); ++lev) {
+        output << lev << " " << counts[lev] << "\n";
+        boxes[lev].writeOn(output);
+        output << "\n";
+        for (int dir = 0; dir < AMREX_SPACEDIM; ++dir) {
+            amrex::convert(boxes[lev], amrex::IntVect::TheDimensionVector(dir)).writeOn(output);
+            output << "\n";
+        }
     }
     return output.str();
 }
@@ -69,6 +92,27 @@ TEST(IntervalMeansRestart, ParsesCurrentVersionCountsBoxesAndProcessorMaps)
     EXPECT_TRUE(erf_interval_means::validate_metadata(
         metadata, 2, erf_interval_means::NumIntervalMoments, boxes).empty());
     EXPECT_FALSE(erf_interval_means::restart_resets_window(metadata));
+}
+
+TEST(IntervalMeansRestart, ValidatesOptionalPertPresStaggeredMetadata)
+{
+    const auto boxes = make_boxes();
+    const amrex::Vector<double> counts{2.5, 2.5};
+    std::istringstream input(make_pert_pres_metadata(boxes, counts));
+    erf_interval_means::PertPresMetadata metadata;
+    std::string error;
+    ASSERT_TRUE(erf_interval_means::parse_pert_pres_metadata(input, metadata, error)) << error;
+    EXPECT_TRUE(erf_interval_means::validate_pert_pres_metadata(
+                    metadata, boxes, counts).empty());
+
+    auto mismatched_counts = counts;
+    mismatched_counts[1] = 3.0;
+    EXPECT_FALSE(erf_interval_means::validate_pert_pres_metadata(
+                     metadata, boxes, mismatched_counts).empty());
+
+    metadata.face_components += 1;
+    EXPECT_FALSE(erf_interval_means::validate_pert_pres_metadata(
+                     metadata, boxes, counts).empty());
 }
 
 TEST(IntervalMeansRestart, BoxArrayMismatchIsRejectedButProcessorMapIsNotAConstraint)
@@ -160,6 +204,121 @@ TEST(IntervalMeansAccumulation, TimeWeightsHorizontalVelocityCovariance)
     EXPECT_DOUBLE_EQ(v_mean, Real(1.5));
     EXPECT_DOUBLE_EQ(uv_mean, Real(4.5));
     EXPECT_DOUBLE_EQ(uv_mean - u_mean * v_mean, Real(-0.75));
+}
+
+TEST(IntervalMeansAccumulation, TimeWeightsFaceCenteredPertPresCovariances)
+{
+    using namespace amrex;
+
+    const Box cell_box(IntVect(0, 0, 0), IntVect(0, 0, 0));
+    const BoxArray cells(cell_box);
+    const DistributionMapping dm(cells);
+    const RealBox real_box({Real(0.0), Real(0.0), Real(0.0)},
+                           {Real(1.0), Real(1.0), Real(1.0)});
+    const int periodic[AMREX_SPACEDIM] = {0, 0, 0};
+    const Geometry geom(cell_box, &real_box, CoordSys::cartesian, periodic);
+    MultiFab pressure(cells, dm, 1, 1);
+    MultiFab pressure_sum(cells, dm, erf_interval_means::NumPertPresCellMoments, 0);
+    Array<MultiFab, AMREX_SPACEDIM> velocity;
+    Array<MultiFab, AMREX_SPACEDIM> face_moments;
+    Array<MultiFab*, AMREX_SPACEDIM> face_moment_ptrs;
+    Array<const MultiFab*, AMREX_SPACEDIM> velocity_ptrs;
+    for (int dir = 0; dir < AMREX_SPACEDIM; ++dir) {
+        const BoxArray faces = convert(cells, IntVect::TheDimensionVector(dir));
+        velocity[dir].define(faces, dm, 1, 0);
+        face_moments[dir].define(
+            faces, dm, erf_interval_means::NumPertPresFaceMoments, 0);
+        face_moments[dir].setVal(Real(0.0));
+        face_moment_ptrs[dir] = &face_moments[dir];
+        velocity_ptrs[dir] = &velocity[dir];
+    }
+    pressure_sum.setVal(Real(0.0));
+
+    pressure.setVal(Real(2.0));
+    velocity[0].setVal(Real(1.0));
+    velocity[1].setVal(Real(2.0));
+    velocity[2].setVal(Real(3.0));
+    Accumulate_Interval_PertPres(
+        1.0, &pressure_sum, face_moment_ptrs, pressure, velocity_ptrs, geom);
+
+    pressure.setVal(Real(6.0));
+    velocity[0].setVal(Real(5.0));
+    velocity[1].setVal(Real(4.0));
+    velocity[2].setVal(Real(1.0));
+    Accumulate_Interval_PertPres(
+        3.0, &pressure_sum, face_moment_ptrs, pressure, velocity_ptrs, geom);
+
+    constexpr Real inv_time = Real(0.25);
+    EXPECT_DOUBLE_EQ(pressure_sum[0](IntVect(0,0,0), erf_interval_means::PertPres) * inv_time,
+                     Real(5.0));
+    const Real expected_product[] = {Real(23.0), Real(19.0), Real(6.0)};
+    const Real expected_covariance[] = {Real(3.0), Real(1.5), Real(-1.5)};
+    for (int dir = 0; dir < AMREX_SPACEDIM; ++dir) {
+        const IntVect low_face(0,0,0);
+        const Real velocity_sum = face_moments[dir][0](
+            low_face, erf_interval_means::FaceVelocity);
+        const Real product_sum = face_moments[dir][0](
+            low_face, erf_interval_means::PertPresVelocity);
+        EXPECT_DOUBLE_EQ(product_sum * inv_time, expected_product[dir]);
+        EXPECT_DOUBLE_EQ(erf_interval_means::covariance_from_sums(
+                             product_sum, Real(20.0), velocity_sum, inv_time),
+                         expected_covariance[dir]);
+    }
+}
+
+TEST(IntervalMeansAccumulation, InterpolatesPertPresToPeriodicAndPhysicalFaces)
+{
+    using namespace amrex;
+
+    const Box cell_box(IntVect(0, 0, 0), IntVect(1, 0, 0));
+    const BoxArray cells(cell_box);
+    const DistributionMapping dm(cells);
+    const RealBox real_box({Real(0.0), Real(0.0), Real(0.0)},
+                           {Real(2.0), Real(1.0), Real(1.0)});
+
+    auto accumulate_x_faces = [&] (int periodic_x) {
+        const int periodic[AMREX_SPACEDIM] = {periodic_x, 0, 0};
+        const Geometry geom(cell_box, &real_box, CoordSys::cartesian, periodic);
+        MultiFab pressure(cells, dm, 1, 1);
+        pressure.setVal(Real(0.0));
+        pressure[0](IntVect(0,0,0), 0) = Real(2.0);
+        pressure[0](IntVect(1,0,0), 0) = Real(6.0);
+        pressure.FillBoundary(geom.periodicity());
+
+        MultiFab pressure_sum(cells, dm, erf_interval_means::NumPertPresCellMoments, 0);
+        pressure_sum.setVal(Real(0.0));
+        Array<MultiFab, AMREX_SPACEDIM> velocity;
+        Array<MultiFab, AMREX_SPACEDIM> face_moments;
+        Array<MultiFab*, AMREX_SPACEDIM> face_moment_ptrs;
+        Array<const MultiFab*, AMREX_SPACEDIM> velocity_ptrs;
+        for (int dir = 0; dir < AMREX_SPACEDIM; ++dir) {
+            const BoxArray faces = convert(cells, IntVect::TheDimensionVector(dir));
+            velocity[dir].define(faces, dm, 1, 0);
+            velocity[dir].setVal(Real(1.0));
+            face_moments[dir].define(
+                faces, dm, erf_interval_means::NumPertPresFaceMoments, 0);
+            face_moments[dir].setVal(Real(0.0));
+            face_moment_ptrs[dir] = &face_moments[dir];
+            velocity_ptrs[dir] = &velocity[dir];
+        }
+        Accumulate_Interval_PertPres(
+            1.0, &pressure_sum, face_moment_ptrs, pressure, velocity_ptrs, geom);
+
+        return std::array<Real, 3>{
+            face_moments[0][0](IntVect(0,0,0), erf_interval_means::PertPresVelocity),
+            face_moments[0][0](IntVect(1,0,0), erf_interval_means::PertPresVelocity),
+            face_moments[0][0](IntVect(2,0,0), erf_interval_means::PertPresVelocity)};
+    };
+
+    const auto physical = accumulate_x_faces(0);
+    EXPECT_DOUBLE_EQ(physical[0], Real(2.0));
+    EXPECT_DOUBLE_EQ(physical[1], Real(4.0));
+    EXPECT_DOUBLE_EQ(physical[2], Real(6.0));
+
+    const auto periodic = accumulate_x_faces(1);
+    EXPECT_DOUBLE_EQ(periodic[0], Real(4.0));
+    EXPECT_DOUBLE_EQ(periodic[1], Real(4.0));
+    EXPECT_DOUBLE_EQ(periodic[2], Real(4.0));
 }
 
 TEST(IntervalMeansRestart, LegacyCheckpointFallbackPreservesTimeResetSemantics)
