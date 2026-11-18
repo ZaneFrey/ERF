@@ -402,11 +402,13 @@ ClassicADPC::sample_disk_state (int lev,
 }
 
 void
-ClassicADPC::update_forces (int lev, Real load_factor)
+ClassicADPC::update_forces (int lev, Real time, Real dt,
+                            Real startup_factor)
 {
     AMREX_ALWAYS_ASSERT(lev >= 0 && lev <= finestLevel());
-    AMREX_ALWAYS_ASSERT(load_factor >= Real(0.0) &&
-                        load_factor <= Real(1.0));
+    AMREX_ALWAYS_ASSERT(dt >= Real(0.0));
+    AMREX_ALWAYS_ASSERT(startup_factor >= Real(0.0) &&
+                        startup_factor <= Real(1.0));
 
     const int nturb = static_cast<int>(m_model.x_locations().size());
     if (nturb == 0) {
@@ -436,6 +438,8 @@ ClassicADPC::update_forces (int lev, Real load_factor)
 
         const Real disk_velocity =
             turbine_state.disk_velocity_filtered;
+        const Real load_factor = m_model.advance_forcing_control(
+            turbine_id, time, dt, startup_factor);
         turbine_state.thrust_target = Real(0.5) *
             turbine_state.disk_density * rotor_area *
             m_model.ctprime() * disk_velocity * disk_velocity;

@@ -63,7 +63,12 @@ ERF::initialize_windfarm_catalog ()
                 solverChoice.classic_ad_yaw_sensor_mem_time,
                 solverChoice.windfarm_start_time);
         }
-        windfarm->classic_ad_model().initialize_turbine_state(windfarm->num_turbines());
+        auto& classic_ad = windfarm->classic_ad_model();
+        classic_ad.initialize_turbine_state(windfarm->num_turbines());
+        classic_ad.configure_forcing_schedule(
+            solverChoice.classic_ad_forcing_schedule,
+            solverChoice.classic_ad_derate_timescale,
+            solverChoice.windfarm_start_time);
 #endif
     }
 

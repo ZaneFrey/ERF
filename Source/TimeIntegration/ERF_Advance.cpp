@@ -202,7 +202,8 @@ ERF::Advance (int lev, double time, double dt_lev, int iteration, int /*ncycle*/
                     Real(0.0),
                     amrex::min(Real(1.0), load_factor_unclamped));
 
-                classic_ad_pc->update_forces(lev, load_factor);
+                classic_ad_pc->update_forces(
+                    lev, Real(time), Real(dt_lev), load_factor);
                 classic_ad_pc->deposit_forces(
                     lev,
                     classic_ad_xmom_src[lev],

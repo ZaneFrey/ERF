@@ -1671,6 +1671,8 @@ struct SolverChoice {
         pp_classic.queryAdd("turb_mem_time", classic_ad_turb_mem_time);
         pp_classic.queryAdd("diameter", classic_ad_diameter);
         pp_classic.queryAdd("hub_height", classic_ad_hub_height);
+        pp_classic.queryAdd("forcing_schedule", classic_ad_forcing_schedule);
+        pp_classic.queryAdd("derate_timescale", classic_ad_derate_timescale);
         pp_classic.queryAdd(
             "yaw_sensor_distance_by_D",
             classic_ad_yaw_sensor_distance_by_D);
@@ -1963,6 +1965,9 @@ struct SolverChoice {
             }
             if (classic_ad_turb_mem_time < zero) {
                 amrex::Error("erf.classic_ad.turb_mem_time must be >= 0");
+            }
+            if (classic_ad_derate_timescale < zero) {
+                amrex::Error("erf.classic_ad.derate_timescale must be >= 0");
             }
             if (classic_ad_spacing_was_supplied && classic_ad_actuator_spacing <= zero) {
                 amrex::Error("erf.classic_ad.actuator.spacing must be > 0 when supplied");
@@ -2703,6 +2708,8 @@ struct SolverChoice {
     amrex::Real classic_ad_actuator_spacing = -one;
     amrex::Real classic_ad_yaw_sensor_distance_by_D = one;
     amrex::Real classic_ad_yaw_sensor_mem_time = amrex::Real(60.0);
+    amrex::Real classic_ad_derate_timescale = zero;
+    std::string classic_ad_forcing_schedule;
     bool classic_ad_wake_rotation = false;
     bool classic_ad_spacing_was_supplied = false;
 
@@ -3025,6 +3032,10 @@ struct SolverChoice {
  * @brief ClassicAD rotor diameter [m].
  * @var SolverChoice::classic_ad_hub_height
  * @brief ClassicAD hub height above flat terrain [m].
+ * @var SolverChoice::classic_ad_forcing_schedule
+ * @brief Optional per-turbine ClassicAD forcing schedule path.
+ * @var SolverChoice::classic_ad_derate_timescale
+ * @brief ClassicAD scheduled-forcing response time scale [s].
  * @var SolverChoice::classic_ad_actuator_spacing
  * @brief Requested ClassicAD actuator-element spacing [m].
  * @var SolverChoice::classic_ad_spacing_was_supplied

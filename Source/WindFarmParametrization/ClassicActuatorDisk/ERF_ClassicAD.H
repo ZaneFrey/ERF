@@ -21,7 +21,22 @@ struct ClassicADTurbineState
     amrex::Real torque_applied{0.0};
     amrex::Real les_torque{0.0};
     amrex::Real actuator_area{0.0};
+    amrex::Real forcing_command{1.0};
+    amrex::Real forcing_response{1.0};
+    amrex::Real forcing_response_step_average{1.0};
+    amrex::Real forcing_factor{1.0};
     bool memory_initialized{false};
+    bool forcing_initialized{false};
+    bool forcing_enabled{true};
+};
+
+struct ClassicADForcingInterval
+{
+    int turbine_id{-1};
+    amrex::Real start_time{0.0};
+    amrex::Real end_time{0.0};
+    amrex::Real forcing_fraction{1.0};
+    int source_line{0};
 };
 
 struct ClassicADYawState
@@ -69,6 +84,19 @@ public:
                     bool spacing_was_supplied);
 
     void initialize_turbine_state (int nturb);
+    void configure_forcing_schedule (const std::string& filename,
+                                     amrex::Real derate_timescale,
+                                     amrex::Real windfarm_start_time);
+    void configure_forcing_schedule (
+        const amrex::Vector<ClassicADForcingInterval>& intervals,
+        amrex::Real derate_timescale,
+        amrex::Real windfarm_start_time,
+        const std::string& source_name = "<memory>");
+    amrex::Real advance_forcing_control (int turbine_id,
+                                         amrex::Real time,
+                                         amrex::Real dt,
+                                         amrex::Real startup_factor);
+    void restore_uninitialized_forcing_state (amrex::Real time);
     void initialize_dynamic_yaw (amrex::Real disk_face_angle_deg,
                                  amrex::Real sensor_distance_by_D,
                                  amrex::Real sensor_memory_time,
@@ -124,6 +152,9 @@ public:
 
 private:
     void synchronize_rotor_angles ();
+    amrex::Real forcing_command_at (int turbine_id, amrex::Real time) const;
+    amrex::Real reconstruct_forcing_response (int turbine_id,
+                                              amrex::Real time) const;
 
     amrex::Real m_ctprime{4.0/3.0};
     amrex::Real m_cpprime{0.8};
@@ -134,6 +165,9 @@ private:
     amrex::Real m_hub_height_classic{-1.0};
     amrex::Real m_actuator_spacing{-1.0};
     bool m_spacing_was_supplied{false};
+    amrex::Real m_derate_timescale{0.0};
+    amrex::Real m_windfarm_start_time{0.0};
+    amrex::Vector<amrex::Vector<ClassicADForcingInterval>> m_forcing_schedule;
     amrex::Vector<ClassicADTurbineState> m_turbine_state;
     bool m_dynamic_yaw_enabled{false};
     amrex::Real m_yaw_sensor_distance_by_D{1.0};
