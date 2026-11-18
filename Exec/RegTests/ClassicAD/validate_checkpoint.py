@@ -41,6 +41,8 @@ def validate_rotation(run_directory: Path) -> None:
         "time",
         "Ud_f_0",
         "rho_d_0",
+        "forcing_factor_0",
+        "forcing_enabled_0",
         "P_rotor_0",
         "Omega_0",
         "Q_target_0",
@@ -89,6 +91,17 @@ def validate_rotation(run_directory: Path) -> None:
             else 1.0
         )
         expected_applied_torque = load_factor * expected_torque
+
+        close(
+            row[index["forcing_factor_0"]],
+            load_factor,
+            2.0e-12,
+            f"row {row_number} forcing factor",
+        )
+        if row[index["forcing_enabled_0"]] != 1.0:
+            raise AssertionError(
+                f"row {row_number} unscheduled turbine is not enabled"
+            )
 
         close(
             row[index["P_rotor_0"]],
@@ -164,10 +177,12 @@ def main() -> None:
     checkpoint = checkpoints[-1]
 
     memory = state_lines(
-        checkpoint / "ClassicADMemoryState", "ClassicADMemoryState_v1", 2
+        checkpoint / "ClassicADMemoryState", "ClassicADMemoryState_v2", 4
     )
     if any(row[0] != 1.0 for row in memory):
         raise AssertionError("filtered disk-velocity state was not initialized")
+    if any(row[2] != 1.0 or row[3] != 1.0 for row in memory):
+        raise AssertionError("unscheduled forcing state was not restored as enabled")
 
     yaw_path = checkpoint / "ClassicADYawState"
     lines = [line.split() for line in yaw_path.read_text().splitlines() if line.strip()]

@@ -345,6 +345,10 @@ if(TARGET erf_exec AND ERF_DIM STREQUAL "3" AND
     ClassicAD_RejectsEBTerrain inputs
     "erf.terrain_type=EB"
     "ClassicAD does not support EB or immersed terrain")
+  add_classic_ad_expected_failure_test(
+    ClassicAD_ScheduleRejectsWrongColumnCount inputs_stretched
+    "erf.classic_ad.forcing_schedule=${_classic_ad_case_dir}/classic_ad_forcing_schedule_bad_columns.txt"
+    "expected exactly four columns")
 
   if(NOT ERF_ENABLE_CUDA AND NOT ERF_ENABLE_HIP AND NOT ERF_ENABLE_SYCL)
     set(_classic_ad_mpi_arguments)
@@ -365,6 +369,22 @@ if(TARGET erf_exec AND ERF_DIM STREQUAL "3" AND
         -P ${_classic_ad_case_dir}/RunStretchedSmoke.cmake)
     set_tests_properties(ClassicAD_Stretched_SmokeRestart PROPERTIES
       LABELS "integration;classic-ad;smoke;restart"
+      PROCESSORS 2
+      RUN_SERIAL TRUE
+      TIMEOUT 180)
+
+    add_test(NAME ClassicAD_ScheduledForcingRestart
+      COMMAND ${CMAKE_COMMAND}
+        -DERF_EXECUTABLE=$<TARGET_FILE:erf_exec>
+        -DINPUT_FILE=${_classic_ad_case_dir}/inputs_stretched
+        -DLOCATION_FILE=${_classic_ad_case_dir}/classic_ad_locations.txt
+        -DSCHEDULE_FILE=${_classic_ad_case_dir}/classic_ad_forcing_schedule.txt
+        -DVALIDATOR=${_classic_ad_case_dir}/validate_schedule.py
+        -DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}
+        ${_classic_ad_mpi_arguments}
+        -P ${_classic_ad_case_dir}/RunScheduledSmoke.cmake)
+    set_tests_properties(ClassicAD_ScheduledForcingRestart PROPERTIES
+      LABELS "integration;classic-ad;schedule;restart"
       PROCESSORS 2
       RUN_SERIAL TRUE
       TIMEOUT 180)
