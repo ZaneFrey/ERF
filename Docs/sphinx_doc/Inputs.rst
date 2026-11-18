@@ -2587,6 +2587,41 @@ The wind farm parameterization is selected with ``erf.windfarm_type``.
   or ``-DERF_ENABLE_WINDFARM`` (cmake) at build time.
   See :ref:`sec:WindFarmModels` for theory and examples.
 
+ClassicAD scheduled forcing
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``erf.classic_ad.forcing_schedule`` optionally names a whitespace-delimited
+text file that controls the physical force applied by individual ClassicAD
+turbines.  Blank lines and text following ``#`` are ignored.  Every data row
+must contain exactly four columns::
+
+   turbine_id  start_time  end_time  forcing_fraction
+
+Turbine IDs are zero-based indices into ``erf.windfarm_loc_table``.  Rows for
+one turbine may be repeated and need not be in file order.  The periods may be
+adjacent or separated by gaps, but may not overlap.  ``start_time`` identifies
+the period and must be greater than or equal to
+``erf.windfarm_start_time``.  At ``end_time`` the turbine receives the new
+persistent ``forcing_fraction`` command.  The command remains in effect until
+a later row for that turbine ends; turbines initially have a command of 1.
+Fractions must lie in [0, 1].
+
+``erf.classic_ad.derate_timescale`` is the nonnegative exponential e-folding
+time in seconds used to approach a new command.  Its default value of zero
+changes the forcing instantaneously.  A positive value applies the exact
+first-order exponential response and a timestep-averaged multiplier to the
+force.  This response is multiplied by the existing global
+``erf.windfarm_ramp_tau`` startup factor.  Scheduling changes only the force
+deposited into the flow: disk velocity, density, target thrust and torque,
+power, yaw, and other turbine diagnostics continue to update while the
+forcing command is zero.
+
+The ClassicAD diagnostics include ``forcing_factor_<id>``, the multiplier
+actually used for the timestep, and ``forcing_enabled_<id>``, which is one
+when the end-of-step schedule command is nonzero.  During an exponential
+shutdown, ``forcing_enabled`` can be zero while ``forcing_factor`` remains
+positive.
+
 .. _sec:ConstantMassFluxInputs:
 
 Constant Mass Flux
